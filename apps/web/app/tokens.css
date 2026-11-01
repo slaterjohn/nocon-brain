@@ -1,0 +1,59 @@
+/*
+ * Design tokens (F-17). Plain hex so scripts/check-contrast.mjs can read them without a colour library.
+ * Light is the default; the `dark` class on <html> switches to the dark set.
+ * Every pair listed in scripts/check-contrast.mjs must meet WCAG 2.2 AA (4.5:1 for text, 3:1 for UI parts).
+ */
+:root {
+  --background: #fbfbfc;
+  --foreground: #16181d;
+  --card: #ffffff;
+  --card-foreground: #16181d;
+  --popover: #ffffff;
+  --popover-foreground: #16181d;
+  --primary: #2f4bb0;
+  --primary-foreground: #ffffff;
+  --secondary: #eef0f4;
+  --secondary-foreground: #1f232b;
+  --muted: #eef0f4;
+  --muted-foreground: #4a5160;
+  --accent: #e6e9f0;
+  --accent-foreground: #16181d;
+  --destructive: #b3261e;
+  --destructive-foreground: #ffffff;
+  --success: #1c6b38;
+  --warning: #8a5400;
+  --border: #d5d8df;
+  --input: #767d8c;
+  --ring: #2f4bb0;
+  --sidebar: #f3f4f7;
+  --chrome: #e4e7ee;
+  --radius: 0.5rem;
+  color-scheme: light;
+}
+
+.dark {
+  --background: #14161b;
+  --foreground: #f1f2f5;
+  --card: #1b1e25;
+  --card-foreground: #f1f2f5;
+  --popover: #1f232b;
+  --popover-foreground: #f1f2f5;
+  --primary: #93abff;
+  --primary-foreground: #0d1330;
+  --secondary: #272b34;
+  --secondary-foreground: #f1f2f5;
+  --muted: #252931;
+  --muted-foreground: #aeb4c1;
+  --accent: #2e333e;
+  --accent-foreground: #f1f2f5;
+  --destructive: #ff938c;
+  --destructive-foreground: #2a0705;
+  --success: #72dc92;
+  --warning: #f0c15f;
+  --border: #363b47;
+  --input: #858c9b;
+  --ring: #93abff;
+  --sidebar: #181b21;
+  --chrome: #20242c;
+  color-scheme: dark;
+}

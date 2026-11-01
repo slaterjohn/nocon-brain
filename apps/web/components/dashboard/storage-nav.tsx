@@ -1,0 +1,39 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { cn } from "@/lib/utils";
+
+const items = [
+  { href: "/storage", label: "Overview" },
+  { href: "/storage/dashboard", label: "Dashboard" },
+  { href: "/storage/activity", label: "Activity log" },
+];
+
+/** Local navigation inside the Storage and settings area. */
+export function StorageNav() {
+  const pathname = usePathname();
+  return (
+    <nav aria-label="Storage and settings sections" className="mb-6 border-b">
+      <ul className="-mb-px flex gap-1 overflow-x-auto">
+        {items.map((i) => {
+          const active = pathname === i.href;
+          return (
+            <li key={i.href}>
+              <Link
+                href={i.href}
+                aria-current={active ? "page" : undefined}
+                className={cn(
+                  "inline-block border-b-2 border-transparent px-3 py-2 text-sm whitespace-nowrap hover:bg-accent",
+                  active && "border-primary font-medium",
+                )}
+              >
+                {i.label}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}

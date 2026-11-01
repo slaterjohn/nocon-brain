@@ -12,3 +12,6 @@ coverage/
 test-results/
 .tmp/
 .drizzle-scratch/
+.next-e2e/
+*.tsbuildinfo
+playwright-report/

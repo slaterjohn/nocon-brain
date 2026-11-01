@@ -34,6 +34,7 @@ type ErrorCode = "bad_request" | "unauthorized" | "forbidden" | "csrf" | "not_fo
 |---|---|---|---|
 | GET | `/api/setup/status` | `{ adminExists, storageConfigured, profile, firstSourceCreated, complete }` | P |
 | POST | `/api/setup/admin` | Create the admin. Only while no admin exists; checks before hashing | P (only pre-admin) + C |
+| POST | `/api/setup/storage/validate` | Validation only, registers nothing. `{ path, reserveFreeBytes? }` returns `{ ok, path?, totalBytes?, freeBytes?, warnings, errors: {path, message}[] }`. Also open to a signed-in admin after setup (Storage settings reuses it) | S+C |
 | POST | `/api/setup/storage` | Validate and register the first volume | S+C |
 | POST | `/api/setup/profile` | Choose resource profile | S+C |
 | POST | `/api/setup/providers` | Optional: create providers (skippable) | S+C |
@@ -45,6 +46,8 @@ type ErrorCode = "bad_request" | "unauthorized" | "forbidden" | "csrf" | "not_fo
 | GET | `/api/auth/sessions` | List sessions | S |
 | DELETE | `/api/auth/sessions/{id}` | Revoke one (or `?all=true` to revoke all but current) | S+C |
 | POST | `/api/auth/password` | `{ current, next }` | S+C |
+
+Implementation notes (server, Phase 1): `/api/setup/profile` takes `{ profile: "pi-lite" | "standard" }` and applies that profile's resource preset; `/api/setup/providers` takes `{ skip: true }` (a non-empty `providers` list returns 501 until providers exist); `/api/setup/first-source` returns 501 until sources exist; the setup steps return 409 `conflict` once `/api/setup/complete` has run. `POST /api/auth/login` and `/api/setup/admin` return `{ user: { id, username } }`; `GET /api/auth/me` returns `user: { id: "guest", username: "Guest" }` for a trusted-LAN guest. `GET /api/auth/sessions` returns `{ items: { id, createdAt, lastSeenAt, expiresAt, ip, userAgent, current }[] }`; the session `id` is an opaque 16-character reference. `DELETE /api/auth/sessions/{id}?all=true` (the id is ignored) and `DELETE /api/auth/sessions` revoke every session but the current one. Unauthenticated routes other than health answer 503 with `Retry-After` while the server is starting, and 409 `setup_required` until an admin exists. Validation errors carry `details: { fields: { in, path, message }[] }`.
 
 ```ts
 interface SetupStorageRequest { path: string /* under an allowed root */; name: string; quotaBytes?: number; reserveFreeBytes?: number }
@@ -439,18 +442,20 @@ interface StorageForecast { estimate: true; horizonDays: number; projectedUsedBy
 | GET | `/api/settings/schema` | JSON Schema for the groups (drives the settings UI) | S |
 | GET/PATCH | `/api/settings/user` | Per-user settings (theme, shortcuts, tab restore) | S , S+C |
 
+Response shapes (server): `GET /api/settings` returns the groups as `{ general: {...}, resources: {...}, ... }`; secret fields are replaced by a `has<Field>` flag (for example `offline.hasProbeToken`). `PATCH /api/settings` takes a partial of any groups, validates the merged group, returns the same map and, when online search was just enabled, a top-level `disclosure` string. Enabling `privacy.onlineSearch.enabled` requires `privacy.onlineSearch.acknowledged: true` in the same patch (otherwise a field error on that path), which stores `acknowledgedAt`. Invalid values return 400 with `details.fields[].path` such as `offline.probeUrl`. `GET /api/settings/user` and `PATCH` use `{ theme, density, tabRestore, shortcuts }`.
+
 Groups: `general` (app name, locale `en-GB`), `resources` (profile and limits), `privacy` (`history.enabled`, `searchHistory.enabled`, `onlineSearch.enabled`, disclosure text), `offline` (`forced`, probe URL), `browser` (`showLinkStates`, `liveFrames`, `bookmarkPriority`, `autoCacheOpened`), `search` (ranking, RRF `k` and weights, synonyms, ZIM budget), `discovery` (section 9), `storage` (section 10 policy), `logging`, `appearance` (theme tokens). Changing `privacy.onlineSearch.enabled` to true returns the disclosure text that the UI must show and record acknowledgement of (`acknowledgedAt`).
 
 ## 13. System
 
 | Method | Path | Purpose | Auth |
 |---|---|---|---|
-| GET | `/api/system/health` | Minimal `{ status: "ok" \| "degraded" \| "starting" }` for Docker; checks DB writable, index openable, worker heartbeat fresh, free space above floor | P |
+| GET | `/api/system/health` | HTTP 503 while `starting`, 200 otherwise. Minimal `{ status: "ok" \| "degraded" \| "starting" }` for Docker; checks DB writable, index openable, worker heartbeat fresh, free space above floor | P |
 | GET | `/api/system/status` | Detailed: versions, architecture, uptime, workers (`extract`, `index`, `search`, `zim`), queue depths, memory, connectivity, renderer reachable | S |
 | GET | `/api/system/dashboard` | Admin dashboard: pages, sources, collections, index size, storage used and available, active, queued and failed jobs, last update, worker status | S |
 | GET | `/api/system/events` | **SSE**: job progress, worker heartbeat, connectivity, thresholds (`Last-Event-ID` supported) | S |
-| GET | `/api/system/logs` | Activity log: `level`, `area`, `downloadJobId`, `from`, `to`, `q` | S |
-| GET | `/api/system/connectivity` | `{ state, since, source: "passive" \| "probe" \| "forced" }` | S/G |
+| GET | `/api/system/logs` | Activity log: `level` and `area` (comma-separated lists, exact match), `downloadJobId` (`dl_...`), `from`, `to`, `q` (substring), `limit` (default 50, max 200), `cursor`. Returns `{ items: { id, at, level, area, message, details?, downloadJobId?, jobId?, versionId? }[], nextCursor? }`, newest first | S |
+| GET | `/api/system/connectivity` | `{ state: "unknown" \| "online" \| "offline", since, source: "passive" \| "probe" \| "forced" }`. The same object is the data of the SSE `connectivity` event | S/G |
 | POST | `/api/system/connectivity` | `{ forceOffline: boolean }` ("work offline") | S+C |
 | POST | `/api/system/maintenance/verify` | Verify-and-repair. `{ repair: false (default), checks?: string[] }` returns a `MaintenanceRun` | S+C |
 | GET | `/api/system/maintenance/runs`, `/{id}` | History and reports | S |
