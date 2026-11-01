@@ -1,0 +1,36 @@
+{
+  "name": "nocon-brain",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Self-hosted, offline-first web archive and search",
+  "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/slaterjohn/nocon-brain.git"
+  },
+  "homepage": "https://github.com/slaterjohn/nocon-brain#readme",
+  "bugs": {
+    "url": "https://github.com/slaterjohn/nocon-brain/issues"
+  },
+  "type": "module",
+  "packageManager": "pnpm@10.32.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r typecheck && tsc -p tsconfig.json",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "licence-audit": "node scripts/licence-audit.mjs",
+    "bench:queue": "tsx scripts/bench-queue.ts",
+    "db:generate": "pnpm --filter @ncb/db generate"
+  },
+  "devDependencies": {
+    "@ncb/db": "workspace:*",
+    "@ncb/shared": "workspace:*",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

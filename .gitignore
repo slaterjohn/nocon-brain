@@ -4,3 +4,11 @@ dist/
 .env
 data/
 docs/research/search-bench/data/
+.env
+*.db
+*.db-wal
+*.db-shm
+coverage/
+test-results/
+.tmp/
+.drizzle-scratch/

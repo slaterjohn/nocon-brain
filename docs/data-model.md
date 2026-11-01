@@ -343,7 +343,7 @@ Indexes `(state, priority, queue_order)`, `(source_id)`. Transitions: `queued→
 | last_error | TEXT | |
 | created_at, started_at, finished_at | | |
 
-Indexes: `(queue, state, run_at, priority DESC, score DESC, id)` for claims; `(lease_until) WHERE state='running'` for the reaper; `UNIQUE (crawl_job_id, url_key)` for the crawl visited set; `(download_job_id)`. Finished rows are pruned after the crawl completes; a daily rollup keeps counters.
+Indexes: `(queue, state, priority DESC, score DESC, id)` for claims (`run_at` is filtered while walking the index in claim order; putting `run_at` before the ordering columns made every claim sort all due rows, 12 ms instead of about 1 ms at 50,000 queued, measured in F-04); `(lease_until) WHERE state='running'` for the reaper; `UNIQUE (crawl_job_id, url_key)` for the crawl visited set; `(download_job_id)`. Finished rows are pruned after the crawl completes; a daily rollup keeps counters.
 
 Claim (illustrative, inside `BEGIN IMMEDIATE`):
 

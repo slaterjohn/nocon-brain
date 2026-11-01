@@ -1,0 +1,12 @@
+{
+  "MIT": [{ "name": "left-pad", "versions": ["1.3.0"] }],
+  "(MIT OR Apache-2.0)": [{ "name": "dual", "versions": ["1.0.0"] }],
+  "LGPL-3.0-or-later": [{ "name": "lgpl-lib", "versions": ["2.0.0"] }],
+  "GPL-3.0": [{ "name": "gpl3-lib", "versions": ["1.0.0"] }],
+  "BUSL-1.1": [{ "name": "bsl-db", "versions": ["3.1.0"] }],
+  "SSPL-1.0": [{ "name": "sspl-thing", "versions": ["1.0.0"] }],
+  "UNKNOWN": [{ "name": "mystery", "versions": ["0.0.1"] }],
+  "SEE LICENSE IN LICENSE.txt": [{ "name": "prop", "versions": ["9.9.9"] }],
+  "GPL-2.0-only": [{ "name": "gpl2-only", "versions": ["1.0.0"] }],
+  "(GPL-2.0-only AND MIT)": [{ "name": "mixed", "versions": ["1.0.0"] }]
+}

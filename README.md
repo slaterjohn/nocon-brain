@@ -6,6 +6,18 @@ NoConBrain is a self-hosted, offline-first knowledge archiver, crawler and searc
 
 Target platforms are Docker Compose on Raspberry Pi 4/5 (ARM64) and AMD64 servers.
 
+## Development
+
+Requires Node 24 or later (`.nvmrc`) and pnpm 10 (`corepack enable`). `better-sqlite3` ships prebuilt binaries per Node ABI; on an older Node it can crash on load, so run `pnpm install` (or `pnpm rebuild better-sqlite3`) under Node 24.
+
+```
+pnpm install
+pnpm typecheck
+pnpm test                 # unit
+pnpm test:integration     # real SQLite, worker threads
+node scripts/licence-audit.mjs
+```
+
 ## Licence
 
 NoConBrain is licensed under the GNU Affero General Public Licence, version 3 (AGPL-3.0). See [LICENSE](LICENSE).
