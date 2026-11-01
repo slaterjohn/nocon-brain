@@ -1,0 +1,37 @@
+# Offline override: no service has any route to the internet.
+#   docker compose -f compose.yml -f compose.offline.yml --profile offline-test up --abort-on-container-exit
+# scripts/offline-test.sh drives this. Published ports are removed (they do not work on internal networks
+# everywhere); the `offline-test` service runs tests/offline/check.mjs from inside the internal network.
+services:
+  server:
+    ports: !reset []
+    networks: !override [backend]
+  web:
+    ports: !reset []
+  offline-test:
+    image: node:24-trixie-slim
+    profiles: [offline-test]
+    working_dir: /tests
+    command: ["node", "check.mjs"]
+    environment:
+      API_URL: http://server:3001
+      WEB_URL: http://web:${NCB_WEB_PORT:-3000}
+      ARCHIVE_URL: http://server:${NCB_ARCHIVE_PORT:-3002}
+      STORAGE_PATH: /volumes/default
+      OFFLINE_ADMIN_PASSWORD: ${OFFLINE_ADMIN_PASSWORD:-offline-test-password-1}
+    volumes:
+      - ./tests/offline:/tests:ro
+    depends_on:
+      server: { condition: service_healthy }
+      web: { condition: service_healthy }
+    networks: [backend]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 64
+
+networks:
+  frontend:
+    internal: true
+    driver_opts: !reset {}

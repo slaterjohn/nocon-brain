@@ -11,6 +11,8 @@ NoConBrain is a self-hosted, offline-first knowledge archiver, crawler and searc
 | [data-model.md](data-model.md) | The proposed SQLite schema (`main.db` and the separate `index.db`), key relationships, effective-priority and eviction-eligibility rules, retention, rebuild path, integrity invariants |
 | [api.md](api.md) | Resource-by-resource endpoints with TypeScript-style shapes, auth and CSRF rules, progressive search over SSE, and the archive listener URL scheme and link-rewriting rules |
 | [implementation-plan.md](implementation-plan.md) | Nine phases split into small, testable tasks with IDs, dependencies, acceptance checks, MVP/v1/Post-v1 scope, performance targets (to be measured), deferred requirements and acceptance-criteria traceability |
+| [deployment.md](deployment.md) | What the Docker Compose stack looks like as built: images, networks, volumes, hardening, checks and known limits |
+| [benchmarks.md](benchmarks.md) | Measured numbers with the hardware they came from |
 | [risk-register.md](risk-register.md) | Risks with likelihood, impact, mitigation and owner phase |
 
 Suggested reading order: architecture, technology decisions, data model, API, then the plan.

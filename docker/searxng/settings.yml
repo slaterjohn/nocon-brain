@@ -1,0 +1,25 @@
+# SearXNG settings for the optional `searxng` compose profile (docs/architecture.md section 7).
+# Mounted read-only at /etc/searxng/settings.yml. Reachable only on the internal `backend` network
+# as http://searxng:8080; no port is published.
+use_default_settings: true
+
+general:
+  instance_name: "NoConBrain search"
+  debug: false
+
+search:
+  # NoConBrain reads results as JSON, so the json format must be listed or SearXNG answers 403.
+  formats:
+    - html
+    - json
+  safe_search: 0
+  autocomplete: ""
+
+server:
+  # The secret key comes from the SEARXNG_SECRET environment variable set in compose.yml.
+  limiter: false          # Off on a private network. Turn it on (and add Redis) if you ever publish the port.
+  image_proxy: false
+  public_instance: false
+
+# Keep the instance quiet: no outgoing telemetry, no result plugins that fetch from elsewhere.
+enabled_plugins: []

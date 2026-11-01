@@ -1,0 +1,143 @@
+# NoConBrain production stack.
+#   cp .env.example .env     (then set NCB_PROXY_SECRET, see the file)
+#   docker compose up -d --wait
+# Optional services: docker compose --profile searxng up -d --wait
+name: ${COMPOSE_PROJECT_NAME:-nocon-brain}
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging: *logging
+  stop_grace_period: 30s
+
+services:
+  server:
+    image: nocon-brain/server:${NCB_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: docker/server/Dockerfile
+      target: runtime
+    <<: *hardening
+    # Anything set in .env (including optional NCB_* settings) reaches the container. "environment:" wins over it,
+    # so only the values compose must control are listed below.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      NCB_PROXY_SECRET: ${NCB_PROXY_SECRET:?Set NCB_PROXY_SECRET in .env (openssl rand -hex 32)}
+      NCB_APP_URL: ${NCB_APP_URL:-http://localhost:3000}
+      NCB_API_HOST: 0.0.0.0
+      NCB_API_PORT: 3001
+      NCB_ARCHIVE_HOST: 0.0.0.0
+      # The container listens on the same port the host publishes, so URLs built from this port are right.
+      NCB_ARCHIVE_PORT: ${NCB_ARCHIVE_PORT:-3002}
+      NCB_DATA_DIR: /data
+      NCB_VOLUMES_ALLOWED_ROOTS: ${NCB_VOLUMES_ALLOWED_ROOTS:-/volumes}
+      NCB_TZ: ${NCB_TZ:-UTC}
+    ports:
+      # The browser loads archived frames from this port directly, so it is published. The API (3001) is not:
+      # the web container proxies it over the internal `backend` network.
+      - "${NCB_ARCHIVE_BIND:-0.0.0.0}:${NCB_ARCHIVE_PORT:-3002}:${NCB_ARCHIVE_PORT:-3002}"
+    volumes:
+      - ncb-data:/data
+      # Storage root for blobs and ZIMs. A name (the default) is a Docker volume; a path such as /mnt/ssd/ncb is a bind mount
+      # and must be writable by UID 1000. More roots: add a line here and list the container path in NCB_VOLUMES_ALLOWED_ROOTS.
+      - ${NCB_VOLUME_PATH:-ncb-volume}:/volumes/default
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,uid=1000,gid=1000
+    mem_limit: ${NCB_SERVER_MEMORY:-768m}
+    cpus: ${NCB_SERVER_CPUS:-2.0}
+    pids_limit: 256
+    networks: [backend, egress]
+    # The image HEALTHCHECK (GET /api/system/health) applies: migrations ran and the database is writable.
+
+  web:
+    image: nocon-brain/web:${NCB_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: docker/web/Dockerfile
+    <<: *hardening
+    environment:
+      NODE_ENV: production
+      API_INTERNAL_URL: http://server:3001
+      NCB_PROXY_SECRET: ${NCB_PROXY_SECRET:?Set NCB_PROXY_SECRET in .env (openssl rand -hex 32)}
+      HOSTNAME: 0.0.0.0
+      PORT: ${NCB_WEB_PORT:-3000}
+    depends_on:
+      server: { condition: service_healthy }
+    ports:
+      - "${NCB_WEB_BIND:-0.0.0.0}:${NCB_WEB_PORT:-3000}:${NCB_WEB_PORT:-3000}"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,uid=1000,gid=1000
+      - /app/apps/web/.next/cache:size=128m,uid=1000,gid=1000
+    mem_limit: ${NCB_WEB_MEMORY:-384m}
+    pids_limit: 128
+    networks: [frontend, backend]
+
+  # Optional metasearch for the SearXNG provider. Start with: docker compose --profile searxng up -d --wait
+  # In NoConBrain, set the provider URL to http://searxng:8080. No port is published.
+  searxng:
+    image: searxng/searxng:${NCB_SEARXNG_VERSION:-latest}
+    profiles: [searxng]
+    <<: *hardening
+    user: "977:977"  # the image's own searxng user; with cap_drop ALL the entrypoint could not switch to it
+    environment:
+      SEARXNG_SECRET: ${NCB_SEARXNG_SECRET:-${NCB_PROXY_SECRET:?Set NCB_PROXY_SECRET in .env (openssl rand -hex 32)}}
+      SEARXNG_BASE_URL: http://searxng:8080/
+    volumes:
+      - ./docker/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,uid=977,gid=977
+      - /var/cache/searxng:size=64m,uid=977,gid=977
+    mem_limit: ${NCB_SEARXNG_MEMORY:-384m}
+    pids_limit: 256
+    networks: [backend, egress]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # TODO(Phase 3, C-16): optional renderer (Playwright chromium_headless_shell). The image does not exist yet, so this
+  # block is a placeholder only. When it is built it should have: profile `renderer`, the `render` network only
+  # (internal), a seccomp profile, mem_limit 700m to 1g, pids_limit, read_only with tmpfs /tmp, init: true, and
+  # HTTP(S)_PROXY pointing at the guarded forward proxy inside `server` (server joins `render` too).
+  #
+  # renderer:
+  #   image: nocon-brain/renderer:${NCB_VERSION:-latest}
+  #   profiles: [renderer]
+  #   <<: *hardening
+  #   read_only: true
+  #   tmpfs: ["/tmp:size=256m"]
+  #   mem_limit: ${NCB_RENDERER_MEMORY:-1g}
+  #   pids_limit: 256
+  #   networks: [render]
+
+networks:
+  # web only. It carries web's published port. IP masquerade is off, so web has no route to the internet.
+  frontend:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+  # web <-> server API (3001 is never published), and searxng. No route to the outside world.
+  backend:
+    internal: true
+  # Normal bridge. server (downloads, online search) and searxng reach the internet through it. It also carries
+  # the archive port that server publishes.
+  egress: {}
+  # TODO(Phase 3, C-16): internal network for server <-> renderer.
+  # render:
+  #   internal: true
+
+volumes:
+  ncb-data:
+  ncb-volume:
