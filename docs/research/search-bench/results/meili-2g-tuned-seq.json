@@ -1,0 +1,248 @@
+{
+ "engine": "meili",
+ "memLimit": "2g",
+ "startedAt": "2026-11-01T20:34:08.314Z",
+ "tuned": "MEILI_MAX_INDEXING_MEMORY=805306368",
+ "host": "Apple Silicon Mac, Docker Desktop linux/arm64 VM, 12 CPUs (NOT a Raspberry Pi)",
+ "idleMiB": 45.5,
+ "index": {
+  "failedTasks": 0,
+  "indexedDocs": 50000,
+  "indexDbBytes": {
+   "numberOfDocuments": 50000,
+   "indexSize": 2608463872,
+   "usedIndexSize": 1056325632,
+   "rawDocumentDbSize": 187076608,
+   "avgDocumentSize": 3733,
+   "isIndexing": false,
+   "numberOfEmbeddings": 0,
+   "numberOfEmbeddedDocuments": 0,
+   "fieldDistribution": {
+    "body": 50000,
+    "collection": 50000,
+    "content_type": 50000,
+    "date": 50000,
+    "domain": 50000,
+    "headings": 50000,
+    "id": 50000,
+    "language": 50000,
+    "title": 50000,
+    "url": 50000
+   }
+  }
+ },
+ "indexWallMs": 95999,
+ "indexMem": {
+  "samples": 48,
+  "peakMiB": 1999.9,
+  "lastMiB": 1153,
+  "anonMiB": 688.2,
+  "fileMiB": 1283.7,
+  "fileMappedMiB": 839.1,
+  "cgroupPeakMiB": 2048
+ },
+ "diskKiB": 2548048,
+ "diskMiB": 2488.3,
+ "idleAfterIndexMiB": 1152,
+ "afterIndexCgroup": {
+  "anonMiB": 688.2,
+  "fileMiB": 1283.7,
+  "fileMappedMiB": 839.1,
+  "cgroupPeakMiB": 2048
+ },
+ "restartToReadyMs": 1384,
+ "idleAfterRestartMiB": 68.4,
+ "afterRestartCgroup": {
+  "anonMiB": 67,
+  "fileMiB": 0.1,
+  "fileMappedMiB": 0.1,
+  "cgroupPeakMiB": 70.9
+ },
+ "cold5FirstQueriesMs": [
+  17.3,
+  6.8,
+  6.7,
+  6.1,
+  5.4
+ ],
+ "queryMem": {
+  "samples": 3,
+  "peakMiB": 369,
+  "lastMiB": 364.6,
+  "anonMiB": 112.8,
+  "fileMiB": 247.1,
+  "fileMappedMiB": 171.4,
+  "cgroupPeakMiB": 369.7
+ },
+ "query": {
+  "overallClientMs": {
+   "n": 690,
+   "p50": 3.61,
+   "p95": 7.15,
+   "max": 45.26
+  },
+  "serverReportedMs": {
+   "n": 690,
+   "p50": 2,
+   "p95": 3,
+   "max": 7
+  },
+  "byType": {
+   "single": {
+    "n": 120,
+    "p50": 3.51,
+    "p95": 4.89,
+    "max": 6.27
+   },
+   "multi": {
+    "n": 180,
+    "p50": 4.21,
+    "p95": 6.1,
+    "max": 42.87
+   },
+   "typo": {
+    "n": 120,
+    "p50": 3.2,
+    "p95": 4.57,
+    "max": 7.77
+   },
+   "phrase": {
+    "n": 90,
+    "p50": 2.43,
+    "p95": 44.18,
+    "max": 44.79
+   },
+   "prefix": {
+    "n": 90,
+    "p50": 3.4,
+    "p95": 5.37,
+    "max": 9.66
+   },
+   "filtered": {
+    "n": 90,
+    "p50": 4.18,
+    "p95": 44.02,
+    "max": 45.26
+   }
+  },
+  "zeroResultQueries": {
+   "phrase": 5,
+   "filtered": 1
+  },
+  "errors": 0
+ },
+ "spot": [
+  {
+   "kind": "typo",
+   "q": "astronamy",
+   "total": 589,
+   "top5": [
+    "Astronomy",
+    "Magnitude (astronomy)",
+    "First light (astronomy)",
+    "Australian Aboriginal astronomy",
+    "History of astronomy"
+   ],
+   "snippet0": "as seen from La Silla Observatory]]\n<em>Astronomy</em> is the scientific study of celestial bodies. It is a major branch of space science. Stars, galaxies, planets, moons, asteroids, comets and nebulae…"
+  },
+  {
+   "kind": "typo",
+   "q": "plenets",
+   "total": 285,
+   "top5": [
+    "List of planets",
+    "The Planets",
+    "Sunlight",
+    "Shield volcano",
+    "Sagittarius Window Eclipsing Extrasolar Planet Search"
+   ],
+   "snippet0": "…light seemed to wander around the sky throughout the year. The term \"planet\" derives from the Greek word \"<em>planets</em>\" - wanderer.\nIn 2006, the International Astronomical Union (IAU) convened a Planet…"
+  },
+  {
+   "kind": "phrase",
+   "q": "\"solar system\"",
+   "total": 198,
+   "top5": [
+    "Solar wind",
+    "Heliosphere",
+    "List of planets",
+    "Sunlight",
+    "Future of the Earth"
+   ],
+   "snippet0": "…The wind is shot out at hypersonic speed, so fast that it can travel the whole length of the <em>Solar System</em>, nearly one light year.\nThe particles are dangerous to…"
+  },
+  {
+   "kind": "single",
+   "q": "astronomy",
+   "total": 639,
+   "top5": [
+    "Astronomy",
+    "Magnitude (astronomy)",
+    "First light (astronomy)",
+    "Australian Aboriginal astronomy",
+    "History of astronomy"
+   ],
+   "snippet0": "as seen from La Silla Observatory]]\n<em>Astronomy</em> is the scientific study of celestial bodies. It is a major branch of space science. Stars, galaxies, planets, moons, asteroids, comets and nebulae…"
+  },
+  {
+   "kind": "stemming",
+   "q": "discovering planets",
+   "total": 341,
+   "top5": [
+    "Star Wars",
+    "Meanings of minor-planet names",
+    "Frieza",
+    "Asteroid belt",
+    "Scientific theory"
+   ],
+   "snippet0": "…follow), and the ability to heal wounds.\nThe Jedi are a group of beings who use the Force to bring peace and harmony to people, <em>planets</em>, and cultures. They are…"
+  },
+  {
+   "kind": "negation",
+   "q": "planet -mars",
+   "total": 2547,
+   "top5": [
+    "Planet Sketch",
+    "Planet Dinosaur",
+    "Planet of the Apes",
+    "Planet of Lana",
+    "Planet of the Apes (1968 movie)"
+   ],
+   "snippet0": "<em>Planet</em> Sketch is an animated television series made by Aardman Animations and Decode Entertainment, with help from C.O.R.E. Toons. The series was first aired on CITV in…"
+  },
+  {
+   "kind": "prefix",
+   "q": "solar sys",
+   "total": 581,
+   "top5": [
+    "List of planets",
+    "Sunlight",
+    "Pierre-Simon Laplace",
+    "Tidal locking",
+    "Jupiter"
+   ],
+   "snippet0": "…is a list of two types of planets: standard planets and dwarf planets, in the <em>Solar</em> <em>Sys</em>tem.\nTechnically, there was never a scientific definition of the term planet before 2006…"
+  },
+  {
+   "kind": "multi",
+   "q": "moon orbit earth",
+   "total": 628,
+   "top5": [
+    "Barycenter",
+    "Space Shuttle Buran",
+    "Earth phase",
+    "Geostationary orbit",
+    "Moon"
+   ],
+   "snippet0": "…It actually <em>orbits</em> a point on a line between the center of the <em>Earth</em>, and the <em>Moon</em>. This is about 1,710&nbsp;km below the surface of the <em>Earth</em>…"
+  }
+ ],
+ "status": "ok",
+ "containerState": {
+  "OOMKilled": false,
+  "ExitCode": 0,
+  "Status": "running",
+  "Error": ""
+ },
+ "dockerLogsTail": ""
+}

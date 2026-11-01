@@ -1,0 +1,16 @@
+{
+ "engine": "meili",
+ "memLimit": "1g",
+ "startedAt": "2026-11-01T20:25:23.552Z",
+ "host": "Apple Silicon Mac, Docker Desktop linux/arm64 VM, 12 CPUs (NOT a Raspberry Pi)",
+ "idleMiB": 63.4,
+ "status": "failed",
+ "error": "TypeError: fetch failed",
+ "containerState": {
+  "OOMKilled": true,
+  "ExitCode": 137,
+  "Status": "exited",
+  "Error": ""
+ },
+ "dockerLogsTail": ""
+}

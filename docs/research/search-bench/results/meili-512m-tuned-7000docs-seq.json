@@ -1,0 +1,249 @@
+{
+ "engine": "meili",
+ "memLimit": "512m",
+ "startedAt": "2026-11-01T20:37:31.354Z",
+ "tuned": "MEILI_MAX_INDEXING_MEMORY=201326592",
+ "host": "Apple Silicon Mac, Docker Desktop linux/arm64 VM, 12 CPUs (NOT a Raspberry Pi)",
+ "idleMiB": 71.8,
+ "index": {
+  "failedTasks": 0,
+  "indexedDocs": 7000,
+  "indexDbBytes": {
+   "numberOfDocuments": 7000,
+   "indexSize": 474046464,
+   "usedIndexSize": 196120576,
+   "rawDocumentDbSize": 26386432,
+   "avgDocumentSize": 3761,
+   "isIndexing": false,
+   "numberOfEmbeddings": 0,
+   "numberOfEmbeddedDocuments": 0,
+   "fieldDistribution": {
+    "body": 7000,
+    "collection": 7000,
+    "content_type": 7000,
+    "date": 7000,
+    "domain": 7000,
+    "headings": 7000,
+    "id": 7000,
+    "language": 7000,
+    "title": 7000,
+    "url": 7000
+   }
+  }
+ },
+ "indexWallMs": 8024,
+ "indexMem": {
+  "samples": 5,
+  "peakMiB": 469.8,
+  "lastMiB": 353.7,
+  "anonMiB": 312.9,
+  "fileMiB": 181.3,
+  "fileMappedMiB": 25.9,
+  "cgroupPeakMiB": 512
+ },
+ "diskKiB": 463280,
+ "diskMiB": 452.4,
+ "idleAfterIndexMiB": 353.7,
+ "afterIndexCgroup": {
+  "anonMiB": 309.5,
+  "fileMiB": 181.3,
+  "fileMappedMiB": 25.9,
+  "cgroupPeakMiB": 512
+ },
+ "restartToReadyMs": 327,
+ "idleAfterRestartMiB": 75.4,
+ "afterRestartCgroup": {
+  "anonMiB": 74,
+  "fileMiB": 0.1,
+  "fileMappedMiB": 0,
+  "cgroupPeakMiB": 78
+ },
+ "cold5FirstQueriesMs": [
+  15.2,
+  6.7,
+  4.5,
+  5.7,
+  6.1
+ ],
+ "queryMem": {
+  "samples": 5,
+  "peakMiB": 159,
+  "lastMiB": 153.2,
+  "anonMiB": 117.1,
+  "fileMiB": 32.7,
+  "fileMappedMiB": 30.6,
+  "cgroupPeakMiB": 159.2
+ },
+ "query": {
+  "overallClientMs": {
+   "n": 690,
+   "p50": 3.7,
+   "p95": 45.23,
+   "max": 50.05
+  },
+  "serverReportedMs": {
+   "n": 690,
+   "p50": 1,
+   "p95": 3,
+   "max": 7
+  },
+  "byType": {
+   "single": {
+    "n": 120,
+    "p50": 3.42,
+    "p95": 4.99,
+    "max": 45.34
+   },
+   "multi": {
+    "n": 180,
+    "p50": 4.12,
+    "p95": 44.89,
+    "max": 49.76
+   },
+   "typo": {
+    "n": 120,
+    "p50": 3.45,
+    "p95": 7.61,
+    "max": 47.03
+   },
+   "phrase": {
+    "n": 90,
+    "p50": 3.51,
+    "p95": 47.82,
+    "max": 48.51
+   },
+   "prefix": {
+    "n": 90,
+    "p50": 3.39,
+    "p95": 5.58,
+    "max": 12.66
+   },
+   "filtered": {
+    "n": 90,
+    "p50": 6.76,
+    "p95": 46.74,
+    "max": 50.05
+   }
+  },
+  "zeroResultQueries": {
+   "multi": 1,
+   "phrase": 13,
+   "filtered": 3
+  },
+  "errors": 0
+ },
+ "spot": [
+  {
+   "kind": "typo",
+   "q": "astronamy",
+   "total": 73,
+   "top5": [
+    "Astronomy",
+    "Magnitude (astronomy)",
+    "Australian Aboriginal astronomy",
+    "Collisional excitation",
+    "Argument of periapsis"
+   ],
+   "snippet0": "as seen from La Silla Observatory]]\n<em>Astronomy</em> is the scientific study of celestial bodies. It is a major branch of space science. Stars, galaxies, planets, moons, asteroids, comets and nebulae…"
+  },
+  {
+   "kind": "typo",
+   "q": "plenets",
+   "total": 45,
+   "top5": [
+    "Sagittarius Window Eclipsing Extrasolar Planet Search",
+    "Natural satellite",
+    "Argument of periapsis",
+    "Astrophysics",
+    "Bow shock"
+   ],
+   "snippet0": "…used the Hubble Space Telescope to look at 180,000 stars for seven days to find extrasolar <em>planets</em>.\nThe stars that SWEEPS monitored were all in the Sagittarius-I Window…"
+  },
+  {
+   "kind": "phrase",
+   "q": "\"solar system\"",
+   "total": 32,
+   "top5": [
+    "Future of the Earth",
+    "Jupiter",
+    "Natural satellite",
+    "Bow shock",
+    "Near-Earth object"
+   ],
+   "snippet0": "…of the Sun, loss of heat energy from the Earth's core and change of the planet's orbit by the other things in the <em>Solar System</em>. The Milankovitch theory…"
+  },
+  {
+   "kind": "single",
+   "q": "astronomy",
+   "total": 83,
+   "top5": [
+    "Astronomy",
+    "Magnitude (astronomy)",
+    "Australian Aboriginal astronomy",
+    "Collisional excitation",
+    "Argument of periapsis"
+   ],
+   "snippet0": "as seen from La Silla Observatory]]\n<em>Astronomy</em> is the scientific study of celestial bodies. It is a major branch of space science. Stars, galaxies, planets, moons, asteroids, comets and nebulae…"
+  },
+  {
+   "kind": "stemming",
+   "q": "discovering planets",
+   "total": 40,
+   "top5": [
+    "Astronomy",
+    "Isaac Newton",
+    "George Bass",
+    "Eobard Thawne",
+    "Xena Wimmenhoeve"
+   ],
+   "snippet0": "…Astronomy is the scientific study of celestial bodies. It is a major branch of space science. Stars, galaxies, <em>planets</em>, moons, asteroids, comets and nebulae are studied, as are supernovae explosions…"
+  },
+  {
+   "kind": "negation",
+   "q": "planet -mars",
+   "total": 362,
+   "top5": [
+    "Planet Sketch",
+    "Sagittarius Window Eclipsing Extrasolar Planet Search",
+    "Argument of periapsis",
+    "Moons of Saturn",
+    "Ice giant"
+   ],
+   "snippet0": "<em>Planet</em> Sketch is an animated television series made by Aardman Animations and Decode Entertainment, with help from C.O.R.E. Toons. The series was first aired on CITV in…"
+  },
+  {
+   "kind": "prefix",
+   "q": "solar sys",
+   "total": 86,
+   "top5": [
+    "Jupiter",
+    "Natural satellite",
+    "Future of the Earth",
+    "51 Pegasi",
+    "Near-Earth object"
+   ],
+   "snippet0": "as it approached Jupiter, made into an animation]]\nJupiter is the largest planet in the <em>Solar</em> <em>Sys</em>tem. It is the fifth planet from the Sun. Jupiter is a gas giant…"
+  },
+  {
+   "kind": "multi",
+   "q": "moon orbit earth",
+   "total": 81,
+   "top5": [
+    "Earth phase",
+    "3753 Cruithne",
+    "Saturn V",
+    "History of the Earth",
+    "Natural satellite"
+   ],
+   "snippet0": "…because the <em>Moon</em>'s <em>orbit</em> is eccentric, <em>Earth</em>'s size in the sky may be a bit smaller or larger at times. <em>Earth</em> shows phases, just like the <em>Moon</em> does…"
+  }
+ ],
+ "status": "ok",
+ "containerState": {
+  "OOMKilled": false,
+  "ExitCode": 0,
+  "Status": "running",
+  "Error": ""
+ },
+ "dockerLogsTail": ""
+}

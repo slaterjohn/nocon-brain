@@ -1,0 +1,223 @@
+{
+ "engine": "typesense",
+ "memLimit": "unlimited (Docker VM ~7.65 GiB)",
+ "startedAt": "2026-11-01T20:27:20.788Z",
+ "host": "Apple Silicon Mac, Docker Desktop linux/arm64 VM, 12 CPUs (NOT a Raspberry Pi)",
+ "idleMiB": 95.4,
+ "index": {
+  "failedDocs": 0,
+  "indexedDocs": 50000
+ },
+ "indexWallMs": 19339,
+ "indexMem": {
+  "samples": 10,
+  "peakMiB": 519.4,
+  "lastMiB": 502.8,
+  "anonMiB": 475.7,
+  "fileMiB": 233.6,
+  "fileMappedMiB": 0,
+  "cgroupPeakMiB": 865.5
+ },
+ "diskKiB": 251936,
+ "diskMiB": 246,
+ "idleAfterIndexMiB": 399.7,
+ "afterIndexCgroup": {
+  "anonMiB": 368.9,
+  "fileMiB": 233.6,
+  "fileMappedMiB": 0,
+  "cgroupPeakMiB": 865.5
+ },
+ "restartToReadyMs": 5346,
+ "idleAfterRestartMiB": 410.1,
+ "afterRestartCgroup": {
+  "anonMiB": 420.9,
+  "fileMiB": 242.3,
+  "fileMappedMiB": 0,
+  "cgroupPeakMiB": 690.8
+ },
+ "cold5FirstQueriesMs": [
+  7.6,
+  9.1,
+  15.7,
+  15.9,
+  6.7
+ ],
+ "queryMem": {
+  "samples": 4,
+  "peakMiB": 497.8,
+  "lastMiB": 460.2,
+  "anonMiB": 437.6,
+  "fileMiB": 120.9,
+  "fileMappedMiB": 0,
+  "cgroupPeakMiB": 743.7
+ },
+ "query": {
+  "overallClientMs": {
+   "n": 690,
+   "p50": 2.93,
+   "p95": 21.72,
+   "max": 34.48
+  },
+  "serverReportedMs": {
+   "n": 690,
+   "p50": 1,
+   "p95": 19,
+   "max": 31
+  },
+  "byType": {
+   "single": {
+    "n": 120,
+    "p50": 2.74,
+    "p95": 20,
+    "max": 28.77
+   },
+   "multi": {
+    "n": 180,
+    "p50": 3.35,
+    "p95": 26.5,
+    "max": 33.43
+   },
+   "typo": {
+    "n": 120,
+    "p50": 2.77,
+    "p95": 20.07,
+    "max": 34.48
+   },
+   "phrase": {
+    "n": 90,
+    "p50": 1.05,
+    "p95": 14.24,
+    "max": 22.38
+   },
+   "prefix": {
+    "n": 90,
+    "p50": 3.18,
+    "p95": 15.88,
+    "max": 31.98
+   },
+   "filtered": {
+    "n": 90,
+    "p50": 4,
+    "p95": 24.42,
+    "max": 32.56
+   }
+  },
+  "zeroResultQueries": {
+   "phrase": 21
+  },
+  "errors": 0
+ },
+ "spot": [
+  {
+   "kind": "typo",
+   "q": "astronamy",
+   "total": 203,
+   "top5": [
+    "Astronomy",
+    "First light (astronomy)",
+    "History of astronomy",
+    "Australian Aboriginal astronomy",
+    "Magnitude (astronomy)"
+   ],
+   "snippet0": "as seen from La Silla Observatory]]\n<mark>Astronomy</mark> is the scientific study of celestial bodies. It is a major branch"
+  },
+  {
+   "kind": "typo",
+   "q": "plenets",
+   "total": 815,
+   "top5": [
+    "List of planets",
+    "Giant planet",
+    "Ice planet",
+    "Sagittarius Window Eclipsing Extrasolar Planet Search",
+    "Planet Her"
+   ],
+   "snippet0": "This is a list of two types of <mark>planets</mark>: standard <mark>planets</mark> and dwarf <mark>planets</mark>, in the Solar System.\nTechnically, there was"
+  },
+  {
+   "kind": "phrase",
+   "q": "\"solar system\"",
+   "total": 198,
+   "top5": [
+    "Impact crater",
+    "Sky",
+    "List of planets",
+    "Age of Earth",
+    "Water"
+   ]
+  },
+  {
+   "kind": "single",
+   "q": "astronomy",
+   "total": 201,
+   "top5": [
+    "Astronomy",
+    "Mauna Kea",
+    "Galileo Galilei",
+    "Abd al-Rahman al-Sufi",
+    "William Herschel"
+   ],
+   "snippet0": "as seen from La Silla Observatory]]\n<mark>Astronomy</mark> is the scientific study of celestial bodies. It is a major branch"
+  },
+  {
+   "kind": "stemming",
+   "q": "discovering planets",
+   "total": 160,
+   "top5": [
+    "Sagittarius Window Eclipsing Extrasolar Planet Search",
+    "51 Pegasi",
+    "Extrasolar planet",
+    "Haumea (dwarf planet)",
+    "Pollux b"
+   ],
+   "snippet0": "of dust. These stars are about 27,000 light years from Earth.\nSixteen <mark>planets</mark> were <mark>discovered</mark> by SWEEPS. They took from 0.6 to 4.2 days to go around"
+  },
+  {
+   "kind": "negation",
+   "q": "planet -mars",
+   "total": 723,
+   "top5": [
+    "Tau Ceti",
+    "Star",
+    "K-type main-sequence star",
+    "List of planets",
+    "Sagittarius Window Eclipsing Extrasolar Planet Search"
+   ],
+   "snippet0": "surrounding Tau Ceti as in the Solar System. There are probably five <mark>planets</mark> orbiting Tau Ceti,  two in the habitable zone. Because of its debris"
+  },
+  {
+   "kind": "prefix",
+   "q": "solar sys",
+   "total": 277,
+   "top5": [
+    "Age of Earth",
+    "Pierre-Simon Laplace",
+    "Sky",
+    "Tidal locking",
+    "Impact crater"
+   ],
+   "snippet0": "Ca-Al-rich inclusions&nbsp;– the oldest known solid bits in meteorites formed in the <mark>solar</mark> <mark>sys</mark>tem&nbsp;– are 4.567 billion years old. This gives an age for the <mark>Solar</mark>"
+  },
+  {
+   "kind": "multi",
+   "q": "moon orbit earth",
+   "total": 100,
+   "top5": [
+    "Earth",
+    "Barycenter",
+    "Abdülkadir Topkaç",
+    "Tide",
+    "Tycho Brahe"
+   ],
+   "snippet0": "side less, creating winter. Earth has one natural satellite, the Moon. The <mark>Moon</mark> <mark>orbits</mark> <mark>Earth</mark> at about 384,400 kilometers (238,855 miles). The <mark>Moon</mark> is about one-quarter the"
+  }
+ ],
+ "status": "ok",
+ "containerState": {
+  "OOMKilled": false,
+  "ExitCode": 0,
+  "Status": "running",
+  "Error": ""
+ },
+ "dockerLogsTail": ""
+}

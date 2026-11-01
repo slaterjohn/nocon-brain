@@ -1,0 +1,33 @@
+# Run with: docker compose -p brainbench ... (MEM_LIMIT e.g. 512m, 1g, 0 = unlimited)
+services:
+  meilisearch:
+    image: getmeili/meilisearch:v1.56.0
+    container_name: brainbench-meili
+    platform: linux/arm64
+    environment: { MEILI_NO_ANALYTICS: "true", MEILI_ENV: development }
+    volumes: [ "meili_data:/meili_data" ]
+    ports: [ "127.0.0.1:17700:7700" ]
+    mem_limit: ${MEM_LIMIT:-0}
+    memswap_limit: ${MEM_LIMIT:-0}
+    profiles: [ meili ]
+  typesense:
+    image: typesense/typesense:30.2
+    container_name: brainbench-typesense
+    platform: linux/arm64
+    command: [ "--data-dir=/data", "--api-key=bench", "--listen-port=8108" ]
+    volumes: [ "ts_data:/data" ]
+    ports: [ "127.0.0.1:18108:8108" ]
+    mem_limit: ${MEM_LIMIT:-0}
+    memswap_limit: ${MEM_LIMIT:-0}
+    profiles: [ typesense ]
+  sqlite:
+    build: { context: ., dockerfile: Dockerfile.sqlite }
+    image: brainbench-sqlite:local
+    container_name: brainbench-sqlite
+    platform: linux/arm64
+    command: [ "sleep", "infinity" ]
+    volumes: [ "sqlite_data:/db", "./data:/data:ro", "./:/bench:ro" ]
+    mem_limit: ${MEM_LIMIT:-0}
+    memswap_limit: ${MEM_LIMIT:-0}
+    profiles: [ sqlite ]
+volumes: { meili_data: {}, ts_data: {}, sqlite_data: {} }

@@ -1,0 +1,249 @@
+{
+ "engine": "meili",
+ "memLimit": "1g",
+ "startedAt": "2026-11-01T20:36:30.821Z",
+ "tuned": "MEILI_MAX_INDEXING_MEMORY=536870912",
+ "host": "Apple Silicon Mac, Docker Desktop linux/arm64 VM, 12 CPUs (NOT a Raspberry Pi)",
+ "idleMiB": 71.8,
+ "index": {
+  "failedTasks": 0,
+  "indexedDocs": 15000,
+  "indexDbBytes": {
+   "numberOfDocuments": 15000,
+   "indexSize": 957825024,
+   "usedIndexSize": 377921536,
+   "rawDocumentDbSize": 55926784,
+   "avgDocumentSize": 3720,
+   "isIndexing": false,
+   "numberOfEmbeddings": 0,
+   "numberOfEmbeddedDocuments": 0,
+   "fieldDistribution": {
+    "body": 15000,
+    "collection": 15000,
+    "content_type": 15000,
+    "date": 15000,
+    "domain": 15000,
+    "headings": 15000,
+    "id": 15000,
+    "language": 15000,
+    "title": 15000,
+    "url": 15000
+   }
+  }
+ },
+ "indexWallMs": 19068,
+ "indexMem": {
+  "samples": 10,
+  "peakMiB": 910,
+  "lastMiB": 695.1,
+  "anonMiB": 446.2,
+  "fileMiB": 548.5,
+  "fileMappedMiB": 244.3,
+  "cgroupPeakMiB": 1024
+ },
+ "diskKiB": 935792,
+ "diskMiB": 913.9,
+ "idleAfterIndexMiB": 695.1,
+ "afterIndexCgroup": {
+  "anonMiB": 444.9,
+  "fileMiB": 548.5,
+  "fileMappedMiB": 244.3,
+  "cgroupPeakMiB": 1024
+ },
+ "restartToReadyMs": 1345,
+ "idleAfterRestartMiB": 77.3,
+ "afterRestartCgroup": {
+  "anonMiB": 75.9,
+  "fileMiB": 0.1,
+  "fileMappedMiB": 0.1,
+  "cgroupPeakMiB": 79.8
+ },
+ "cold5FirstQueriesMs": [
+  10.8,
+  5.2,
+  4.3,
+  4.5,
+  4.5
+ ],
+ "queryMem": {
+  "samples": 4,
+  "peakMiB": 181.4,
+  "lastMiB": 176.2,
+  "anonMiB": 121.7,
+  "fileMiB": 50.9,
+  "fileMappedMiB": 44.7,
+  "cgroupPeakMiB": 181.7
+ },
+ "query": {
+  "overallClientMs": {
+   "n": 690,
+   "p50": 3.41,
+   "p95": 43.95,
+   "max": 51.43
+  },
+  "serverReportedMs": {
+   "n": 690,
+   "p50": 1,
+   "p95": 3,
+   "max": 7
+  },
+  "byType": {
+   "single": {
+    "n": 120,
+    "p50": 3.11,
+    "p95": 4.71,
+    "max": 5.28
+   },
+   "multi": {
+    "n": 180,
+    "p50": 3.75,
+    "p95": 42.91,
+    "max": 45.14
+   },
+   "typo": {
+    "n": 120,
+    "p50": 3.08,
+    "p95": 4.71,
+    "max": 5.53
+   },
+   "phrase": {
+    "n": 90,
+    "p50": 2.75,
+    "p95": 47.92,
+    "max": 50
+   },
+   "prefix": {
+    "n": 90,
+    "p50": 3.51,
+    "p95": 7.33,
+    "max": 10.86
+   },
+   "filtered": {
+    "n": 90,
+    "p50": 4.9,
+    "p95": 48.48,
+    "max": 51.43
+   }
+  },
+  "zeroResultQueries": {
+   "multi": 1,
+   "phrase": 11,
+   "filtered": 2
+  },
+  "errors": 0
+ },
+ "spot": [
+  {
+   "kind": "typo",
+   "q": "astronamy",
+   "total": 155,
+   "top5": [
+    "Astronomy",
+    "Magnitude (astronomy)",
+    "Australian Aboriginal astronomy",
+    "Collisional excitation",
+    "Argument of periapsis"
+   ],
+   "snippet0": "as seen from La Silla Observatory]]\n<em>Astronomy</em> is the scientific study of celestial bodies. It is a major branch of space science. Stars, galaxies, planets, moons, asteroids, comets and nebulae…"
+  },
+  {
+   "kind": "typo",
+   "q": "plenets",
+   "total": 86,
+   "top5": [
+    "Sagittarius Window Eclipsing Extrasolar Planet Search",
+    "Ice planet",
+    "Natural satellite",
+    "Argument of periapsis",
+    "Giant planet"
+   ],
+   "snippet0": "…used the Hubble Space Telescope to look at 180,000 stars for seven days to find extrasolar <em>planets</em>.\nThe stars that SWEEPS monitored were all in the Sagittarius-I Window…"
+  },
+  {
+   "kind": "phrase",
+   "q": "\"solar system\"",
+   "total": 62,
+   "top5": [
+    "Heliosphere",
+    "Future of the Earth",
+    "Tidal locking",
+    "Jupiter",
+    "Ice planet"
+   ],
+   "snippet0": "…and Heliospheric Observatory (SOHO) showed that the heliosphere, the solar wind-filled volume which prevents the <em>solar system</em> from becoming embedded in the local (ambient) interstellar medium, is not axisymmetrical…"
+  },
+  {
+   "kind": "single",
+   "q": "astronomy",
+   "total": 178,
+   "top5": [
+    "Astronomy",
+    "Magnitude (astronomy)",
+    "Australian Aboriginal astronomy",
+    "Collisional excitation",
+    "Argument of periapsis"
+   ],
+   "snippet0": "as seen from La Silla Observatory]]\n<em>Astronomy</em> is the scientific study of celestial bodies. It is a major branch of space science. Stars, galaxies, planets, moons, asteroids, comets and nebulae…"
+  },
+  {
+   "kind": "stemming",
+   "q": "discovering planets",
+   "total": 103,
+   "top5": [
+    "Meanings of minor-planet names",
+    "Obi-Wan Kenobi",
+    "Astronomy",
+    "Isaac Newton",
+    "Applied science"
+   ],
+   "snippet0": "…are usually with <em>planet</em>ary satellites.\nAfter the <em>discovering</em> astronomer discovers a <em>planet</em>, they can ask for that <em>planet</em> to be named a specific way. New minor <em>planet</em> names are approved…"
+  },
+  {
+   "kind": "negation",
+   "q": "planet -mars",
+   "total": 770,
+   "top5": [
+    "Planet Sketch",
+    "Planet Dinosaur",
+    "Treasure Planet",
+    "Dwarf planet",
+    "Kirby: Planet Robobot"
+   ],
+   "snippet0": "<em>Planet</em> Sketch is an animated television series made by Aardman Animations and Decode Entertainment, with help from C.O.R.E. Toons. The series was first aired on CITV in…"
+  },
+  {
+   "kind": "prefix",
+   "q": "solar sys",
+   "total": 183,
+   "top5": [
+    "Tidal locking",
+    "Jupiter",
+    "Ice planet",
+    "Natural satellite",
+    "Heliosphere"
+   ],
+   "snippet0": "is tidally locked, only one side is visible from Earth]]\nTidal locking (or captured rotation) is when one side of an astronomical body always faces another. It is also called…"
+  },
+  {
+   "kind": "multi",
+   "q": "moon orbit earth",
+   "total": 178,
+   "top5": [
+    "Earth phase",
+    "3753 Cruithne",
+    "SpaceX Starship",
+    "Satellite (artificial)",
+    "Spaceflight"
+   ],
+   "snippet0": "…because the <em>Moon</em>'s <em>orbit</em> is eccentric, <em>Earth</em>'s size in the sky may be a bit smaller or larger at times. <em>Earth</em> shows phases, just like the <em>Moon</em> does…"
+  }
+ ],
+ "status": "ok",
+ "containerState": {
+  "OOMKilled": false,
+  "ExitCode": 0,
+  "Status": "running",
+  "Error": ""
+ },
+ "dockerLogsTail": ""
+}

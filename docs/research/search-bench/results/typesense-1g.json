@@ -1,0 +1,223 @@
+{
+ "engine": "typesense",
+ "memLimit": "1g",
+ "startedAt": "2026-11-01T20:28:27.012Z",
+ "host": "Apple Silicon Mac, Docker Desktop linux/arm64 VM, 12 CPUs (NOT a Raspberry Pi)",
+ "idleMiB": 86.7,
+ "index": {
+  "failedDocs": 0,
+  "indexedDocs": 50000
+ },
+ "indexWallMs": 20167,
+ "indexMem": {
+  "samples": 11,
+  "peakMiB": 504.7,
+  "lastMiB": 468.1,
+  "anonMiB": 441.6,
+  "fileMiB": 233.9,
+  "fileMappedMiB": 0,
+  "cgroupPeakMiB": 858.6
+ },
+ "diskKiB": 252192,
+ "diskMiB": 246.3,
+ "idleAfterIndexMiB": 374.9,
+ "afterIndexCgroup": {
+  "anonMiB": 346.5,
+  "fileMiB": 233.9,
+  "fileMappedMiB": 0,
+  "cgroupPeakMiB": 858.6
+ },
+ "restartToReadyMs": 5372,
+ "idleAfterRestartMiB": 445.3,
+ "afterRestartCgroup": {
+  "anonMiB": 437.7,
+  "fileMiB": 117.4,
+  "fileMappedMiB": 0,
+  "cgroupPeakMiB": 715.9
+ },
+ "cold5FirstQueriesMs": [
+  6.9,
+  9.8,
+  13.6,
+  7.1,
+  22
+ ],
+ "queryMem": {
+  "samples": 4,
+  "peakMiB": 517.8,
+  "lastMiB": 465.1,
+  "anonMiB": 436.5,
+  "fileMiB": 122.8,
+  "fileMappedMiB": 0,
+  "cgroupPeakMiB": 766.4
+ },
+ "query": {
+  "overallClientMs": {
+   "n": 690,
+   "p50": 2.78,
+   "p95": 18.42,
+   "max": 38.02
+  },
+  "serverReportedMs": {
+   "n": 690,
+   "p50": 1,
+   "p95": 16,
+   "max": 36
+  },
+  "byType": {
+   "single": {
+    "n": 120,
+    "p50": 2.36,
+    "p95": 17.68,
+    "max": 28.38
+   },
+   "multi": {
+    "n": 180,
+    "p50": 3.37,
+    "p95": 25.98,
+    "max": 36.17
+   },
+   "typo": {
+    "n": 120,
+    "p50": 2.94,
+    "p95": 18.85,
+    "max": 38.02
+   },
+   "phrase": {
+    "n": 90,
+    "p50": 0.99,
+    "p95": 9.34,
+    "max": 20.94
+   },
+   "prefix": {
+    "n": 90,
+    "p50": 2.79,
+    "p95": 4.83,
+    "max": 7.99
+   },
+   "filtered": {
+    "n": 90,
+    "p50": 3.2,
+    "p95": 9.7,
+    "max": 11.49
+   }
+  },
+  "zeroResultQueries": {
+   "phrase": 21
+  },
+  "errors": 0
+ },
+ "spot": [
+  {
+   "kind": "typo",
+   "q": "astronamy",
+   "total": 203,
+   "top5": [
+    "Astronomy",
+    "First light (astronomy)",
+    "History of astronomy",
+    "Australian Aboriginal astronomy",
+    "Magnitude (astronomy)"
+   ],
+   "snippet0": "as seen from La Silla Observatory]]\n<mark>Astronomy</mark> is the scientific study of celestial bodies. It is a major branch"
+  },
+  {
+   "kind": "typo",
+   "q": "plenets",
+   "total": 815,
+   "top5": [
+    "List of planets",
+    "Giant planet",
+    "Ice planet",
+    "Sagittarius Window Eclipsing Extrasolar Planet Search",
+    "Planet Her"
+   ],
+   "snippet0": "This is a list of two types of <mark>planets</mark>: standard <mark>planets</mark> and dwarf <mark>planets</mark>, in the Solar System.\nTechnically, there was"
+  },
+  {
+   "kind": "phrase",
+   "q": "\"solar system\"",
+   "total": 198,
+   "top5": [
+    "Impact crater",
+    "Sky",
+    "List of planets",
+    "Age of Earth",
+    "Water"
+   ]
+  },
+  {
+   "kind": "single",
+   "q": "astronomy",
+   "total": 201,
+   "top5": [
+    "Astronomy",
+    "Mauna Kea",
+    "Galileo Galilei",
+    "Abd al-Rahman al-Sufi",
+    "William Herschel"
+   ],
+   "snippet0": "as seen from La Silla Observatory]]\n<mark>Astronomy</mark> is the scientific study of celestial bodies. It is a major branch"
+  },
+  {
+   "kind": "stemming",
+   "q": "discovering planets",
+   "total": 160,
+   "top5": [
+    "Sagittarius Window Eclipsing Extrasolar Planet Search",
+    "51 Pegasi",
+    "Extrasolar planet",
+    "Haumea (dwarf planet)",
+    "Pollux b"
+   ],
+   "snippet0": "of dust. These stars are about 27,000 light years from Earth.\nSixteen <mark>planets</mark> were <mark>discovered</mark> by SWEEPS. They took from 0.6 to 4.2 days to go around"
+  },
+  {
+   "kind": "negation",
+   "q": "planet -mars",
+   "total": 723,
+   "top5": [
+    "Tau Ceti",
+    "Star",
+    "K-type main-sequence star",
+    "List of planets",
+    "Sagittarius Window Eclipsing Extrasolar Planet Search"
+   ],
+   "snippet0": "surrounding Tau Ceti as in the Solar System. There are probably five <mark>planets</mark> orbiting Tau Ceti,  two in the habitable zone. Because of its debris"
+  },
+  {
+   "kind": "prefix",
+   "q": "solar sys",
+   "total": 277,
+   "top5": [
+    "Age of Earth",
+    "Pierre-Simon Laplace",
+    "Sky",
+    "Tidal locking",
+    "Impact crater"
+   ],
+   "snippet0": "Ca-Al-rich inclusions&nbsp;– the oldest known solid bits in meteorites formed in the <mark>solar</mark> <mark>sys</mark>tem&nbsp;– are 4.567 billion years old. This gives an age for the <mark>Solar</mark>"
+  },
+  {
+   "kind": "multi",
+   "q": "moon orbit earth",
+   "total": 100,
+   "top5": [
+    "Earth",
+    "Barycenter",
+    "Abdülkadir Topkaç",
+    "Tide",
+    "Tycho Brahe"
+   ],
+   "snippet0": "side less, creating winter. Earth has one natural satellite, the Moon. The <mark>Moon</mark> <mark>orbits</mark> <mark>Earth</mark> at about 384,400 kilometers (238,855 miles). The <mark>Moon</mark> is about one-quarter the"
+  }
+ ],
+ "status": "ok",
+ "containerState": {
+  "OOMKilled": false,
+  "ExitCode": 0,
+  "Status": "running",
+  "Error": ""
+ },
+ "dockerLogsTail": "I20261101 20:29:13.425343   355 log.cpp:1112] load open segment, path: /data/state/log first_index: 192\nI20261101 20:29:13.425397   355 raft_meta.cpp:521] Loaded single stable meta, path /data/state/meta term 2 votedfor 172.22.0.2:8107:8108 time: 10\nI20261101 20:29:13.425405   355 node.cpp:608] node default_group:172.22.0.2:8107:8108 init, term: 2 last_log_id: (index=204,term=2) conf: 172.22.0.2:8107:8108 old_conf: \nI20261101 20:29:13.425427   355 node.cpp:1645] node default_group:172.22.0.2:8107:8108 term 2 start vote and grant vote self\nI20261101 20:29:13.425990   355 raft_meta.cpp:546] Saved single stable meta, path /data/state/meta term 3 votedfor 172.22.0.2:8107:8108 time: 392\nI20261101 20:29:13.425998   355 node.cpp:1899] node default_group:172.22.0.2:8107:8108 term 3 become leader of group 172.22.0.2:8107:8108 \nI20261101 20:29:13.426023   355 raft_server.cpp:146] Node last_index: 204\nI20261101 20:29:13.426026   355 typesense_server_utils.cpp:424] Typesense peering service is running on 172.22.0.2:8107\nI20261101 20:29:13.426028   355 typesense_server_utils.cpp:425] Snapshot interval configured as: 3600s\n"
+}

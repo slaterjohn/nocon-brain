@@ -1,0 +1,7 @@
+# Override used for the "tuned" Meilisearch runs (TUNED=1): explicit indexing memory cap (MEILI_IDX_MEM, bytes)
+# and indexing threads (MEILI_THREADS, default 2).
+services:
+  meilisearch:
+    environment:
+      MEILI_MAX_INDEXING_MEMORY: ${MEILI_IDX_MEM}
+      MEILI_MAX_INDEXING_THREADS: ${MEILI_THREADS:-2}

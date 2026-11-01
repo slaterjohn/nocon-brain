@@ -1,0 +1,233 @@
+{
+ "engine": "sqlite",
+ "memLimit": "unlimited (Docker VM ~7.65 GiB)",
+ "startedAt": "2026-11-01T20:16:35.939Z",
+ "host": "Apple Silicon Mac, Docker Desktop linux/arm64 VM, 12 CPUs (NOT a Raspberry Pi)",
+ "idleMiB": 0.6,
+ "indexWallMs": 11185,
+ "index": {
+  "docs": 50000,
+  "vocabTerms": 275840,
+  "stages": {
+   "insertDocsAndCountVocabMs": 3112,
+   "buildFtsMs": 6195,
+   "optimizeMs": 1055,
+   "buildVocabTrigramMs": 689
+  },
+  "totalMs": 11051,
+  "nodeRssPeakMiB": 219
+ },
+ "indexMem": {
+  "samples": 6,
+  "peakMiB": 187.7,
+  "lastMiB": 10.8,
+  "anonMiB": 0.2,
+  "fileMiB": 447.9,
+  "fileMappedMiB": 0,
+  "cgroupPeakMiB": 828.9
+ },
+ "diskKiB": 340896,
+ "diskMiB": 332.9,
+ "idleAfterIndexMiB": 10.8,
+ "query": {
+  "cold5FirstQueriesMs": [
+   3.5,
+   0.6,
+   0.5,
+   0.5,
+   0.4
+  ],
+  "overall": {
+   "n": 690,
+   "p50": 0.57,
+   "p95": 6.03,
+   "max": 12.25
+  },
+  "byType": {
+   "single": {
+    "n": 120,
+    "p50": 0.44,
+    "p95": 1.21,
+    "max": 1.81
+   },
+   "multi": {
+    "n": 180,
+    "p50": 0.54,
+    "p95": 1.59,
+    "max": 3.25
+   },
+   "typo": {
+    "n": 120,
+    "p50": 3.96,
+    "p95": 9.1,
+    "max": 12.25
+   },
+   "phrase": {
+    "n": 90,
+    "p50": 0.29,
+    "p95": 0.68,
+    "max": 1.64
+   },
+   "prefix": {
+    "n": 90,
+    "p50": 1.27,
+    "p95": 3.99,
+    "max": 6.49
+   },
+   "filtered": {
+    "n": 90,
+    "p50": 0.24,
+    "p95": 2.54,
+    "max": 2.95
+   }
+  },
+  "zeroResultQueries": {
+   "phrase": 1,
+   "prefix": 1,
+   "filtered": 12
+  },
+  "errors": 0,
+  "nodeRssPeakMiB": 125
+ },
+ "queryMem": {
+  "samples": 1,
+  "peakMiB": 10.8,
+  "lastMiB": 10.8,
+  "anonMiB": 0.2,
+  "fileMiB": 447.9,
+  "fileMappedMiB": 0,
+  "cgroupPeakMiB": 828.9
+ },
+ "spot": [
+  {
+   "kind": "typo",
+   "q": "astronamy",
+   "total": 10,
+   "top5": [
+    "Jane Rigby",
+    "European plaice",
+    "Mae Jemison",
+    "International Astronautical Congress",
+    "Astronaut"
+   ],
+   "didYouMean": [
+    [
+     "astronamy",
+     "astronomy"
+    ]
+   ],
+   "snippet0": "…Jane Rigby got a masters and doctoral degree in <mark>astronomy</mark> at the University of Arizona.\nShe helps make queer <mark>astronauts</mark> and other groups that…"
+  },
+  {
+   "kind": "typo",
+   "q": "plenets",
+   "total": 10,
+   "top5": [
+    "K-type main-sequence star",
+    "Atmosphere of Earth",
+    "Ludwig Göransson",
+    "Christopher Nolan",
+    "Matrixism"
+   ],
+   "didYouMean": [
+    [
+     "plenets",
+     "planets"
+    ]
+   ],
+   "snippet0": "…and gives <mark>plenty</mark> of time for life to develop on <mark>planets</mark> around them.\nSome nearby K-type stars known to have <mark>planets</mark> are Epsilon…"
+  },
+  {
+   "kind": "phrase",
+   "q": "\"solar system\"",
+   "total": 10,
+   "top5": [
+    "List of planets",
+    "Pierre-Simon Laplace",
+    "Impact crater",
+    "Sunlight",
+    "Grand tack hypothesis"
+   ],
+   "didYouMean": [],
+   "snippet0": "…standard planets and dwarf planets, in the <mark>Solar System</mark>.\nTechnically, there was never a scientific definition of the term planet before 2006. When the…"
+  },
+  {
+   "kind": "single",
+   "q": "astronomy",
+   "total": 10,
+   "top5": [
+    "Astronomy",
+    "First light (astronomy)",
+    "Magnitude (astronomy)",
+    "Mauna Kea",
+    "Eudoxus of Cnidus"
+   ],
+   "didYouMean": [],
+   "snippet0": "as seen from La Silla Observatory]]\n<mark>Astronomy</mark> is the scientific study of celestial bodies. It is a major branch of space science. Stars, galaxies…"
+  },
+  {
+   "kind": "stemming",
+   "q": "discovering planets",
+   "total": 10,
+   "top5": [
+    "Sagittarius Window Eclipsing Extrasolar Planet Search",
+    "Makemake (dwarf planet)",
+    "Haumea (dwarf planet)",
+    "Eris (dwarf planet)",
+    "Neptune"
+   ],
+   "didYouMean": [],
+   "snippet0": "…Sixteen <mark>planets</mark> were <mark>discovered</mark> by SWEEPS. They took from 0.6 to 4.2 days to go around the Sun. <mark>Planets</mark> which took less…"
+  },
+  {
+   "kind": "negation",
+   "q": "planet -mars",
+   "total": 10,
+   "top5": [
+    "List of planets",
+    "Sagittarius Window Eclipsing Extrasolar Planet Search",
+    "Planet of the Apes",
+    "Meanings of minor-planet names",
+    "Dwarf planet"
+   ],
+   "didYouMean": [],
+   "snippet0": "This is a list of two types of <mark>planets</mark>: standard <mark>planets</mark> and dwarf <mark>planets</mark>, in the Solar System.\nTechnically, there was never a scientific…"
+  },
+  {
+   "kind": "prefix",
+   "q": "solar sys",
+   "total": 10,
+   "top5": [
+    "Solar energy",
+    "Solar power plant",
+    "Sunlight",
+    "Solar thermal energy",
+    "List of planets"
+   ],
+   "didYouMean": [],
+   "snippet0": "…<mark>Solar</mark> power plants convert sunlight into electricity, either directly using photovoltaics (PV), or indirectly using concentrated <mark>solar</mark> power (CSP). Concentrated <mark>solar</mark> power <mark>systems</mark> use…"
+  },
+  {
+   "kind": "multi",
+   "q": "moon orbit earth",
+   "total": 10,
+   "top5": [
+    "Natural satellite",
+    "List of Jupiter's moons",
+    "Barycenter",
+    "Orbital revolution",
+    "James Webb Space Telescope"
+   ],
+   "didYouMean": [],
+   "snippet0": "…The <mark>orbit</mark> of the <mark>Earth</mark>'s <mark>moon</mark> actually causes the tides and waves on <mark>Earth</mark>.\nNo <mark>moons</mark> that belong to <mark>moons</mark> have been found…"
+  }
+ ],
+ "status": "ok",
+ "containerState": {
+  "OOMKilled": false,
+  "ExitCode": 0,
+  "Status": "running",
+  "Error": ""
+ },
+ "dockerLogsTail": ""
+}

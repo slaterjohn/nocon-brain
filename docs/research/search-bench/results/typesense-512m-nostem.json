@@ -1,0 +1,16 @@
+{
+ "engine": "typesense",
+ "memLimit": "512m",
+ "startedAt": "2026-11-01T20:40:12.550Z",
+ "host": "Apple Silicon Mac, Docker Desktop linux/arm64 VM, 12 CPUs (NOT a Raspberry Pi)",
+ "idleMiB": 104.7,
+ "status": "failed",
+ "error": "TypeError: terminated",
+ "containerState": {
+  "OOMKilled": true,
+  "ExitCode": 137,
+  "Status": "exited",
+  "Error": ""
+ },
+ "dockerLogsTail": "named `/data/state/log/log_inprogress_00000000000000000018' to `/data/state/log/log_00000000000000000018_00000000000000000033'\nI20261101 20:40:26.964148   389 log.cpp:114] Created new segment `/data/state/log/log_inprogress_00000000000000000034' with fd=27\nI20261101 20:40:27.589555   389 log.cpp:536] close a full segment. Current first_index: 34 last_index: 46 raft_sync_segments: 0 will_sync: 1 path: /data/state/log/log_00000000000000000034_00000000000000000046\nI20261101 20:40:27.589598   389 log.cpp:550] Renamed `/data/state/log/log_inprogress_00000000000000000034' to `/data/state/log/log_00000000000000000034_00000000000000000046'\nI20261101 20:40:27.589625   389 log.cpp:114] Created new segment `/data/state/log/log_inprogress_00000000000000000047' with fd=29\nI20261101 20:40:28.219097   396 log.cpp:536] close a full segment. Current first_index: 47 last_index: 59 raft_sync_segments: 0 will_sync: 1 path: /data/state/log/log_00000000000000000047_00000000000000000059\nI20261101 20:40:28.219153   396 log.cpp:550] Renamed `/data/state/log/log_inprogress_00000000000000000047' to `/data/state/log/log_00000000000000000047_00000000000000000059'\nI20261101 20:40:28.219177   396 log.cpp:114] Created new segment `/data/state/log/log_inprogress_00000000000000000060' with fd=28\nI20261101 20:40:28.740187   392 log.cpp:536] close a full segment. Current first_index: 60 last_index: 72 raft_sync_segments: 0 will_sync: 1 path: /data/state/log/log_00000000000000000060_00000000000000000072\nI2026110"
+}
