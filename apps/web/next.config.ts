@@ -1,25 +1,8 @@
 import path from "node:path";
 import type { NextConfig } from "next";
 
-// Strict CSP for the app itself. Everything is 'self': no external scripts, styles, fonts, images or connections.
-// 'unsafe-inline' for scripts is needed for Next's inline hydration bootstrap and the theme-init snippet; the app
-// uses no per-request nonces (they would force every page to render dynamically). The archive listener is a
-// different origin and is not allowed as a frame source until A-14 widens `frame-src` to that origin.
-const CSP = [
-  "default-src 'self'",
-  "img-src 'self' data: blob:",
-  "media-src 'self'",
-  "script-src 'self' 'unsafe-inline'" + (process.env.NODE_ENV === "production" ? "" : " 'unsafe-eval'"),
-  "style-src 'self' 'unsafe-inline'",
-  "connect-src 'self'",
-  "font-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-  "worker-src 'self'",
-  "manifest-src 'self'",
-].join("; ");
+// The Content-Security-Policy is set per request by proxy.ts (lib/csp.ts): `frame-src` must name the archive listener's
+// origin, which is a deployment setting. The other headers are static.
 
 const config: NextConfig = {
   output: "standalone",
@@ -41,7 +24,6 @@ const config: NextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
-          { key: "Content-Security-Policy", value: CSP },
         ],
       },
     ];

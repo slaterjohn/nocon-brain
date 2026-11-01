@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { login } from "./helpers";
+import { login, mode } from "./helpers";
 
 test.beforeEach(async ({ page }) => {
   await login(page);
@@ -28,25 +28,32 @@ for (const [name, url, heading] of [
   });
 }
 
-test("the home search field says it is not connected yet", async ({ page }) => {
-  await page.getByRole("searchbox", { name: /Search your archive/ }).fill("hello");
+test("searching from the home page goes to the placeholder results page until search is built", async ({ page }) => {
+  await page.getByRole("searchbox", { name: /Search your archive/ }).fill("hello world");
   await page.getByRole("button", { name: "Search", exact: true }).click();
-  await expect(page.getByRole("status").filter({ hasText: "isn't connected yet" })).toBeVisible();
+  await expect(page).toHaveURL(/\/search\?q=hello%20world$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Search" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Search isn't connected yet" })).toBeVisible();
+  await expect(page.getByText(/"hello world" can't be searched/)).toBeVisible();
 });
 
 test("browser chrome: tabs, address bar and history", async ({ page }) => {
-  const tabs = page.getByRole("list", { name: "Open tabs" });
+  test.skip(mode() !== "real-server", "needs the real resolve endpoint");
+  const tabs = page.getByRole("tablist", { name: "Open tabs" });
+  const selected = tabs.locator("[data-testid=browser-tab][data-selected=true]");
   await expect(tabs.getByTestId("browser-tab")).toHaveCount(1);
 
   await page.getByRole("button", { name: "New tab", exact: true }).click();
   await expect(tabs.getByTestId("browser-tab")).toHaveCount(2);
-  await expect(tabs.locator("li[data-selected=true]")).toContainText("New tab");
+  await expect(selected).toContainText("New tab");
 
   const address = page.getByRole("textbox", { name: "Address or search terms" });
   await address.fill("example.org");
   await address.press("Enter");
-  await expect(tabs.locator("li[data-selected=true]")).toContainText("example.org");
-  await expect(page.getByRole("heading", { name: /Opening pages isn't available yet/ })).toBeVisible();
+  await expect(selected).toContainText("example.org");
+  // Nothing saved at that address and the connection is not known to be down: the page says so and offers a save.
+  await expect(page.getByRole("heading", { name: "This page is not saved" })).toBeVisible();
+  await expect(address).toHaveValue("https://example.org/");
 
   const back = page.getByRole("button", { name: "Back" });
   const forward = page.getByRole("button", { name: "Forward" });
@@ -55,42 +62,45 @@ test("browser chrome: tabs, address bar and history", async ({ page }) => {
   await expect(address).toHaveValue("");
   await expect(forward).toBeEnabled();
   await forward.click();
-  await expect(address).toHaveValue("example.org");
+  await expect(address).toHaveValue("https://example.org/");
 
   await page.getByRole("button", { name: "Close tab example.org" }).click();
   await expect(tabs.getByTestId("browser-tab")).toHaveCount(1);
 });
 
-test("browser chrome: keyboard shortcuts", async ({ page }) => {
-  const tabs = page.getByRole("list", { name: "Open tabs" });
+test("browser chrome: keyboard shortcuts avoid the keys the browser keeps", async ({ page }) => {
+  test.skip(mode() !== "real-server", "needs the real resolve endpoint");
+  const tabs = page.getByRole("tablist", { name: "Open tabs" });
+  const selected = tabs.locator("[data-testid=browser-tab][data-selected=true]");
   const address = page.getByRole("textbox", { name: "Address or search terms" });
 
   await expect(address).toBeVisible(); // the chrome (and its key handler) mounts once the shell has loaded
-  await page.keyboard.press("Control+t");
+  await page.keyboard.press("Alt+Shift+KeyN");
   await expect(tabs.getByTestId("browser-tab")).toHaveCount(2);
   await expect(address).toBeFocused();
 
   await address.fill("one.example");
   await address.press("Enter");
+  await expect(page.getByRole("heading", { name: "This page is not saved" })).toBeVisible();
   await address.fill("two.example");
   await address.press("Enter");
-  await expect(address).toHaveValue("two.example");
+  await expect(address).toHaveValue("https://two.example/");
 
-  await page.keyboard.press("Alt+ArrowLeft");
-  await expect(address).toHaveValue("one.example");
-  await page.keyboard.press("Alt+ArrowRight");
-  await expect(address).toHaveValue("two.example");
+  await page.keyboard.press("Alt+Shift+KeyB");
+  await expect(address).toHaveValue("https://one.example/");
+  await page.keyboard.press("Alt+Shift+KeyG");
+  await expect(address).toHaveValue("https://two.example/");
 
   await page.getByRole("heading", { level: 1 }).first().click({ force: true }).catch(() => {});
-  await page.keyboard.press("Control+l");
+  await page.keyboard.press("Alt+Shift+KeyL");
   await expect(address).toBeFocused();
 
-  await page.keyboard.press("Control+w");
+  await page.keyboard.press("Alt+Shift+KeyX");
   await expect(tabs.getByTestId("browser-tab")).toHaveCount(1);
   // Closing the last tab leaves one new tab.
-  await page.keyboard.press("Control+w");
+  await page.keyboard.press("Alt+Shift+KeyX");
   await expect(tabs.getByTestId("browser-tab")).toHaveCount(1);
-  await expect(tabs.locator("li[data-selected=true]")).toContainText("New tab");
+  await expect(selected).toContainText("New tab");
 });
 
 test("connectivity indicator is honest about not having checked, and follows the Work offline switch", async ({ page }) => {

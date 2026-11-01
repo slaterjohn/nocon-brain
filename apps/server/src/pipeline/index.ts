@@ -6,3 +6,4 @@ export { supersededBy, parseVersioning, periodStart } from "./policy.js";
 export { resourceKey } from "./stages/finish.js";
 export * from "./types.js";
 export { SqliteCaptureStore } from "./capture-store.js";
+export { captureEvent, publishCapture, STAGE_LABELS, type CaptureEvent } from "./progress.js";

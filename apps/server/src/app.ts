@@ -10,6 +10,9 @@ import { clearSessionCookie, setSessionCookie } from "./lib/http.js";
 import { RequestValidationError, validatorCompiler } from "./lib/zod.js";
 import { SESSION_COOKIE } from "./services/auth.js";
 import { authRoutes, setupRoutes } from "./routes/auth.js";
+import { archiveRoutes } from "./routes/archive.js";
+import { bookmarkRoutes } from "./routes/bookmarks.js";
+import { browserRoutes } from "./routes/browser.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { storageRoutes } from "./routes/storage.js";
 import { systemRoutes } from "./routes/system.js";
@@ -95,7 +98,7 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
   await app.register(cookie);
   await app.register(rateLimit, {
     global: true,
-    max: opts.rateLimitMax ?? 600,
+    max: opts.rateLimitMax ?? config.NCB_RATE_LIMIT_PER_MINUTE,
     timeWindow: "1 minute",
     keyGenerator: (req) => clientIp(req),
     allowList: (req) => req.url.split("?")[0] === HEALTH,
@@ -230,6 +233,9 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
     authRoutes(a, state);
     settingsRoutes(a, state);
     storageRoutes(a, state);
+    browserRoutes(a, state, { proxyVerified });
+    archiveRoutes(a, state, { proxyVerified });
+    bookmarkRoutes(a, state);
   });
 
   return app;

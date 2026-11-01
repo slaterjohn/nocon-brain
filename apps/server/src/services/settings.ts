@@ -51,6 +51,10 @@ export function buildGroupSchemas(config: ResolvedConfig) {
       liveFrames: bool(false),
       bookmarkPriority: intIn(2, 1, 4),
       autoCacheOpened: bool(false),
+      /** When a page is both saved and reachable live: open the saved copy (true) or the live site (false). */
+      preferCached: bool(true),
+      /** Priority of pages saved from the address bar ("Quick saves", P3 by default). */
+      quickSavePriority: intIn(3, 1, 4),
     }),
     search: z.object({
       rrfK: intIn(60, 1, 1000),

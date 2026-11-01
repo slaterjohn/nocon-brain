@@ -10,7 +10,7 @@ export interface NavItem {
 
 // The five areas. Browser is the default landing page.
 export const areas: NavItem[] = [
-  { href: "/", label: "Browser", icon: Compass },
+  { href: "/", label: "Browser", icon: Compass, also: ["/bookmarks", "/history", "/save"] },
   { href: "/library", label: "Library", icon: Library },
   { href: "/downloads", label: "Downloads", icon: Download },
   { href: "/search", label: "Search", icon: Search },
@@ -18,6 +18,6 @@ export const areas: NavItem[] = [
 ];
 
 export function isActive(item: NavItem, pathname: string): boolean {
-  if (item.href === "/") return pathname === "/";
+  if (item.href === "/") return pathname === "/" || (item.also ?? []).some((p) => pathname === p || pathname.startsWith(`${p}/`));
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }

@@ -70,6 +70,9 @@ services:
       NCB_PROXY_SECRET: ${NCB_PROXY_SECRET:?Set NCB_PROXY_SECRET in .env (openssl rand -hex 32)}
       HOSTNAME: 0.0.0.0
       PORT: ${NCB_WEB_PORT:-3000}
+      # The web app lets the browser frame the archive listener (CSP frame-src), so it needs the same address.
+      NCB_ARCHIVE_PORT: ${NCB_ARCHIVE_PORT:-3002}
+      NCB_ARCHIVE_PUBLIC_URL: ${NCB_ARCHIVE_PUBLIC_URL:-}
     depends_on:
       server: { condition: service_healthy }
     ports:

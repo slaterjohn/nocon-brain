@@ -5,11 +5,31 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startMockApi } from "./mock-api";
+import { startFixtures } from "../fixtures/sites/index.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const WEB_PORT = 25000;
 const API_PORT = 25001;
 const ARCHIVE_PORT = 25002;
+
+/** Newest modification time under the web app's sources, so a stale cached build is never served to the suite. */
+function newestWebSource(): number {
+  let newest = 0;
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (e.name.startsWith(".") || e.name === "node_modules") continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else newest = Math.max(newest, fs.statSync(p).mtimeMs);
+    }
+  };
+  for (const d of ["app", "components", "lib", "hooks", "public"]) if (fs.existsSync(path.join(ROOT, "apps/web", d))) walk(path.join(ROOT, "apps/web", d));
+  for (const f of ["proxy.ts", "next.config.ts", "package.json", "postcss.config.mjs"]) {
+    const p = path.join(ROOT, "apps/web", f);
+    if (fs.existsSync(p)) newest = Math.max(newest, fs.statSync(p).mtimeMs);
+  }
+  return newest;
+}
 
 async function waitFor(url: string, ms: number, label: string) {
   const end = Date.now() + ms;
@@ -41,15 +61,22 @@ export default async function globalSetup() {
   fs.mkdirSync(path.join(volumes, "container-fs"), { recursive: true });
   fs.mkdirSync(dataDir, { recursive: true });
 
+  const procs: ChildProcess[] = [];
+  const closers: (() => Promise<void>)[] = [];
   const proxySecret = crypto.randomBytes(24).toString("hex");
   const real = process.env.E2E_MOCK_API !== "1";
   process.env.E2E_MODE = real ? "real-server" : "mock-api";
   process.env.E2E_VOLUMES_ROOT = volumes;
   process.env.E2E_API_URL = `http://127.0.0.1:${API_PORT}`;
   process.env.E2E_PROXY_SECRET = proxySecret;
+  process.env.E2E_ARCHIVE_URL = `http://127.0.0.1:${ARCHIVE_PORT}`;
 
-  const procs: ChildProcess[] = [];
-  const closers: (() => Promise<void>)[] = [];
+  // Local fixture websites for the capture specs. The server is told it may fetch loopback hosts (the operator allowlist).
+  const fixtures = await startFixtures();
+  process.env.E2E_ARTICLE_URL = fixtures.urls.article;
+  process.env.E2E_EDGE_URL = fixtures.urls.edge;
+  closers.push(() => fixtures.close());
+
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "ncb-e2e-logs-"));
   console.log(`e2e mode: ${process.env.E2E_MODE}; logs in ${logDir}`);
 
@@ -93,6 +120,9 @@ export default async function globalSetup() {
         NCB_SECRET_KEY: crypto.randomBytes(24).toString("hex"),
         NCB_LOG_LEVEL: "warn",
         NCB_MIN_FREE_DISK_GB: "0",
+        NCB_FETCH_ALLOW_PRIVATE_HOSTS: "127.0.0.1",
+        // The suite makes far more calls from one address than a person would.
+        NCB_RATE_LIMIT_PER_MINUTE: "20000",
       });
       await waitFor(`http://127.0.0.1:${API_PORT}/api/system/health`, 60_000, "server");
     } else {
@@ -102,7 +132,8 @@ export default async function globalSetup() {
 
     // Private build directory so a concurrent build of apps/web elsewhere cannot corrupt the served bundle.
     const webEnv = { NEXT_DIST_DIR: ".next-e2e" };
-    if (process.env.E2E_REBUILD || !fs.existsSync(path.join(ROOT, "apps/web/.next-e2e/BUILD_ID"))) {
+    const buildId = path.join(ROOT, "apps/web/.next-e2e/BUILD_ID");
+    if (process.env.E2E_REBUILD || !fs.existsSync(buildId) || fs.statSync(buildId).mtimeMs < newestWebSource()) {
       execFileSync("pnpm", ["--filter", "@ncb/web", "build"], { cwd: ROOT, stdio: "inherit", env: { ...process.env, ...webEnv } });
     }
     start("web", "pnpm", ["--filter", "@ncb/web", "exec", "next", "start", "-p", String(WEB_PORT), "-H", "127.0.0.1"], {
@@ -110,6 +141,7 @@ export default async function globalSetup() {
       NODE_ENV: "production",
       API_INTERNAL_URL: `http://127.0.0.1:${API_PORT}`,
       NCB_PROXY_SECRET: proxySecret,
+      NCB_ARCHIVE_PORT: String(ARCHIVE_PORT),
     });
     await waitFor(`http://127.0.0.1:${WEB_PORT}/healthz`, 60_000, "web");
   } catch (e) {

@@ -104,6 +104,14 @@ interface FrameState { frameId: string; url: string; title?: string; state: Link
 
 `unavailable` means not archived and offline, evicted, blocked, or failed permanently; `live_only` means not archived and online.
 
+**Phase 2 implementation notes (A-14 to A-18).**
+
+- `resolve` answers `{ kind: "search" }` for text that is not an address (the shell then opens `/search?q=`), and 400 for other schemes (`javascript:`, `data:`, `file:`) and for addresses with credentials. A bare host (`example.org`) gets `https://`; an IP address, `localhost` or `host:port` gets `http://`. `prefer: "live"` returns the live resolution when the connection is not known to be down. The user setting `browser.preferCached` (default on) decides which wins when both exist and the request does not say. `frame.url` is built from `NCB_ARCHIVE_PUBLIC_URL`, or the request host (trusted only from the web proxy) plus `NCB_ARCHIVE_PORT`. The `zim` and `cache` resolutions are not produced yet. `live` and `offline` carry `queued: { downloadId }` when the address is already waiting to be saved. Live frames are not offered: `frameable` stays `"unknown"` in `resolve`; `live-check` reports it.
+- `frame-state` returns `{ frameId, url, title?, state, pageId?, versionId?, reader?, interstitial?, at, seq }`. `seq` rises with every document the listener serves to the frame, so the shell applies only newer ones. A `?hl=` response is not recorded (same document). `interstitial: true` means the listener showed its notice for an address that is not saved; `url` is that address and `state` its link state. Reading it records one history visit per document when history is on.
+- `live-check` returns `{ url, reachable, status?, finalUrl?, frameable, reason? }` and 403 `blocked` for private hosts; it needs the connection (409 `offline` otherwise).
+- `save` and `POST /api/archive/capture` take `{ url, priority?: "P1".."P4", queue?: boolean }` and answer 202 `{ downloadId, url, state: "queued", held, priority }`. The default priority is the setting `browser.quickSavePriority` (3). There is no `sources` table before Phase 3, so the priority is stored on the download job, and `pages.effective_priority` takes it when the capture finishes. Offline, `queue: true` is needed (409 `offline` with `canQueue: true` otherwise); the capture is held and released when the server is no longer known to be offline. `Idempotency-Key` is honoured for 24 hours (in memory; a restart forgets it).
+- `GET /api/browser/offline-page?url=` returns `{ url, reason, canQueue, archived, queued?, connectivity }`.
+
 ## 4. Archive: pages, versions, capture
 
 | Method | Path | Purpose | Auth |
@@ -116,7 +124,8 @@ interface FrameState { frameId: string; url: string; title?: string; state: Link
 | GET | `/api/archive/pages/{id}/links` | `?direction=in\|out`, with link states | S/G |
 | GET | `/api/archive/versions` | `?pageId=` list versions | S/G |
 | GET | `/api/archive/versions/{id}` | Detail: status, partial reason, pipeline stages, sizes, attribution | S/G |
-| GET | `/api/archive/versions/{id}/find` | `?q=` match count for find-in-page (server-side, same algorithm as listener `?hl=`) | S/G |
+| GET | `/api/archive/versions/{id}/find` | `?q=` match count for find-in-page (server-side, same algorithm as listener `?hl=`). Returns `{ query, count, anchors: ["ncb-hit-1", ...], truncated }`; the query is trimmed and capped at 100 characters, matches are case-insensitive within one text node, and at most 500 are marked | S/G |
+| GET | `/api/archive/captures`, `/api/archive/captures/{downloadId}` | Phase 2 addition: recent single-page saves and the progress of one, in the shape of the `capture` event (section 13) | S |
 | GET | `/api/archive/versions/{id}/stages` | Pipeline stage runs with errors | S |
 | POST | `/api/archive/versions/{id}/reprocess` | Re-run from a stage `{ fromStage?: Stage }` | S+C |
 | DELETE | `/api/archive/versions/{id}` | Explicit version deletion (same confirmation rules) | S+C |
@@ -444,7 +453,7 @@ interface StorageForecast { estimate: true; horizonDays: number; projectedUsedBy
 
 Response shapes (server): `GET /api/settings` returns the groups as `{ general: {...}, resources: {...}, ... }`; secret fields are replaced by a `has<Field>` flag (for example `offline.hasProbeToken`). `PATCH /api/settings` takes a partial of any groups, validates the merged group, returns the same map and, when online search was just enabled, a top-level `disclosure` string. Enabling `privacy.onlineSearch.enabled` requires `privacy.onlineSearch.acknowledged: true` in the same patch (otherwise a field error on that path), which stores `acknowledgedAt`. Invalid values return 400 with `details.fields[].path` such as `offline.probeUrl`. `GET /api/settings/user` and `PATCH` use `{ theme, density, tabRestore, shortcuts }`.
 
-Groups: `general` (app name, locale `en-GB`), `resources` (profile and limits), `privacy` (`history.enabled`, `searchHistory.enabled`, `onlineSearch.enabled`, disclosure text), `offline` (`forced`, probe URL), `browser` (`showLinkStates`, `liveFrames`, `bookmarkPriority`, `autoCacheOpened`), `search` (ranking, RRF `k` and weights, synonyms, ZIM budget), `discovery` (section 9), `storage` (section 10 policy), `logging`, `appearance` (theme tokens). Changing `privacy.onlineSearch.enabled` to true returns the disclosure text that the UI must show and record acknowledgement of (`acknowledgedAt`).
+Groups: `general` (app name, locale `en-GB`), `resources` (profile and limits), `privacy` (`history.enabled`, `searchHistory.enabled`, `onlineSearch.enabled`, disclosure text), `offline` (`forced`, probe URL), `browser` (`showLinkStates`, `liveFrames`, `bookmarkPriority`, `autoCacheOpened`, and from Phase 2 `preferCached` (default true) and `quickSavePriority` (default 3)), `search` (ranking, RRF `k` and weights, synonyms, ZIM budget), `discovery` (section 9), `storage` (section 10 policy), `logging`, `appearance` (theme tokens). Changing `privacy.onlineSearch.enabled` to true returns the disclosure text that the UI must show and record acknowledgement of (`acknowledgedAt`).
 
 ## 13. System
 
@@ -453,7 +462,7 @@ Groups: `general` (app name, locale `en-GB`), `resources` (profile and limits), 
 | GET | `/api/system/health` | HTTP 503 while `starting`, 200 otherwise. Minimal `{ status: "ok" \| "degraded" \| "starting" }` for Docker; checks DB writable, index openable, worker heartbeat fresh, free space above floor | P |
 | GET | `/api/system/status` | Detailed: versions, architecture, uptime, workers (`extract`, `index`, `search`, `zim`), queue depths, memory, connectivity, renderer reachable | S |
 | GET | `/api/system/dashboard` | Admin dashboard: pages, sources, collections, index size, storage used and available, active, queued and failed jobs, last update, worker status | S |
-| GET | `/api/system/events` | **SSE**: job progress, worker heartbeat, connectivity, thresholds (`Last-Event-ID` supported) | S |
+| GET | `/api/system/events` | **SSE**: job progress, worker heartbeat, connectivity, thresholds (`Last-Event-ID` supported). Phase 2 adds `capture`: `{ downloadId, url, state, held, outcome, label, percent, stage?, pageId?, versionId?, failureMessage? }`, sent when a save is queued, as each pipeline stage starts, and when it ends | S |
 | GET | `/api/system/logs` | Activity log: `level` and `area` (comma-separated lists, exact match), `downloadJobId` (`dl_...`), `from`, `to`, `q` (substring), `limit` (default 50, max 200), `cursor`. Returns `{ items: { id, at, level, area, message, details?, downloadJobId?, jobId?, versionId? }[], nextCursor? }`, newest first | S |
 | GET | `/api/system/connectivity` | `{ state: "unknown" \| "online" \| "offline", since, source: "passive" \| "probe" \| "forced" }`. The same object is the data of the SSE `connectivity` event | S/G |
 | POST | `/api/system/connectivity` | `{ forceOffline: boolean }` ("work offline") | S+C |
@@ -492,7 +501,7 @@ interface Bookmark { id: string; originalUrl: string; title: string; archive?: {
 interface HistoryEntry { id: string; url: string; title: string; visitedAt: Iso; servedFrom: "archive" | "cache" | "zim" | "live" | "offline"; pageId?: string }
 ```
 
-History recording is a user setting (`privacy.history.enabled`, default on, local only); disabling stops recording, clearing deletes rows.
+History recording is a user setting (`privacy.history.enabled`, default on, local only); disabling stops recording, clearing deletes rows. `GET /api/history` returns `{ enabled, items }`; `DELETE /api/history` returns `{ deleted }`. Bookmarks add `referencePriority` (the value of `browser.bookmarkPriority` when the bookmark was made; Phase 6 uses it), `GET /api/bookmarks?url=` filters by address, and `POST /api/bookmarks` on an address that is already bookmarked returns the existing bookmark with 200. The archive reference is looked up by address each time a bookmark is listed, so a page saved after the bookmark was made is found.
 
 ## 15. ZIM packages and Wikipedia
 

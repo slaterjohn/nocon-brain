@@ -3,7 +3,7 @@ import type { Duplex } from "node:stream";
 import { systemClock, type Clock } from "@ncb/shared";
 import {
   ResourceTable, REWRITER_VERSION, collectUrls, errorPage, interstitialPage, parseReaderPrefs, partialBannerHtml, readerCss, readerPage,
-  rewriteCss, sanitizeHtml, sanitizeSvgDocument, BASE_CSS, LINK_STATE_CSS, linkStateStyleBlock,
+  rewriteCss, sanitizeHtml, sanitizeSvgDocument, BASE_CSS, LINK_STATE_CSS, linkStateStyleBlock, normaliseTerm,
   type LinkResolution, type LinkState, type SanitizeOptions,
 } from "@ncb/render";
 import { archiveHeaders, originOf } from "./headers.js";
@@ -40,7 +40,7 @@ export interface ArchiveListener {
   readonly server: http.Server;
   readonly frames: FrameStateStore;
   /** Supplies the pieces that exist only after the database and secret are ready. */
-  attach(deps: { tokens?: ArchiveTokenService; store?: CaptureStore }): void;
+  attach(deps: { tokens?: ArchiveTokenService; store?: CaptureStore; showLinkStates?: () => boolean; appRoutes?: AppRoutes }): void;
   tokens(): ArchiveTokenService | undefined;
   /** Writes pending `last_accessed_at` updates. */
   flush(): Promise<void>;
@@ -70,12 +70,13 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
   const frames = opts.frames ?? new FrameStateStore();
   let tokens = opts.tokens;
   let store: CaptureStore = opts.store ?? new MemoryCaptureStore();
-  const showStates = opts.showLinkStates ?? (() => true);
+  let showStates = opts.showLinkStates ?? (() => true);
   const appBase = (() => { try { return new URL(opts.appUrl).origin; } catch { return ""; } })();
-  const routes: AppRoutes = opts.appRoutes ?? {
+  // Real app routes (the web app's /save page and the library). Opened in a new tab, so the Human's own session is used.
+  let routes: AppRoutes = opts.appRoutes ?? {
     queue: (u) => `${appBase}/save?url=${encodeURIComponent(u)}&queue=1`,
     save: (u) => `${appBase}/save?url=${encodeURIComponent(u)}`,
-    downloadRest: (id) => `${appBase}/pages/${encodeURIComponent(id)}`,
+    downloadRest: (id) => `${appBase}/library?page=${encodeURIComponent(id)}`,
   };
   const batcher = new AccessBatcher((ids, at) => store.touchVersions(ids, at), () => clock.now(), opts.touchIntervalMs);
 
@@ -201,10 +202,14 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
     return { link, resource, table };
   };
 
-  const recordFrame = (c: Ctx, v: VersionRef, title: string) => {
+  const framed = (c: Ctx): boolean => {
     const dest = String(c.req.headers["sec-fetch-dest"] ?? "");
-    if (dest !== "iframe" && dest !== "document") return;
-    frames.record(c.payload.f, { versionId: v.versionId, pageId: v.pageId, url: v.url, title, state: v.status, at: clock.now() });
+    return dest === "iframe" || dest === "document";
+  };
+
+  const recordFrame = (c: Ctx, v: VersionRef, title: string, reader = false) => {
+    if (!framed(c)) return;
+    frames.record(c.payload.f, { versionId: v.versionId, pageId: v.pageId, url: v.url, title, state: v.status, reader, at: clock.now() });
   };
 
   const serveDocument = async (c: Ctx, v: VersionRef): Promise<Out> => {
@@ -213,9 +218,12 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
     const { link, resource } = await linkTools(c, v, doc.baseUrl, doc.html);
     const head = showStates() ? linkStateStyleBlock() : "";
     const banner = v.status === "partial" ? partialBannerHtml(v.missingResources, routes.downloadRest(v.pageId)) : "";
-    const r = sanitizeHtml(doc.html, { baseUrl: doc.baseUrl, link, resource, inject: { head, bodyStart: banner } });
+    // `?hl=` marks matches for the shell's find bar (A-18). The same function counts them for /api/archive/versions/{id}/find.
+    const term = normaliseTerm(c.url.searchParams.get("hl"));
+    const r = sanitizeHtml(doc.html, { baseUrl: doc.baseUrl, link, resource, inject: { head, bodyStart: banner }, ...(term ? { highlight: { term } } : {}) });
     batcher.touch(v.versionId);
-    recordFrame(c, v, r.title);
+    // A highlighted copy is the same document with marks added: the address bar does not move for it (A-18).
+    if (!term) recordFrame(c, v, r.title);
     return { status: 200, type: "text/html; charset=utf-8", body: r.html };
   };
 
@@ -226,7 +234,7 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
     const clean = sanitizeHtml(rd.html, { baseUrl: v.url, link, resource, bodyOnly: true }).html;
     const prefs = parseReaderPrefs(c.url.searchParams);
     batcher.touch(v.versionId);
-    recordFrame(c, v, rd.title);
+    recordFrame(c, v, rd.title, true);
     return { status: 200, type: "text/html; charset=utf-8", body: readerPage({ title: rd.title, bodyHtml: clean, prefs, sourceUrl: v.url }) };
   };
 
@@ -249,6 +257,8 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
       if (t?.kind === "zim") return { status: 302, headers: { location: `${c.base}/z/${encodeURIComponent(t.zimId)}/${t.path.split("/").map(encodeURIComponent).join("/")}` }, body: "", type: "text/plain; charset=utf-8" };
       state = t?.kind === "queued" ? "queued" : t?.kind === "unavailable" || offline ? "unavailable" : "live-only";
     }
+    // The address bar follows the frame (D-5): an address that is not in the archive is still where the Human is.
+    if (framed(c)) frames.record(c.payload.f, { url: u, title: u, state, interstitial: true, at: clock.now() });
     return {
       status: 200, type: "text/html; charset=utf-8", popups: true,
       body: interstitialPage({
@@ -391,6 +401,8 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
     attach(deps) {
       if (deps.tokens) tokens = deps.tokens;
       if (deps.store) store = deps.store;
+      if (deps.showLinkStates) showStates = deps.showLinkStates;
+      if (deps.appRoutes) routes = deps.appRoutes;
     },
     tokens: () => tokens,
     flush: () => batcher.flush(),

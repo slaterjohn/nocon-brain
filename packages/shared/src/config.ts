@@ -30,6 +30,8 @@ export const envSchema = z.object({
   NCB_WEB_PORT: port(3000),
   NCB_API_PORT: port(3001),
   NCB_ARCHIVE_PORT: port(3002),
+  /** Where the browser reaches the archive listener. Empty: the request host plus `NCB_ARCHIVE_PORT`. */
+  NCB_ARCHIVE_PUBLIC_URL: z.union([z.literal(""), z.url({ error: "must be empty or an absolute URL, for example https://archive.example.org" })]).default(""),
   /** Host the API and archive listeners bind to. The API port is not published by Compose unless the Human asks. */
   NCB_API_HOST: z.string().min(1).default("0.0.0.0"),
   NCB_ARCHIVE_HOST: z.string().min(1).default("0.0.0.0"),
@@ -56,6 +58,8 @@ export const envSchema = z.object({
   NCB_SHUTDOWN_GRACE_SECONDS: int(25, 1, 600),
   NCB_TZ: z.string().default("UTC"),
   NCB_SCHEDULER_ENABLED: bool(true),
+  /** Requests a minute per client IP across the API (docs/api.md section 1). The end-to-end suite raises it. */
+  NCB_RATE_LIMIT_PER_MINUTE: int(600, 10, 1_000_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

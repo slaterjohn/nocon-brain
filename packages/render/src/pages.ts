@@ -91,6 +91,7 @@ export function interstitialPage(o: InterstitialOptions): string {
   const live = canLive
     ? `<a class="ncb-btn" href="${escapeHtml(o.url)}" target="_blank" rel="noopener noreferrer">Open live in new tab</a>`
     : `<a class="ncb-btn" aria-disabled="true">Open live in new tab</a>`;
+  const save = canLive && o.saveHref ? `<a class="ncb-btn" href="${escapeHtml(o.saveHref)}" target="_blank" rel="noopener noreferrer">Save for offline</a>` : "";
   const queue = isHttp && o.queueHref ? `<a class="ncb-btn" href="${escapeHtml(o.queueHref)}" target="_blank" rel="noopener noreferrer">Queue for download</a>` : "";
   const back = o.backHref ? `<a class="ncb-btn" href="${escapeHtml(o.backHref)}">Back</a>` : "";
   const offlineNote = o.offline
@@ -98,7 +99,7 @@ export function interstitialPage(o: InterstitialOptions): string {
     : "";
   return shell(
     "Not in your archive",
-    `<main class="ncb-card"><h1>${escapeHtml(STATE_TEXT[o.state])}</h1><p class="ncb-url" data-ncb-url>${escapeHtml(o.url)}</p>${offlineNote}<div class="ncb-actions">${queue}${live}${back}</div></main>`,
+    `<main class="ncb-card"><h1>${escapeHtml(STATE_TEXT[o.state])}</h1><p class="ncb-url" data-ncb-url>${escapeHtml(o.url)}</p>${offlineNote}<div class="ncb-actions">${save}${queue}${live}${back}</div></main>`,
   );
 }
 

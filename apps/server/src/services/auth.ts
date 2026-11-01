@@ -59,6 +59,11 @@ export class AuthService {
     this.jumps = jumps ?? new ClockJumpDetector({ clock });
   }
 
+  /** The oldest enabled administrator. Trusted-LAN guests read this user's bookmarks. */
+  firstAdminId(): number | null {
+    return this.db.get<{ id: number }>("SELECT id FROM users WHERE disabled_at IS NULL ORDER BY id LIMIT 1")?.id ?? null;
+  }
+
   hasAdmin(): boolean {
     if (this.adminKnown) return true;
     const n = this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM users")?.n ?? 0;

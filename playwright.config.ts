@@ -19,5 +19,9 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // Chromium by default. `E2E_BROWSERS=chromium,webkit,firefox` adds the others (used for the frame spikes in H-03 and H-11).
+  projects: (process.env.E2E_BROWSERS ?? "chromium").split(",").map((name) => ({
+    name,
+    use: { ...devices[name === "webkit" ? "Desktop Safari" : name === "firefox" ? "Desktop Firefox" : "Desktop Chrome"] },
+  })),
 });

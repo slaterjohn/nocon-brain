@@ -3,6 +3,7 @@ import {
   GLOBAL_ATTRS, HTML_DROP, HTML_ELEMENTS, HTML_UNWRAP_ALWAYS, INPUT_TYPES, META_NAMES, SVG_ATTRS, SVG_ELEMENTS, SVG_UNWRAP, linkKind,
 } from "./allowlist.js";
 import { rewriteCss, rewriteInlineStyle, type CssOptions } from "./css.js";
+import { HIGHLIGHT_CSS, HIT_ID_PREFIX, MAX_HITS, matchOffsets, normaliseTerm } from "./highlight.js";
 import type { LinkResolution, LinkState, ResourceKind, RewriteCallbacks, SanitizeStats } from "./types.js";
 import { DEFAULT_MAX_DATA_URI_BYTES, TRANSPARENT_PIXEL, isHttp, parseHttpBase, resolveUrl, safeDataImage } from "./url.js";
 
@@ -24,12 +25,16 @@ export interface SanitizeOptions extends RewriteCallbacks {
   bodyOnly?: boolean;
   /** Re-parse the output and check it contains no script-capable construct (default true). */
   verify?: boolean;
+  /** Wrap matches of `term` in the body text in `<mark id="ncb-hit-N">` (find-in-page, A-18). Runs before `inject`. */
+  highlight?: { term: string; max?: number };
 }
 
 export interface SanitizeResult {
   html: string;
   title: string;
   stats: SanitizeStats;
+  /** Number of `<mark>` elements added by `highlight`. */
+  hits: number;
 }
 
 const EMPTY_STATS = (): SanitizeStats => ({ removedElements: 0, removedAttributes: 0, missingResources: 0, rewrittenLinks: 0 });
@@ -390,6 +395,41 @@ function effectiveBase(doc: ParentNode, pageUrl: URL): URL {
   return r && isHttp(r) ? r : pageUrl;
 }
 
+const NO_HIGHLIGHT = new Set(["style", "script", "textarea", "select", "option", "title", "noscript", "svg", "math"]);
+
+/** Wraps each match of `term` in the text below `root` in `<mark id="ncb-hit-N" class="ncb-hit">`. Returns the number of marks. */
+function highlightText(root: Element, term: string, max: number): number {
+  let n = 0;
+  const walk = (parent: ParentNode): void => {
+    for (const child of [...parent.childNodes]) {
+      if (n >= max) return;
+      if (A.isElementNode(child)) {
+        if (NO_HIGHLIGHT.has(child.tagName.toLowerCase())) continue;
+        walk(child);
+      } else if (A.isTextNode(child)) {
+        const offsets = matchOffsets(child.value, term, max - n);
+        if (offsets.length === 0) continue;
+        const value = child.value;
+        const parts: Node[] = [];
+        let at = 0;
+        for (const off of offsets) {
+          if (off > at) parts.push(A.createTextNode(value.slice(at, off)) as unknown as Node);
+          const mark = A.createElement("mark", NS.HTML, [{ name: "id", value: `${HIT_ID_PREFIX}${++n}` }, { name: "class", value: "ncb-hit" }]);
+          A.insertText(mark, value.slice(off, off + term.length));
+          parts.push(mark as unknown as Node);
+          at = off + term.length;
+        }
+        if (at < value.length) parts.push(A.createTextNode(value.slice(at)) as unknown as Node);
+        const idx = parent.childNodes.indexOf(child as never);
+        for (const p of parts) (p as { parentNode: ParentNode | null }).parentNode = parent;
+        parent.childNodes.splice(idx, 1, ...(parts as never[]));
+      }
+    }
+  };
+  walk(root);
+  return n;
+}
+
 function injectMarkup(target: Element, markup: string, atStart: boolean): void {
   const frag = parseFragment(markup);
   const nodes = [...frag.childNodes];
@@ -443,7 +483,7 @@ export function sanitizeHtml(input: string, opts: SanitizeOptions): SanitizeResu
 
   doc.childNodes = doc.childNodes.filter((c) => A.isElementNode(c) || A.isDocumentTypeNode(c));
   const root = doc.childNodes.find(A.isElementNode) as Element | undefined;
-  if (!root) return { html: FALLBACK, title: titleText, stats };
+  if (!root) return { html: FALLBACK, title: titleText, stats, hits: 0 };
   // Normalise the doctype so output never depends on the input's (quirks-mode triggers aside, it is always html5).
   doc.childNodes = doc.childNodes.filter((c) => !A.isDocumentTypeNode(c));
   const dt = { nodeName: "#documentType", name: "html", publicId: "", systemId: "", parentNode: doc } as unknown as DefaultTreeAdapterMap["childNode"];
@@ -451,7 +491,7 @@ export function sanitizeHtml(input: string, opts: SanitizeOptions): SanitizeResu
 
   for (const c of [...doc.childNodes]) if (A.isElementNode(c)) cleanElement(doc, c, st, false);
   const htmlEl = doc.childNodes.find(A.isElementNode) as Element | undefined;
-  if (!htmlEl) return { html: FALLBACK, title: titleText, stats };
+  if (!htmlEl) return { html: FALLBACK, title: titleText, stats, hits: 0 };
   const head = htmlEl.childNodes.find((c): c is Element => A.isElementNode(c) && c.tagName === "head");
   let body = htmlEl.childNodes.find((c): c is Element => A.isElementNode(c) && c.tagName === "body");
   if (!body) {
@@ -460,7 +500,10 @@ export function sanitizeHtml(input: string, opts: SanitizeOptions): SanitizeResu
     A.appendChild(htmlEl, b);
     body = b;
   }
+  const term = opts.highlight ? normaliseTerm(opts.highlight.term) : null;
+  const hits = term && body ? highlightText(body, term, Math.min(opts.highlight?.max ?? MAX_HITS, MAX_HITS)) : 0;
   if (head) injectMarkup(head, '<meta charset="utf-8">', true);
+  if (hits > 0 && head) injectMarkup(head, `<style data-ncb="hl">${HIGHLIGHT_CSS}</style>`, false);
   if (opts.inject?.head && head) injectMarkup(head, opts.inject.head, false);
   if (opts.inject?.bodyStart && body) injectMarkup(body, opts.inject.bodyStart, true);
 
@@ -473,14 +516,14 @@ export function sanitizeHtml(input: string, opts: SanitizeOptions): SanitizeResu
     settled = again === out;
     out = again;
   }
-  if (!settled) return { html: FALLBACK, title: titleText, stats };
-  if (opts.verify !== false && findViolations(out).length) return { html: FALLBACK, title: titleText, stats };
+  if (!settled) return { html: FALLBACK, title: titleText, stats, hits: 0 };
+  if (opts.verify !== false && findViolations(out).length) return { html: FALLBACK, title: titleText, stats, hits: 0 };
   if (opts.bodyOnly) {
     const final = parse(out, { scriptingEnabled: false });
     const b2 = findFirst(final, (e) => e.namespaceURI === NS.HTML && e.tagName === "body");
     out = b2 ? serialize(b2) : "";
   }
-  return { html: out, title: titleText, stats };
+  return { html: out, title: titleText, stats, hits };
 }
 
 /** Every http(s) link and sub-resource URL the page refers to, for one batched lookup before `sanitizeHtml`. */

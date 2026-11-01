@@ -105,3 +105,133 @@ export interface ConnectivityInfo {
   since?: string;
   source?: "passive" | "probe" | "forced";
 }
+
+// ---- Browser, archive, bookmarks and history (docs/api.md sections 3, 4 and 14) ----
+
+export type LinkStateName = "cached" | "partial" | "live_only" | "queued" | "unavailable";
+
+export interface PageSummary {
+  id: string;
+  url: string;
+  canonicalUrl: string;
+  title: string;
+  domain: string;
+  type: string;
+  language?: string;
+  availability: "archived" | "partial" | "evicted" | "failed";
+  effectivePriority: Priority;
+  latestVersionId?: string;
+  versionCount: number;
+  firstCapturedAt?: string;
+  lastCapturedAt?: string;
+  inboundCount: number;
+  totalBytes?: number;
+}
+
+export interface VersionSummary {
+  id: string;
+  pageId: string;
+  versionNo: number;
+  status: string;
+  partialReason?: string;
+  fetchedAt: string;
+  totalBytes: number;
+}
+
+export interface FrameInfo {
+  url: string;
+  frameId: string;
+  expiresAt: string;
+  sandbox: string;
+}
+
+export type Resolution =
+  | { kind: "search"; query: string }
+  | { kind: "archive"; page: PageSummary; version: VersionSummary; mode: "original" | "reader"; frame: FrameInfo }
+  | { kind: "live"; url: string; frameable: boolean | "unknown"; canSave: true; queued?: { downloadId: string } }
+  | { kind: "offline"; url: string; reason: "offline" | "forced_offline" | "blocked" | "not_archived"; canQueue: boolean; queued?: { downloadId: string } };
+
+export interface ResolveResponse {
+  normalizedUrl: string;
+  urlKey: string;
+  resolution: Resolution;
+  alternatives: ("archive" | "cache" | "zim" | "live" | "reader")[];
+  connectivity: ConnectivityState;
+}
+
+export interface FrameStateInfo {
+  frameId: string;
+  url: string;
+  title?: string;
+  state: LinkStateName | "zim";
+  pageId?: string;
+  versionId?: string;
+  reader?: boolean;
+  interstitial?: boolean;
+  at: string;
+  seq: number;
+}
+
+export interface CaptureProgress {
+  downloadId: string;
+  url: string | null;
+  state: "queued" | "running" | "completed" | "failed" | "cancelled" | "paused";
+  held: boolean;
+  outcome: "pending" | "created" | "unchanged" | "failed";
+  label: string;
+  percent: number;
+  stage?: string;
+  pageId?: string;
+  versionId?: string;
+  failureMessage?: string | null;
+}
+
+export interface SaveResponse {
+  downloadId: string;
+  url: string;
+  state: "queued";
+  held: boolean;
+  priority: number;
+}
+
+export interface Bookmark {
+  id: string;
+  originalUrl: string;
+  title: string;
+  archive?: { pageId: string; versionId?: string; availability: PageSummary["availability"] };
+  referencePriority: number;
+  createdAt: string;
+}
+
+export interface HistoryEntry {
+  id: string;
+  url: string;
+  title: string;
+  visitedAt: string;
+  servedFrom: "archive" | "cache" | "zim" | "live" | "offline";
+  pageId?: string;
+}
+
+export interface FindResult {
+  query: string;
+  count: number;
+  anchors: string[];
+  truncated: boolean;
+}
+
+export interface DeletePreview {
+  versions: number;
+  exclusiveBytes: number;
+  sharedBytesKept: number;
+  references: { sources: string[]; collections: string[]; bookmarks: number; pins: Priority[] };
+  requiresConfirmation: boolean;
+}
+
+export interface BrowserSettings {
+  showLinkStates: boolean;
+  liveFrames: boolean;
+  bookmarkPriority: number;
+  autoCacheOpened: boolean;
+  preferCached: boolean;
+  quickSavePriority: number;
+}

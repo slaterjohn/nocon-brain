@@ -15,6 +15,9 @@ import { LoginThrottle } from "./lib/throttle.js";
 import { WorkerPool, type PoolOptions } from "./runtime/pool.js";
 import { buildUserAgent, createFetcher, RobotsService, type FetcherOptions } from "@ncb/fetch";
 import { SqliteCaptureStore } from "./pipeline/capture-store.js";
+import { BrowserService } from "./services/browser.js";
+import { BookmarksService, HistoryService } from "./services/bookmarks.js";
+import { LibraryService } from "./services/library.js";
 import { ExtractClient } from "./pipeline/extract-client.js";
 import { createPipelineDeps, PipelineService } from "./pipeline/service.js";
 import type { PipelineFaults, PipelineFetcher } from "./pipeline/types.js";
@@ -36,6 +39,9 @@ export * from "./services/blobs.js";
 export * from "./services/connectivity.js";
 export * from "./services/fetcher.js";
 export * from "./services/settings.js";
+export * from "./services/browser.js";
+export * from "./services/bookmarks.js";
+export * from "./services/library.js";
 export * from "./services/volumes.js";
 export { handlerFor, JobRunner } from "./runtime/runner.js";
 export { WorkerPool } from "./runtime/pool.js";
@@ -151,7 +157,10 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       const activity = new ActivityLog(db, clock);
       const secretKey = loadSecretKey(config.NCB_SECRET_KEY, config.NCB_DATA_DIR);
       const settings = new SettingsService({ db, clock, config, secretKey });
-      archive?.attach({ tokens: new ArchiveTokenService({ secret: secretKey, clock }) });
+      archive?.attach({
+        tokens: new ArchiveTokenService({ secret: secretKey, clock }),
+        showLinkStates: () => (settings.internal("browser") as { showLinkStates: boolean }).showLinkStates,
+      });
       const auth = new AuthService(db, clock);
       const volumes = new VolumeService({
         db, clock,
@@ -229,13 +238,38 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         deps,
       });
 
-      if (archive) {
-        archive.attach({
-          store: opts.archiveStore ?? new SqliteCaptureStore({
-            db, blobs, urlKey: deps.urlKey, connectivity: () => (connectivity.snapshot().state === "offline" ? "offline" : "online"),
-          }),
-        });
-      }
+      const store: CaptureStore = opts.archiveStore ?? new SqliteCaptureStore({
+        db, blobs, urlKey: deps.urlKey, connectivity: () => (connectivity.snapshot().state === "offline" ? "offline" : "online"),
+      });
+      archive?.attach({ store });
+
+      // A guarded HEAD for `live-check`: the same SSRF-guarded fetcher as captures, counted by the connectivity service.
+      const head = async (url: string, signal?: AbortSignal) => {
+        connectivity.assertCanReachInternet({ background: false });
+        try {
+          const r = await realFetcher.fetch(url, { method: "HEAD", maxBytes: 64 * 1024, accept: ["*/*"], signal });
+          connectivity.recordOutcome({ ok: true });
+          return r;
+        } catch (e) {
+          if (isNetworkError(e) || (e as { code?: string }).code === "network") connectivity.recordOutcome({ ok: false, network: true });
+          throw e;
+        }
+      };
+      const history = new HistoryService({ db, clock, settings, pipeline });
+      const browser = new BrowserService({ db, clock, config, settings, connectivity, pipeline, archive, history, head });
+      const bookmarks = new BookmarksService({ db, clock, settings, pipeline });
+      const library = new LibraryService({ db, clock, pipeline, browser, store, blobs, activity });
+      // Captures queued while offline wait, held, until the server is no longer known to be offline (the connection is seen
+      // again, or "work offline" is switched off).
+      events.subscribe((e) => {
+        if (e.type === "connectivity" && (e.data as { state?: string }).state !== "offline") {
+          try {
+            pipeline.resumeHeld();
+          } catch (err) {
+            app.log.warn({ err: String(err) }, "could not release held captures");
+          }
+        }
+      });
 
       const runner = new JobRunner({
         queue, pool, activity, events, clock, log: app.log, pollMs: opts.runnerPollMs, leaseMs: opts.leaseMs,
@@ -244,7 +278,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
 
       svc = {
         config, clock, main, db, activity, auth, settings, volumes, blobs, connectivity, fetcher, events, queue, runner, pipeline,
-        throttle: new LoginThrottle(clock), guestMatcher,
+        archive, browser, bookmarks, history, library, throttle: new LoginThrottle(clock), guestMatcher,
       };
       state.attach(svc);
 

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Wifi, WifiOff, CircleHelp, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import type { ConnectivityInfo, ConnectivityState } from "@/lib/types";
+import type { CaptureProgress, ConnectivityInfo, ConnectivityState } from "@/lib/types";
 import { api, errorMessage } from "@/lib/api";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -23,9 +23,15 @@ interface EventsValue {
   /** True while the "Work offline" switch is on (the server reports source "forced"). */
   forced: boolean;
   setForceOffline: (on: boolean) => Promise<void>;
+  /** Latest progress of each capture seen on the stream, by download id (`capture` events, A-15). */
+  captures: Record<string, CaptureProgress>;
+  /** Tell the stream about a capture the page just started (the first event can arrive before the response). */
+  trackCapture: (c: CaptureProgress) => void;
 }
 
-const Ctx = React.createContext<EventsValue>({ stream: "connecting", connectivity: "unknown", forced: false, setForceOffline: async () => {} });
+const Ctx = React.createContext<EventsValue>({
+  stream: "connecting", connectivity: "unknown", forced: false, setForceOffline: async () => {}, captures: {}, trackCapture: () => {},
+});
 export const useEvents = () => React.useContext(Ctx);
 
 function readState(data: string): { state: ConnectivityState; forced: boolean } | null {
@@ -43,6 +49,13 @@ export function EventsProvider({ children, enabled = true }: { children: React.R
   const [stream, setStream] = React.useState<StreamState>("connecting");
   const [connectivity, setConnectivity] = React.useState<ConnectivityState>("unknown");
   const [forced, setForced] = React.useState(false);
+  const [captures, setCaptures] = React.useState<Record<string, CaptureProgress>>({});
+  const [announcement, setAnnouncement] = React.useState("");
+  const lastState = React.useRef<Record<string, string>>({});
+
+  const trackCapture = React.useCallback((c: CaptureProgress) => {
+    setCaptures((m) => (m[c.downloadId] ? m : { ...m, [c.downloadId]: c }));
+  }, []);
 
   const setForceOffline = React.useCallback(async (on: boolean) => {
     const c = await api<ConnectivityInfo>("/api/system/connectivity", { method: "POST", body: { forceOffline: on } });
@@ -72,6 +85,29 @@ export function EventsProvider({ children, enabled = true }: { children: React.R
       }
     };
     es.addEventListener("connectivity", onConnectivity as EventListener);
+    // Capture progress: the visible line updates on every event; the screen reader announcement only on a change of state.
+    es.addEventListener("capture", ((e: MessageEvent<string>) => {
+      let c: CaptureProgress;
+      try {
+        c = JSON.parse(e.data) as CaptureProgress;
+      } catch {
+        return;
+      }
+      setCaptures((m) => ({ ...m, [c.downloadId]: c }));
+      const key = c.held ? "held" : c.state === "completed" ? `completed:${c.outcome}` : c.state;
+      if (lastState.current[c.downloadId] === key) return;
+      lastState.current[c.downloadId] = key;
+      let site = "the page";
+      try {
+        site = c.url ? new URL(c.url).hostname : site;
+      } catch {
+        /* keep the generic wording */
+      }
+      if (c.held) setAnnouncement(`Queued. ${site} will be saved when the connection returns.`);
+      else if (c.state === "queued") setAnnouncement(`Saving ${site}.`);
+      else if (c.state === "completed") setAnnouncement(c.outcome === "unchanged" ? `${site} is already saved and has not changed.` : `${site} is saved. It now opens offline.`);
+      else if (c.state === "failed") setAnnouncement(`${site} could not be saved. ${c.failureMessage ?? ""}`.trim());
+    }) as EventListener);
     es.onmessage = (e) => {
       try {
         if ((JSON.parse(e.data) as { type?: string }).type === "connectivity") onConnectivity(e);
@@ -85,8 +121,18 @@ export function EventsProvider({ children, enabled = true }: { children: React.R
     };
   }, [enabled]);
 
-  const value = React.useMemo(() => ({ stream, connectivity, forced, setForceOffline }), [stream, connectivity, forced, setForceOffline]);
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  const value = React.useMemo(
+    () => ({ stream, connectivity, forced, setForceOffline, captures, trackCapture }),
+    [stream, connectivity, forced, setForceOffline, captures, trackCapture],
+  );
+  return (
+    <Ctx.Provider value={value}>
+      {children}
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only" data-testid="capture-announcer">
+        {announcement}
+      </div>
+    </Ctx.Provider>
+  );
 }
 
 export function ConnectivityIndicator() {

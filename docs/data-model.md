@@ -6,7 +6,7 @@ Status: proposed schema. Nothing is built. This is the design the Drizzle schema
 
 - Two SQLite files: `main.db` (authoritative) and `index.db` (derived, deletable). Section 6 covers `index.db`.
 - All tables are `STRICT`. Timestamps are `INTEGER` Unix milliseconds in UTC (`*_at`). Booleans are `INTEGER` with `CHECK (x IN (0,1))`. JSON is `TEXT` with `CHECK (json_valid(x))`. Sizes are bytes.
-- **Identifiers (D-9).** Each table has `id INTEGER PRIMARY KEY AUTOINCREMENT` (internal, never reused). Exposed entities also have `public_id TEXT NOT NULL UNIQUE`, a prefixed ULID (`usr_`, `src_`, `col_`, `pg_`, `ver_`, `job_`, `dl_`, `vol_`, `prv_`, `cand_`, `zim_`, `bm_`, `ss_`). Foreign keys use the integer. IDs and URLs never encode file paths.
+- **Identifiers (D-9).** Each table has `id INTEGER PRIMARY KEY AUTOINCREMENT` (internal, never reused). Exposed entities also have `public_id TEXT NOT NULL UNIQUE`, a prefixed ULID (`usr_`, `src_`, `col_`, `pg_`, `ver_`, `job_`, `dl_`, `vol_`, `prv_`, `cand_`, `zim_`, `bm_`, `ss_`, `hs_` for history entries). Foreign keys use the integer. IDs and URLs never encode file paths.
 - **Priority** columns are `INTEGER CHECK (priority BETWEEN 1 AND 4)`: 1 Protected (P1), 2 Important (P2), 3 Standard (P3), 4 Opportunistic (P4). A lower number is more important. This differs from NoConMedia, where P0 to P3 were used with P0 the most protected. The API sends `"P1"` to `"P4"`.
 - Foreign keys are enforced (`PRAGMA foreign_keys=ON`). `ON DELETE` actions are stated per key; the default is `RESTRICT`.
 - "Cached" columns (marked **cache**) are hints maintained for speed. Any destructive operation re-derives the truth from reference tables inside its own transaction.
@@ -424,7 +424,8 @@ Differences between the tables above and `packages/db/migrations/0003_pages_vers
 - New table `version_resources`: `(version_id, resource_key, url, asset_id, via_resource_key, role, status)`, written by stage 11, read by the archive listener. `resource_key` is `r` plus 15 hex characters of the SHA-256 of the referenced URL.
 - `pipeline_stage_runs` adds `detail_json`. `links` adds `features_json`.
 - `pages.availability` defaults to `failed` until the first version is finalised.
-- `page_pins`, `page_sources` and `url_exclusions` are not created yet (they need `sources` or bookmarks).
+- `page_pins`, `page_sources` and `url_exclusions` are not created yet (they need `sources`; `url_exclusions` is also what a deletion with `exclude=true` will write, so until Phase 3 a deleted page can be saved again at once).
+- Migration `0004_bookmarks_history` (A-17) creates `bookmarks` and `history_entries`. Differences from the descriptions above: `bookmarks.collection_id` and `bookmarks.zim_package_id` are plain integers until `collections` and `zim_packages` exist; `bookmarks.reference_priority` stores `browser.bookmarkPriority` at creation for Phase 6; one live bookmark per user and URL key (partial unique index); history `public_id` uses the `hs_` prefix; the archive reference of a bookmark is resolved by URL when listed, `page_id` and `version_id` are only the link made at creation. There is no frame-grant table: archive tokens are stateless.
 - Superseded versions (`latest_only`, `last_n`, `period`) are deleted in stage 15 rather than by the retention job; Phase 6 may move this.
 
 ## 4. Key relationships

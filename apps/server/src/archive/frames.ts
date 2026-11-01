@@ -3,9 +3,16 @@ export interface FrameState {
   pageId?: string;
   url?: string;
   title?: string;
-  state?: "ready" | "partial";
+  /** `ready` and `partial` for archived documents; the interstitial records the link state of the address it shows. */
+  state?: "ready" | "partial" | "live-only" | "queued" | "unavailable" | "unsupported";
+  /** The document was the reader view. */
+  reader?: boolean;
+  /** The listener served its interstitial (an address that is not in the archive) rather than an archived page. */
+  interstitial?: boolean;
   /** Wall-clock ms of the last top-level document. */
   at: number;
+  /** Counts documents served per listener process; two documents in the same millisecond still differ. */
+  seq?: number;
 }
 
 /**
@@ -16,9 +23,11 @@ export class FrameStateStore {
   private readonly map = new Map<string, FrameState>();
   constructor(private readonly max = 2000) {}
 
+  private seq = 0;
+
   record(frameId: string, state: FrameState): void {
     this.map.delete(frameId);
-    this.map.set(frameId, state);
+    this.map.set(frameId, { ...state, seq: ++this.seq });
     if (this.map.size > this.max) this.map.delete(this.map.keys().next().value as string);
   }
 

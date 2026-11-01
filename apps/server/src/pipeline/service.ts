@@ -8,6 +8,7 @@ import { PIPELINE_STAGES } from "@ncb/db/schema";
 import { PermanentJobError } from "../runtime/protocol.js";
 import { runPipeline, type RunOutcome } from "./orchestrator.js";
 import { DEFAULT_VERSIONING, parseVersioning } from "./policy.js";
+import { captureEvent, publishCapture } from "./progress.js";
 import { sha256Hex } from "./store.js";
 import { pageByKey } from "./stages/links.js";
 import {
@@ -109,6 +110,11 @@ export class PipelineService {
     return this.o.deps;
   }
 
+  /** The dedup key for a URL, under the pipeline's query policy. */
+  urlKey(url: string): string {
+    return this.d.urlKey(url);
+  }
+
   // ---- commands ------------------------------------------------------------------------------
 
   /** Creates a download job and enqueues the fetch. Returns the public download id and the queue job id. */
@@ -122,7 +128,7 @@ export class PipelineService {
     if (n.hasCredentials) throw new AppError("bad_request", "Addresses with a username or password cannot be saved.", { kind: "credentials" });
     const { db, clock, queue } = this.d;
     const key = this.d.urlKey(n.fetchUrl);
-    return db.transaction(() => {
+    const result = db.transaction(() => {
       const now = clock.now();
       const publicId = this.d.newId("dl");
       const job = db.run(
@@ -143,6 +149,38 @@ export class PipelineService {
       }
       return { downloadId: publicId, jobId: q.id };
     });
+    publishCapture(db, this.d.events, db.get<{ id: number }>("SELECT id FROM download_jobs WHERE public_id = ?", [result.downloadId])?.id);
+    return result;
+  }
+
+  /**
+   * Puts a capture on hold (waiting for the connection). Held captures keep the download job `queued` and the fetch job
+   * `held`; `resumeHeld` releases every one of them when the connection returns.
+   */
+  holdCapture(downloadId: string): void {
+    const { db, queue } = this.d;
+    const id = db.get<{ id: number }>("SELECT id FROM download_jobs WHERE public_id = ?", [downloadId])?.id;
+    if (id === undefined) return;
+    queue.holdByDownloadJob(id);
+    publishCapture(db, this.d.events, id);
+  }
+
+  /** Releases captures that were held while offline. Returns how many fetch jobs were released. */
+  resumeHeld(): number {
+    const { db, queue } = this.d;
+    const ids = db.all<{ id: number }>("SELECT DISTINCT d.id FROM download_jobs d JOIN jobs j ON j.download_job_id = d.id WHERE d.state = 'queued' AND j.state = 'held'");
+    let n = 0;
+    for (const { id } of ids) {
+      n += queue.resumeByDownloadJob(id);
+      publishCapture(db, this.d.events, id);
+    }
+    return n;
+  }
+
+  /** Current progress of a capture in the shape of the `capture` event. */
+  captureProgress(downloadId: string) {
+    const id = this.d.db.get<{ id: number }>("SELECT id FROM download_jobs WHERE public_id = ?", [downloadId])?.id;
+    return id === undefined ? undefined : captureEvent(this.d.db, id);
   }
 
   getCapture(downloadId: string): CaptureResult | undefined {
@@ -268,6 +306,7 @@ export class PipelineService {
     else if (state === "completed") this.d.db.run("UPDATE download_jobs SET state = 'completed', finished_at = ? WHERE id = ?", [now, id]);
     else this.d.db.run("UPDATE download_jobs SET state = 'failed', failure_code = ?, failure_message = ?, finished_at = ? WHERE id = ?", [extra.code ?? "internal", (extra.message ?? "").slice(0, 500), now, id]);
     this.d.events.publish("download", { downloadJobId: id, state });
+    publishCapture(this.d.db, this.d.events, id);
   }
 
   private async handleFetch(job: Job, signal: AbortSignal): Promise<void> {

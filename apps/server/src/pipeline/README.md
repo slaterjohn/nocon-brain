@@ -30,6 +30,9 @@ A finished stage is never re-run; a stage found `running` after a crash is re-ru
 
 ```ts
 captureUrl(url, opts?: CaptureOptions): { downloadId: string /* dl_... */; jobId: number }
+urlKey(url): string                                    // the dedup key under the pipeline's query policy
+holdCapture(downloadId) / resumeHeld(): number         // queue-while-offline: hold a capture, release every held one
+captureProgress(downloadId): CaptureEvent | undefined  // the same figures as the `capture` event
 getCapture(downloadId): { state, outcome: "pending" | "created" | "unchanged" | "failed", versionId?, pageId?, failureCode?, failureMessage? }
 getPage(idOrPublicId): PageDetail | undefined          // availability, latest version, counts, aliases
 findPageByUrl(url): PageDetail | undefined             // by url_key or alias
@@ -46,5 +49,7 @@ runVersion(versionId, opts)                            // run or resume the stag
 - Caps (`caps`): `maxDocumentBytes` 20 MiB, `maxAssets` 300, `maxAssetBytes` 25 MiB, `maxTotalAssetBytes` 150 MiB, `maxCssDepth` 5, `assetConcurrency` 4. A cap hit gives `partial` with `size_cap`.
 - Partial reasons: `size_cap` (cap hit, or the page was larger than the extraction limit), `assets_missing` (an asset failed or its host was blocked), `truncated` (too many nodes or too deep), `reader_only` (neither Readability nor defuddle found an article; body text only).
 - Resource keys are `r` plus 15 hex characters of `sha256(referenced_url)`; they match the listener's key pattern.
+
+**Progress events.** `captureUrl`, each stage start and end, completion and failure publish a `capture` event on the event bus (`GET /api/system/events`): `{ downloadId, url, state, held, outcome, label, percent, stage?, pageId?, versionId?, failureMessage? }`. `label` is the plain-English stage name (`STAGE_LABELS` in `progress.ts`), `percent` is finished stages over 15.
 
 The listener reads through `SqliteCaptureStore` (`archiveStore` in `createServer` replaces it). Tests: `tests/integration/pipeline`.

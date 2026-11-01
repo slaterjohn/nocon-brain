@@ -12,6 +12,10 @@ import type { VolumeService } from "./services/volumes.js";
 import type { LoginThrottle } from "./lib/throttle.js";
 import type { JobRunner } from "./runtime/runner.js";
 import type { PipelineService } from "./pipeline/service.js";
+import type { ArchiveListener } from "./archive/listener.js";
+import type { BrowserService } from "./services/browser.js";
+import type { BookmarksService, HistoryService } from "./services/bookmarks.js";
+import type { LibraryService } from "./services/library.js";
 
 /** Everything that exists once the database is open and migrated. */
 export interface Services {
@@ -30,6 +34,12 @@ export interface Services {
   queue: JobQueue;
   runner: JobRunner;
   pipeline: PipelineService;
+  /** The archive listener, when this process runs one: frame state and token minting. */
+  archive?: ArchiveListener;
+  browser: BrowserService;
+  bookmarks: BookmarksService;
+  history: HistoryService;
+  library: LibraryService;
   throttle: LoginThrottle;
   /** Returns true when the address may use trusted-LAN read-only access. Null when the mode is off. */
   guestMatcher: ((ip: string) => boolean) | null;

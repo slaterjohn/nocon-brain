@@ -383,7 +383,8 @@ Graceful shutdown (`SIGTERM`): stop claiming jobs, stop accepting new requests, 
 |---|---|---|---|
 | App | `NCB_APP_URL` | `http://localhost:3000` | Public app URL; used for CSRF `Origin` checks and absolute links |
 | | `NCB_WEB_PORT` / `NCB_ARCHIVE_PORT` / `NCB_API_PORT` | 3000 / 3002 / 3001 | Host and container ports; API not published unless `NCB_API_BIND` set |
-| | `NCB_ARCHIVE_PUBLIC_URL` | derived from request host + archive port | Override when behind a reverse proxy with a separate hostname |
+| | `NCB_ARCHIVE_PUBLIC_URL` | derived from request host + archive port | Override when behind a reverse proxy with a separate hostname. The `web` container reads it too (and `NCB_ARCHIVE_PORT`) to put the archive origin in the CSP `frame-src` |
+| | `NCB_RATE_LIMIT_PER_MINUTE` | 600 | Global API requests per minute per client IP (api.md section 1) |
 | Auth | `NCB_PROXY_SECRET` | required | Shared by `web` and `server` (`openssl rand -hex 32`) |
 | | `NCB_SECRET_KEY` | generated into `/data/secrets` if absent | Encrypts provider credentials; signs archive tokens |
 | | `NCB_COOKIE_SECURE` | `false` | Set `true` behind HTTPS |

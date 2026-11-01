@@ -63,11 +63,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       >
         Skip to main content
       </a>
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b bg-background px-3 sm:px-4">
+      <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b bg-background px-3 py-1.5 sm:px-4">
         <Link href="/" className="rounded-md px-1 text-lg">
           <Wordmark />
         </Link>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
           <ConnectivityIndicator />
           {me.data && !guest ? <WorkOfflineSwitch /> : null}
           <ThemeToggle />

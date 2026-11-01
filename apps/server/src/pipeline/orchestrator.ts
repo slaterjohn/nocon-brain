@@ -6,6 +6,7 @@ import { renderPrep, skippedStage, status } from "./stages/finish.js";
 import { dedup, discardAsUnchanged, links, normalise } from "./stages/links.js";
 import { DEFAULT_CAPS, StageFailure, type CaptureCaps, type PipelineDeps, type StageContext, type StageFn, type VersioningPolicy } from "./types.js";
 import { DEFAULT_VERSIONING } from "./policy.js";
+import { publishCapture } from "./progress.js";
 
 export const BUILTIN_STAGES: Record<PipelineStage, StageFn> = {
   validate, store_original: storeOriginal, assets, metadata, readable, sections, links, normalise, dedup, reader,
@@ -39,7 +40,11 @@ export async function runPipeline(deps: PipelineDeps, versionId: number, opts: R
   db.transaction(() => {
     for (const s of PIPELINE_STAGES) db.run("INSERT INTO pipeline_stage_runs (version_id, stage) VALUES (?, ?) ON CONFLICT DO NOTHING", [versionId, s]);
   });
-  const publish = (stage: PipelineStage, state: string) => deps.events.publish("pipeline", { versionId, stage, state });
+  const downloadJobId = db.get<{ download_job_id: number | null }>("SELECT download_job_id FROM page_versions WHERE id = ?", [versionId])?.download_job_id;
+  const publish = (stage: PipelineStage, state: string) => {
+    deps.events.publish("pipeline", { versionId, stage, state });
+    publishCapture(db, deps.events, downloadJobId, state === "running" ? stage : undefined);
+  };
 
   for (const stage of PIPELINE_STAGES) {
     const run = db.get<{ state: string; attempts: number }>("SELECT state, attempts FROM pipeline_stage_runs WHERE version_id = ? AND stage = ?", [versionId, stage])!;
@@ -80,6 +85,7 @@ export async function runPipeline(deps: PipelineDeps, versionId: number, opts: R
   }
   const v = db.get<{ status: string }>("SELECT status FROM page_versions WHERE id = ?", [versionId])!;
   deps.events.publish("pipeline", { versionId, state: v.status });
+  publishCapture(db, deps.events, downloadJobId);
   return { kind: "done", status: v.status };
 }
 
@@ -96,5 +102,7 @@ function fail(deps: PipelineDeps, versionId: number, stage: PipelineStage, messa
   });
   deps.activity.write({ level: "error", area: "pipeline", message: `Capture failed at stage ${stage}: ${message}`, versionId });
   deps.events.publish("pipeline", { versionId, stage, state: "failed", error: message });
+  const dl = db.get<{ download_job_id: number | null }>("SELECT download_job_id FROM page_versions WHERE id = ?", [versionId])?.download_job_id;
+  publishCapture(db, deps.events, dl);
   return { kind: "failed", stage, message };
 }
