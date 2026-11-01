@@ -21,24 +21,30 @@ test("setup wizard, first run with no search providers", async ({ page, baseURL 
   await page.getByLabel("Confirm password").fill(ADMIN_PASSWORD);
   await page.getByRole("button", { name: "Create account" }).click();
 
-  // Step 2: storage. A path outside the allowed roots is refused with a message.
+  // Step 2: storage. A path outside the allowed roots is refused with a message, and nothing is registered.
   await expect(page.getByRole("heading", { level: 1, name: /Choose where to keep archived pages/ })).toBeFocused();
   await page.getByLabel("Folder path").fill("/etc");
-  await page.getByRole("button", { name: "Check and continue" }).click();
+  await page.getByRole("button", { name: "Check folder" }).click();
   await expect(page.getByRole("alert").first()).toContainText(/allowed|outside|root/i);
   await expect(page.getByRole("heading", { level: 1, name: /Choose where to keep archived pages/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Use this folder" })).toHaveCount(0);
 
-  // A folder on the container's own filesystem is accepted with a warning that must be read.
-  await page.getByLabel("Folder path").fill(path.join(volumes, "container-fs"));
-  await page.getByRole("button", { name: "Check and continue" }).click();
+  // A folder on the container's own filesystem is checked on blur. Its warnings show before anything is registered.
+  const folder = page.getByLabel("Folder path");
+  await folder.fill(path.join(volumes, "container-fs"));
+  await folder.blur();
+  await expect(page.getByTestId("storage-checks")).toContainText("This folder can be used");
   if (process.env.E2E_MODE !== "real-server") {
     await expect(page.getByRole("list", { name: "Warnings" })).toContainText("container's own filesystem");
-    await page.getByRole("button", { name: "Continue with this folder" }).click();
-  } else {
-    // The real server decides which warnings apply to a temp directory.
-    const cont = page.getByRole("button", { name: "Continue with this folder" });
-    if (await cont.isVisible().catch(() => false)) await cont.click();
   }
+  // The real server decides which warnings apply to a temp directory, so only check them when they appear.
+  const warnings = page.getByRole("list", { name: "Warnings" });
+  if (await warnings.waitFor({ timeout: 1000 }).then(() => true, () => false)) {
+    await expect(warnings.getByRole("listitem").first()).toBeVisible();
+  }
+  const status = await page.request.get("/api/setup/status");
+  expect(((await status.json()) as { storageConfigured: boolean }).storageConfigured).toBe(false);
+  await page.getByRole("button", { name: "Use this folder" }).click();
 
   // Step 3: resource profile.
   await expect(page.getByRole("heading", { level: 1, name: "Choose a resource profile" })).toBeVisible();

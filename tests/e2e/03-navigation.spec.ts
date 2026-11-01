@@ -93,16 +93,32 @@ test("browser chrome: keyboard shortcuts", async ({ page }) => {
   await expect(tabs.locator("li[data-selected=true]")).toContainText("New tab");
 });
 
-test("connectivity indicator follows the event stream", async ({ page }) => {
+test("connectivity indicator is honest about not having checked, and follows the Work offline switch", async ({ page }) => {
   const indicator = page.getByTestId("connectivity");
-  await expect(indicator).toHaveAttribute("data-state", "online");
-  await expect(indicator).toContainText("Online");
+  // The server never probes or phones home (D-8), so a fresh start is "not checked", not "online".
+  await expect(indicator).toHaveAttribute("data-state", "unknown");
+  await expect(indicator).toContainText("Connection not checked");
 
-  const r = await page.request.post("/api/system/connectivity", { data: { forceOffline: true }, headers: { "X-NoCon-CSRF": "1" } });
-  expect(r.ok()).toBeTruthy();
+  // The manual switch forces offline and the indicator follows the event stream.
+  const toggle = page.getByRole("switch", { name: "Work offline" });
+  await expect(toggle).not.toBeChecked();
+  await toggle.click();
+  await expect(toggle).toBeChecked();
   await expect(indicator).toHaveAttribute("data-state", "offline");
   await expect(indicator).toContainText("Offline");
 
-  await page.request.post("/api/system/connectivity", { data: { forceOffline: false }, headers: { "X-NoCon-CSRF": "1" } });
-  await expect(indicator).toHaveAttribute("data-state", "online");
+  // A change made elsewhere (another tab, the API) reaches this page through the stream.
+  const off = await page.request.post("/api/system/connectivity", { data: { forceOffline: false }, headers: { "X-NoCon-CSRF": "1" } });
+  expect(off.ok()).toBeTruthy();
+  await expect(indicator).toHaveAttribute("data-state", "unknown");
+  await expect(toggle).not.toBeChecked();
+  const on = await page.request.post("/api/system/connectivity", { data: { forceOffline: true }, headers: { "X-NoCon-CSRF": "1" } });
+  expect(on.ok()).toBeTruthy();
+  await expect(indicator).toHaveAttribute("data-state", "offline");
+  await expect(toggle).toBeChecked();
+
+  // Switching off returns to what was observed, which is nothing yet.
+  await toggle.click();
+  await expect(indicator).toHaveAttribute("data-state", "unknown");
+  await expect(indicator).toContainText("Connection not checked");
 });

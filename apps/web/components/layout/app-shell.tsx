@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { ErrorState, LoadingSkeleton } from "./states";
 import { ThemeToggle } from "./theme";
-import { ConnectivityIndicator, EventsProvider } from "./events";
+import { ConnectivityIndicator, EventsProvider, WorkOfflineSwitch } from "./events";
 import { BrowserProvider } from "@/components/browser/tabs";
 
 export function Wordmark({ className }: { className?: string }) {
@@ -69,6 +69,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
         <div className="ml-auto flex items-center gap-2">
           <ConnectivityIndicator />
+          {me.data && !guest ? <WorkOfflineSwitch /> : null}
           <ThemeToggle />
           {me.data ? (
             <>

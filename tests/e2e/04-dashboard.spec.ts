@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { login, mode } from "./helpers";
+import { ADMIN_USER, login, mode } from "./helpers";
 
 test.beforeEach(async ({ page }) => {
   await login(page);
@@ -37,12 +37,26 @@ test("dashboard shows an error with a retry when the API fails", async ({ page }
 });
 
 test("activity log filters by level and area and loads more", async ({ page }) => {
+  const real = mode() !== "mock-api";
+  // The mock has error rows. A fresh real server has none, and no user action produces one, so seed a real
+  // warn-level row deterministically: a failed sign-in is logged as warn in area auth.
+  // The level under test is "error" for the mock and "warn" for the real server.
+  const level = real ? "warn" : "error";
+  const levelText = real ? "Warning" : "Error";
+  if (real) {
+    const r = await page.request.post("/api/auth/login", {
+      data: { username: ADMIN_USER, password: "definitely-not-the-password" },
+      headers: { "X-NoCon-CSRF": "1" },
+    });
+    expect(r.status()).toBe(401);
+  }
+
   await page.goto("/storage/activity");
   await expect(page.getByRole("heading", { level: 1, name: "Activity log" })).toBeVisible();
   const rows = page.getByTestId("log-row");
   await expect(rows.first()).toBeVisible();
 
-  if (mode() === "mock-api") {
+  if (!real) {
     await expect(rows).toHaveCount(50);
     await page.getByRole("button", { name: "Load more" }).click();
     await expect(rows).toHaveCount(100);
@@ -51,22 +65,21 @@ test("activity log filters by level and area and loads more", async ({ page }) =
     await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
   }
 
-  const req = page.waitForRequest((r) => r.url().includes("/api/system/logs") && r.url().includes("level=error"));
-  await page.getByLabel("Level", { exact: true }).selectOption("error");
+  const req = page.waitForRequest((r) => r.url().includes("/api/system/logs") && r.url().includes(`level=${level}`));
+  await page.getByLabel("Level", { exact: true }).selectOption(level);
   await req;
   await expect(rows.first()).toBeVisible();
-  if (mode() === "mock-api") {
-    for (const text of await page.locator("td:nth-child(2)").allTextContents()) expect(text).toBe("Error");
-  }
+  const levels = await page.locator("td:nth-child(2)").allTextContents();
+  expect(levels.length).toBeGreaterThan(0);
+  for (const text of levels) expect(text).toBe(levelText);
+  if (real) await expect(rows.filter({ hasText: "Failed sign-in attempt" }).first()).toBeVisible();
 
-  const req2 = page.waitForRequest((r) => r.url().includes("area=storage") && r.url().includes("level=error"));
+  const req2 = page.waitForRequest((r) => r.url().includes("area=storage") && r.url().includes(`level=${level}`));
   await page.getByLabel("Area", { exact: true }).selectOption("storage");
   await req2;
 
-  if (mode() === "mock-api") {
-    // error + storage never co-occur in the mock data (index % 4 vs index % 8), so the empty state shows.
-    await expect(page.getByRole("heading", { name: "No entries match these filters" })).toBeVisible();
-    await page.getByRole("button", { name: "Clear filters" }).click();
-    await expect(rows.first()).toBeVisible();
-  }
+  // No storage row has this level in either mode (the mock's levels and areas never coincide here), so the empty state shows.
+  await expect(page.getByRole("heading", { name: "No entries match these filters" })).toBeVisible();
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect(rows.first()).toBeVisible();
 });

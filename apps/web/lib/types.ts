@@ -53,6 +53,16 @@ export interface SetupStorageResponse {
   warnings: StorageWarning[];
 }
 
+/** POST /api/setup/storage/validate. Registers nothing. */
+export interface SetupStorageValidateResponse {
+  ok: boolean;
+  path?: string;
+  totalBytes?: number;
+  freeBytes?: number;
+  warnings: StorageWarning[];
+  errors: { path: string; message: string }[];
+}
+
 export interface WorkerStatus {
   name: "runner" | "extract" | "index" | "search" | "zim" | "renderer";
   state: "idle" | "busy" | "down" | "disabled";

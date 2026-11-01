@@ -33,7 +33,9 @@ for (const scheme of ["light", "dark"] as const) {
         await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
         await expect(page.locator("main")).toHaveCount(1);
         await page.waitForLoadState("networkidle").catch(() => {});
-        await expect(page.getByTestId("connectivity")).toHaveAttribute("data-state", "online");
+        // Settled: the event stream is open and the connection is honestly reported as not checked.
+        await expect(page.getByTestId("connectivity")).toHaveAttribute("data-stream", "open");
+        await expect(page.getByTestId("connectivity")).toHaveAttribute("data-state", "unknown");
         expect(await seriousViolations(page)).toEqual([]);
         expect(external, "requests to external hosts").toEqual([]);
       });

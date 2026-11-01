@@ -57,7 +57,7 @@ export function startMockApi(opts: MockOptions): Promise<{ close: () => Promise<
     });
 
   const broadcastConnectivity = () => {
-    const data = JSON.stringify({ state: state.forceOffline ? "offline" : "online", source: state.forceOffline ? "forced" : "probe" });
+    const data = JSON.stringify({ state: state.forceOffline ? "offline" : "unknown", source: state.forceOffline ? "forced" : "passive" });
     for (const s of streams) s.write(`event: connectivity\ndata: ${data}\n\n`);
   };
 
@@ -132,7 +132,7 @@ export function startMockApi(opts: MockOptions): Promise<{ close: () => Promise<
     }
 
     if (p === "/api/system/connectivity" && method === "GET") {
-      return json(res, 200, { state: state.forceOffline ? "offline" : "online", since: new Date().toISOString(), source: state.forceOffline ? "forced" : "probe" });
+      return json(res, 200, { state: state.forceOffline ? "offline" : "unknown", since: new Date().toISOString(), source: state.forceOffline ? "forced" : "passive" });
     }
 
     // Everything below needs a session.
@@ -142,7 +142,7 @@ export function startMockApi(opts: MockOptions): Promise<{ close: () => Promise<
       const b = await readBody(req);
       state.forceOffline = !!b.forceOffline;
       broadcastConnectivity();
-      return json(res, 200, { state: state.forceOffline ? "offline" : "online", source: "forced" });
+      return json(res, 200, { state: state.forceOffline ? "offline" : "unknown", since: new Date().toISOString(), source: state.forceOffline ? "forced" : "passive" });
     }
     if (p === "/api/system/events") {
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
@@ -156,6 +156,25 @@ export function startMockApi(opts: MockOptions): Promise<{ close: () => Promise<
       return;
     }
 
+    if (p === "/api/setup/storage/validate" && method === "POST") {
+      const b = await readBody(req);
+      const root = opts.allowedRoot;
+      if (typeof b.path !== "string" || !(b.path === root || b.path.startsWith(`${root}/`))) {
+        return json(res, 200, {
+          ok: false,
+          warnings: [],
+          errors: [{ path: "path", message: `That folder isn't inside an allowed storage root (${root}). Choose a folder under it.` }],
+        });
+      }
+      return json(res, 200, {
+        ok: true,
+        path: b.path,
+        totalBytes: 100e9,
+        freeBytes: 97.5e9,
+        warnings: b.path.includes("container") ? ["on_container_filesystem"] : [],
+        errors: [],
+      });
+    }
     if (p === "/api/setup/storage" && method === "POST") {
       const b = await readBody(req);
       const root = opts.allowedRoot;
@@ -195,7 +214,7 @@ export function startMockApi(opts: MockOptions): Promise<{ close: () => Promise<
           { name: "index", state: "idle", lastHeartbeatAt: new Date().toISOString(), memoryMb: 64 },
           { name: "renderer", state: "disabled" },
         ],
-        connectivity: state.forceOffline ? "offline" : "online",
+        connectivity: state.forceOffline ? "offline" : "unknown",
       });
     }
     if (p === "/api/system/logs") {

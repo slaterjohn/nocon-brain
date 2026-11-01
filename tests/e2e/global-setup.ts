@@ -29,9 +29,9 @@ async function waitFor(url: string, ms: number, label: string) {
 
 /**
  * Starts the stack for the suite.
- * - Default: a mock of docs/api.md (tests/e2e/mock-api.ts) plus the built web app.
- * - E2E_REAL_SERVER=1: builds and starts apps/server instead (needs apps/server with a `build` script and
- *   `dist/index.js`). The same specs run against both; the first spec creates the administrator through the wizard.
+ * - Default: builds and starts apps/server (dist/index.js) plus the built web app.
+ * - E2E_MOCK_API=1: a mock of docs/api.md (tests/e2e/mock-api.ts) instead of the server.
+ *   The same specs run against both; the first spec creates the administrator through the wizard.
  */
 export default async function globalSetup() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ncb-e2e-"));
@@ -42,7 +42,7 @@ export default async function globalSetup() {
   fs.mkdirSync(dataDir, { recursive: true });
 
   const proxySecret = crypto.randomBytes(24).toString("hex");
-  const real = process.env.E2E_REAL_SERVER === "1";
+  const real = process.env.E2E_MOCK_API !== "1";
   process.env.E2E_MODE = real ? "real-server" : "mock-api";
   process.env.E2E_VOLUMES_ROOT = volumes;
   process.env.E2E_API_URL = `http://127.0.0.1:${API_PORT}`;
@@ -78,7 +78,7 @@ export default async function globalSetup() {
 
   try {
     if (real) {
-      if (!fs.existsSync(path.join(ROOT, "apps/server/package.json"))) throw new Error("E2E_REAL_SERVER=1 but apps/server does not exist.");
+      if (!fs.existsSync(path.join(ROOT, "apps/server/package.json"))) throw new Error("apps/server does not exist.");
       execFileSync("pnpm", ["--filter", "@ncb/server", "build"], { cwd: ROOT, stdio: "inherit" });
       start("server", process.execPath, ["apps/server/dist/index.js"], {
         NODE_ENV: "production",

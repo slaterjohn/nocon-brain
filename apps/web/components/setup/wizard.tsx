@@ -3,7 +3,7 @@
 import * as React from "react";
 import { AlertTriangle, Check } from "lucide-react";
 import { ApiError, api, errorMessage, fieldErrors, get, post } from "@/lib/api";
-import type { Me, ResourceProfile, SetupStatus, SetupStorageResponse, StorageWarning } from "@/lib/types";
+import type { Me, ResourceProfile, SetupStatus, SetupStorageResponse, SetupStorageValidateResponse, StorageWarning } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -21,7 +21,7 @@ const GIB = 1024 ** 3;
 
 const WARNING_TEXT: Record<StorageWarning, string> = {
   on_container_filesystem:
-    "This folder is on the container's own filesystem. Anything saved here is lost if the container is recreated. Mount a drive or volume and register that path instead.",
+    "This folder is on the container's own filesystem. Anything saved here is lost if the container is recreated. Mount a drive or volume and use that path instead.",
   sd_card_suspected:
     "This looks like an SD card. Archiving writes a lot of small files, which wears SD cards quickly. An SSD over USB is a better choice.",
   low_free_space: "This location has little free space. Downloads will pause when free space runs low.",
@@ -198,93 +198,134 @@ function AdminStep({ headingRef, onDone }: StepProps) {
   );
 }
 
+function formatGb(bytes: number) {
+  const gb = bytes / GIB;
+  return `${gb >= 100 ? Math.round(gb) : gb.toFixed(1)} GB`;
+}
+
 function StorageStep({ headingRef, onDone }: StepProps) {
   const [path, setPath] = React.useState("/volumes/main");
   const [name, setName] = React.useState("Main");
   const [quotaGb, setQuotaGb] = React.useState("");
   const [reserveGb, setReserveGb] = React.useState("");
   const [advOpen, setAdvOpen] = React.useState(false);
+  const [checking, setChecking] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [errs, setErrs] = React.useState<Record<string, string>>({});
-  const [result, setResult] = React.useState<SetupStorageResponse | null>(null);
+  // The last successful check, and the path it was for. Editing the path discards it.
+  const [checked, setChecked] = React.useState<{ path: string; result: SetupStorageValidateResponse } | null>(null);
+  const latest = React.useRef(0);
 
-  async function submit(e: React.FormEvent) {
+  const bytesOf = (v: string) => {
+    const n = Number(v);
+    return Math.round(n * GIB);
+  };
+  const badNumber = (v: string) => v.trim() !== "" && (!Number.isFinite(Number(v)) || Number(v) < 0);
+
+  async function check(): Promise<SetupStorageValidateResponse | null> {
+    const p = path.trim();
+    if (checked && checked.path === p) return checked.result;
+    if (!p.startsWith("/")) {
+      setErrs((e) => ({ ...e, path: "Enter an absolute folder path, starting with /." }));
+      setError(null);
+      return null;
+    }
+    const mine = ++latest.current;
+    setChecking(true);
+    setError(null);
+    setErrs((e) => ({ ...e, path: "" }));
+    try {
+      const result = await api<SetupStorageValidateResponse>("/api/setup/storage/validate", {
+        method: "POST",
+        noRedirect: true,
+        body: { path: p, ...(reserveGb.trim() && !badNumber(reserveGb) ? { reserveFreeBytes: bytesOf(reserveGb) } : {}) },
+      });
+      if (mine !== latest.current) return null;
+      if (result.ok) {
+        setChecked({ path: p, result });
+      } else {
+        setChecked(null);
+        const msg = result.errors[0]?.message ?? "That folder can't be used.";
+        setErrs((e) => ({ ...e, path: msg }));
+        setError(result.errors.map((x) => x.message).join(" ") || msg);
+      }
+      return result;
+    } catch (err) {
+      if (mine !== latest.current) return null;
+      setChecked(null);
+      setError(errorMessage(err));
+      return null;
+    } finally {
+      if (mine === latest.current) setChecking(false);
+    }
+  }
+
+  async function register(e: React.FormEvent) {
     e.preventDefault();
     const fe: Record<string, string> = {};
-    if (!path.trim().startsWith("/")) fe.path = "Enter an absolute folder path, starting with /.";
     if (!name.trim()) fe.name = "Give the volume a name.";
-    const num = (v: string, key: string) => {
-      if (!v.trim()) return undefined;
-      const n = Number(v);
-      if (!Number.isFinite(n) || n < 0) {
-        fe[key] = "Enter a number of gigabytes, or leave this empty.";
-        return undefined;
-      }
-      return Math.round(n * GIB);
-    };
-    const quotaBytes = num(quotaGb, "quotaBytes");
-    const reserveFreeBytes = num(reserveGb, "reserveFreeBytes");
+    if (badNumber(quotaGb)) fe.quotaBytes = "Enter a number of gigabytes, or leave this empty.";
+    if (badNumber(reserveGb)) fe.reserveFreeBytes = "Enter a number of gigabytes, or leave this empty.";
     setErrs(fe);
     setError(null);
     if (Object.keys(fe).length) {
       if (fe.quotaBytes || fe.reserveFreeBytes) setAdvOpen(true);
       return;
     }
+    // Nothing is registered until the folder has passed a check.
+    if (!checked || checked.path !== path.trim()) {
+      await check();
+      return;
+    }
     setBusy(true);
     try {
-      const res = await api<SetupStorageResponse>("/api/setup/storage", {
+      await api<SetupStorageResponse>("/api/setup/storage", {
         method: "POST",
         noRedirect: true,
-        body: { path: path.trim(), name: name.trim(), ...(quotaBytes !== undefined ? { quotaBytes } : {}), ...(reserveFreeBytes !== undefined ? { reserveFreeBytes } : {}) },
+        body: {
+          path: path.trim(),
+          name: name.trim(),
+          ...(quotaGb.trim() ? { quotaBytes: bytesOf(quotaGb) } : {}),
+          ...(reserveGb.trim() ? { reserveFreeBytes: bytesOf(reserveGb) } : {}),
+        },
       });
-      if (res.warnings?.length) {
-        setResult(res);
-        setBusy(false);
-      } else {
-        onDone();
-      }
+      onDone();
     } catch (err) {
       const f = fieldErrors(err);
       setErrs(f);
       if (f.quotaBytes || f.reserveFreeBytes) setAdvOpen(true);
-      const code = err instanceof ApiError ? err.code : "";
-      setError(
-        code === "forbidden" || code === "bad_request" || code === "blocked"
-          ? errorMessage(err)
-          : `${errorMessage(err)}`,
-      );
+      setChecked(null);
+      setError(errorMessage(err));
       setBusy(false);
     }
   }
 
-  if (result) {
-    return (
-      <StepCard headingRef={headingRef} title="Storage registered, with warnings" description={`"${result.volume.name}" at ${result.volume.rootPath} is ready to use. Read these first.`}>
-        <CardContent className="space-y-3">
-          <ul className="space-y-2" aria-label="Warnings">
-            {result.warnings.map((w) => (
-              <li key={w} className="flex gap-2 rounded-md border border-warning/60 p-3 text-sm">
-                <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
-                <span>{WARNING_TEXT[w] ?? w}</span>
-              </li>
-            ))}
-          </ul>
-        </CardContent>
-        <CardFooter>
-          <Button onClick={onDone}>Continue with this folder</Button>
-        </CardFooter>
-      </StepCard>
-    );
-  }
+  const result = checked && checked.path === path.trim() ? checked.result : null;
 
   return (
-    <StepCard headingRef={headingRef} title="Choose where to keep archived pages" description="Pick a folder on a drive with plenty of free space. NoConBrain checks the folder before it continues.">
-      <form onSubmit={submit} noValidate>
+    <StepCard headingRef={headingRef} title="Choose where to keep archived pages" description="Pick a folder on a drive with plenty of free space. NoConBrain checks the folder before it uses it.">
+      <form onSubmit={register} noValidate>
         <CardContent className="space-y-4">
           <FormError message={error} />
           <Field id="vol-path" label="Folder path" hint="Must be inside an allowed storage root. In Docker this is usually under /volumes." error={errs.path}>
-            {(p) => <Input {...p} autoFocus value={path} onChange={(e) => setPath(e.target.value)} spellCheck={false} className="font-mono" />}
+            {(p) => (
+              <Input
+                {...p}
+                autoFocus
+                value={path}
+                onChange={(e) => {
+                  setPath(e.target.value);
+                  setChecked(null);
+                  setError(null);
+                }}
+                onBlur={() => {
+                  if (path.trim()) void check();
+                }}
+                spellCheck={false}
+                className="font-mono"
+              />
+            )}
           </Field>
           <Field id="vol-name" label="Name" error={errs.name}>
             {(p) => <Input {...p} value={name} onChange={(e) => setName(e.target.value)} />}
@@ -294,12 +335,42 @@ function StorageStep({ headingRef, onDone }: StepProps) {
               {(p) => <Input {...p} inputMode="decimal" value={quotaGb} onChange={(e) => setQuotaGb(e.target.value)} />}
             </Field>
             <Field id="vol-reserve" label="Keep this much free, in GB" optional hint="Downloads pause before free space drops below this." error={errs.reserveFreeBytes}>
-              {(p) => <Input {...p} inputMode="decimal" value={reserveGb} onChange={(e) => setReserveGb(e.target.value)} />}
+              {(p) => <Input {...p} inputMode="decimal" value={reserveGb} onChange={(e) => { setReserveGb(e.target.value); setChecked(null); }} />}
             </Field>
           </AdvancedSettings>
+          <div aria-live="polite" data-testid="storage-checks" className="space-y-2">
+            {checking ? <p className="text-sm text-muted-foreground">Checking the folder…</p> : null}
+            {result ? (
+              <>
+                <p className="flex items-center gap-2 text-sm">
+                  <Check className="size-4 shrink-0 text-success" aria-hidden="true" />
+                  <span>
+                    This folder can be used
+                    {result.freeBytes !== undefined && result.totalBytes !== undefined
+                      ? `. ${formatGb(result.freeBytes)} free of ${formatGb(result.totalBytes)}.`
+                      : "."}
+                  </span>
+                </p>
+                {result.warnings.length ? (
+                  <ul className="space-y-2" aria-label="Warnings">
+                    {result.warnings.map((w) => (
+                      <li key={w} className="flex gap-2 rounded-md border border-warning/60 p-3 text-sm">
+                        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
+                        <span>{WARNING_TEXT[w] ?? w}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </>
+            ) : null}
+          </div>
         </CardContent>
-        <CardFooter>
-          <Button type="submit" disabled={busy}>{busy ? "Checking…" : "Check and continue"}</Button>
+        <CardFooter className="gap-2">
+          {result ? (
+            <Button type="submit" disabled={busy}>{busy ? "Saving…" : "Use this folder"}</Button>
+          ) : (
+            <Button type="submit" disabled={checking}>{checking ? "Checking…" : "Check folder"}</Button>
+          )}
         </CardFooter>
       </form>
     </StepCard>

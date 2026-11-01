@@ -4,7 +4,9 @@ import * as React from "react";
 import { Wifi, WifiOff, CircleHelp, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { ConnectivityInfo, ConnectivityState } from "@/lib/types";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 /**
  * Connectivity, fed from the SSE endpoint GET /api/system/events (docs/api.md section 13).
@@ -18,16 +20,20 @@ type StreamState = "connecting" | "open" | "lost";
 interface EventsValue {
   stream: StreamState;
   connectivity: ConnectivityState;
+  /** True while the "Work offline" switch is on (the server reports source "forced"). */
+  forced: boolean;
+  setForceOffline: (on: boolean) => Promise<void>;
 }
 
-const Ctx = React.createContext<EventsValue>({ stream: "connecting", connectivity: "unknown" });
+const Ctx = React.createContext<EventsValue>({ stream: "connecting", connectivity: "unknown", forced: false, setForceOffline: async () => {} });
 export const useEvents = () => React.useContext(Ctx);
 
-function readState(data: string): ConnectivityState | null {
+function readState(data: string): { state: ConnectivityState; forced: boolean } | null {
   try {
-    const j = JSON.parse(data) as { state?: unknown; connectivity?: unknown; type?: unknown; data?: { state?: unknown } };
+    const j = JSON.parse(data) as { state?: unknown; connectivity?: unknown; source?: unknown; data?: { state?: unknown; source?: unknown } };
     const s = j.state ?? j.connectivity ?? j.data?.state;
-    return s === "online" || s === "offline" || s === "unknown" ? s : null;
+    const source = j.source ?? j.data?.source;
+    return s === "online" || s === "offline" || s === "unknown" ? { state: s, forced: source === "forced" } : null;
   } catch {
     return null;
   }
@@ -36,13 +42,22 @@ function readState(data: string): ConnectivityState | null {
 export function EventsProvider({ children, enabled = true }: { children: React.ReactNode; enabled?: boolean }) {
   const [stream, setStream] = React.useState<StreamState>("connecting");
   const [connectivity, setConnectivity] = React.useState<ConnectivityState>("unknown");
+  const [forced, setForced] = React.useState(false);
+
+  const setForceOffline = React.useCallback(async (on: boolean) => {
+    const c = await api<ConnectivityInfo>("/api/system/connectivity", { method: "POST", body: { forceOffline: on } });
+    setConnectivity(c.state);
+    setForced(c.source === "forced");
+  }, []);
 
   React.useEffect(() => {
     if (!enabled) return;
     let closed = false;
     api<ConnectivityInfo>("/api/system/connectivity", { noRedirect: true })
       .then((c) => {
-        if (!closed) setConnectivity((cur) => (cur === "unknown" ? c.state : cur));
+        if (closed) return;
+        setConnectivity(c.state);
+        setForced(c.source === "forced");
       })
       .catch(() => {});
 
@@ -51,7 +66,10 @@ export function EventsProvider({ children, enabled = true }: { children: React.R
     es.onerror = () => setStream(es.readyState === EventSource.CLOSED ? "lost" : "connecting");
     const onConnectivity = (e: MessageEvent<string>) => {
       const s = readState(e.data);
-      if (s) setConnectivity(s);
+      if (s) {
+        setConnectivity(s.state);
+        setForced(s.forced);
+      }
     };
     es.addEventListener("connectivity", onConnectivity as EventListener);
     es.onmessage = (e) => {
@@ -67,12 +85,12 @@ export function EventsProvider({ children, enabled = true }: { children: React.R
     };
   }, [enabled]);
 
-  const value = React.useMemo(() => ({ stream, connectivity }), [stream, connectivity]);
+  const value = React.useMemo(() => ({ stream, connectivity, forced, setForceOffline }), [stream, connectivity, forced, setForceOffline]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
 export function ConnectivityIndicator() {
-  const { stream, connectivity } = useEvents();
+  const { stream, connectivity, forced } = useEvents();
   let label: string;
   let hint: string;
   let variant: "success" | "warning" | "secondary" = "secondary";
@@ -88,12 +106,12 @@ export function ConnectivityIndicator() {
     Icon = Wifi;
   } else if (connectivity === "offline") {
     label = "Offline";
-    hint = "No internet. Saved pages and local search still work.";
+    hint = forced ? "Work offline is on. Saved pages and local search still work." : "No internet. Saved pages and local search still work.";
     variant = "warning";
     Icon = WifiOff;
   } else {
-    label = "Connection unknown";
-    hint = "NoConBrain hasn't checked the internet connection yet.";
+    label = "Connection not checked";
+    hint = "NoConBrain doesn't check the internet in the background. Online features are tried when you use them, and fall back to saved pages if they fail.";
   }
   return (
     <Badge variant={variant} data-testid="connectivity" data-state={connectivity} data-stream={stream} title={hint}>
@@ -103,5 +121,36 @@ export function ConnectivityIndicator() {
         {label}
       </span>
     </Badge>
+  );
+}
+
+/** The manual "Work offline" switch. Switching it off returns to the last observed state, which may be "not checked". */
+export function WorkOfflineSwitch() {
+  const { forced, setForceOffline } = useEvents();
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  async function toggle(on: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      await setForceOffline(on);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="flex items-center gap-2">
+      <Label htmlFor="work-offline" className="text-xs text-muted-foreground">
+        Work offline
+      </Label>
+      <Switch id="work-offline" checked={forced} disabled={busy} onCheckedChange={toggle} aria-describedby={error ? "work-offline-error" : undefined} />
+      {error ? (
+        <span id="work-offline-error" role="alert" className="text-xs text-destructive">
+          {error}
+        </span>
+      ) : null}
+    </div>
   );
 }
