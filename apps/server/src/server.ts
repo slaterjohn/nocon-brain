@@ -7,24 +7,30 @@ import type { Clock, ResolvedConfig } from "@ncb/shared";
 import { AppError, steadyClock, systemClock } from "@ncb/shared";
 import { JobQueue, openMainDatabase, type MainDatabase } from "@ncb/db";
 import { buildApp, type BuildOptions } from "./app.js";
-import { createArchiveServer } from "./archive.js";
+import { ArchiveTokenService, createArchiveListener, type ArchiveListener, type CaptureStore } from "./archive/index.js";
 import { ServerState, type Services } from "./context.js";
 import { CidrError, privateCidrMatcher } from "./lib/cidr.js";
 import { loadSecretKey } from "./lib/secrets.js";
 import { LoginThrottle } from "./lib/throttle.js";
 import { WorkerPool, type PoolOptions } from "./runtime/pool.js";
+import { buildUserAgent, createFetcher, RobotsService, type FetcherOptions } from "@ncb/fetch";
+import { SqliteCaptureStore } from "./pipeline/capture-store.js";
+import { ExtractClient } from "./pipeline/extract-client.js";
+import { createPipelineDeps, PipelineService } from "./pipeline/service.js";
+import type { PipelineFaults, PipelineFetcher } from "./pipeline/types.js";
+import { VERSION } from "./version.js";
 import { JobRunner } from "./runtime/runner.js";
 import { ActivityLog } from "./services/activity.js";
 import { AuthService } from "./services/auth.js";
 import { BlobStore, type BlobStoreOptions } from "./services/blobs.js";
 import { ConnectivityService, type ProbeFn } from "./services/connectivity.js";
 import { EventBus } from "./services/events.js";
-import { ConnectivityGuardedFetcher, NotImplementedFetcher, type Fetcher } from "./services/fetcher.js";
+import { ConnectivityGuardedFetcher, isNetworkError, NotImplementedFetcher, type Fetcher } from "./services/fetcher.js";
 import { SettingsService } from "./services/settings.js";
 import { GIB, VolumeService, type VolumeProbes } from "./services/volumes.js";
 
 export { buildApp } from "./app.js";
-export { createArchiveServer } from "./archive.js";
+export * from "./archive/index.js";
 export { ServerState, type Services } from "./context.js";
 export * from "./services/blobs.js";
 export * from "./services/connectivity.js";
@@ -33,6 +39,7 @@ export * from "./services/settings.js";
 export * from "./services/volumes.js";
 export { handlerFor, JobRunner } from "./runtime/runner.js";
 export { WorkerPool } from "./runtime/pool.js";
+export * from "./pipeline/index.js";
 
 export interface ServerOptions extends BuildOptions {
   config: ResolvedConfig;
@@ -49,8 +56,17 @@ export interface ServerOptions extends BuildOptions {
   blobFault?: BlobStoreOptions["faultBeforeRename"];
   runnerPollMs?: number;
   leaseMs?: number;
+  /** Replaces the real guarded fetcher for captures (tests). */
+  captureFetcher?: PipelineFetcher;
+  /** Extra `createFetcher` options for captures, for example `ssrf: createSsrfGuard({ allow: "127.0.0.1" })` in tests. */
+  captureFetcherOptions?: Partial<FetcherOptions>;
+  pipelineFaults?: PipelineFaults;
+  /** Stage implementations that replace the built-in ones (the rendering code registers `render_prep`). */
+  stageOverrides?: import("./pipeline/types.js").PipelineDeps["stageOverrides"];
   /** Start the archive listener on `listen()`. Default true. */
   archive?: boolean;
+  /** Where the archive listener reads captures from. Defaults to an empty in-memory store until the pipeline supplies one. */
+  archiveStore?: CaptureStore;
 }
 
 export interface NcbServer {
@@ -63,6 +79,8 @@ export interface NcbServer {
   /** Graceful stop: drain jobs, checkpoint the WAL, close everything. Idempotent. */
   close(): Promise<void>;
   readonly archiveServer?: http.Server;
+  /** The archive listener (token service available after `initialize()`). */
+  readonly archive?: ArchiveListener;
 }
 
 /** Where migrations live: next to the bundle (dist/migrations) when bundled, otherwise the db package's folder. */
@@ -84,7 +102,9 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
   const clock = opts.clock ?? systemClock;
   const state = new ServerState();
   const app = await buildApp(state, config, opts);
-  const archiveServer = opts.archive === false ? undefined : createArchiveServer({ appUrl: config.NCB_APP_URL });
+  const archive: ArchiveListener | undefined =
+    opts.archive === false ? undefined : createArchiveListener({ appUrl: config.NCB_APP_URL, clock, store: opts.archiveStore });
+  const archiveServer = archive?.server;
   let main: MainDatabase | undefined;
   let svc: Services | undefined;
   let closed: Promise<void> | undefined;
@@ -95,6 +115,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
     app,
     state,
     archiveServer,
+    archive,
 
     async listen() {
       await app.listen({ host: config.NCB_API_HOST, port: config.NCB_API_PORT });
@@ -130,6 +151,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       const activity = new ActivityLog(db, clock);
       const secretKey = loadSecretKey(config.NCB_SECRET_KEY, config.NCB_DATA_DIR);
       const settings = new SettingsService({ db, clock, config, secretKey });
+      archive?.attach({ tokens: new ArchiveTokenService({ secret: secretKey, clock }) });
       const auth = new AuthService(db, clock);
       const volumes = new VolumeService({
         db, clock,
@@ -178,12 +200,50 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
             })
           : undefined;
 
+      const userAgent = buildUserAgent({ version: VERSION, contact: config.NCB_APP_URL });
+      const realFetcher = createFetcher({ userAgent, isOffline: () => connectivity.forced, ...opts.captureFetcherOptions });
+      const rawCapture: PipelineFetcher = opts.captureFetcher ?? (realFetcher as unknown as PipelineFetcher);
+      // Every outcome feeds passive connectivity, and forced offline refuses the call, as for any outbound request.
+      const captureFetcher: PipelineFetcher = {
+        async fetch(url, o) {
+          connectivity.assertCanReachInternet({ background: false });
+          try {
+            const r = await rawCapture.fetch(url, o);
+            connectivity.recordOutcome({ ok: true });
+            return r;
+          } catch (e) {
+            if (isNetworkError(e) || (e as { code?: string }).code === "network") connectivity.recordOutcome({ ok: false, network: true });
+            throw e;
+          }
+        },
+      };
+      const robots = new RobotsService({ fetcher: realFetcher, userAgentToken: "NoConBrain", now: () => Date.now() });
+      const extractClient = new ExtractClient(pool);
+      const deps = createPipelineDeps({
+        db, clock, blobs, fetcher: captureFetcher, extract: extractClient, activity, events, queue, log: app.log,
+        faults: opts.pipelineFaults, stageOverrides: opts.stageOverrides,
+      });
+      const pipeline = new PipelineService({
+        fetcher: captureFetcher,
+        robots,
+        deps,
+      });
+
+      if (archive) {
+        archive.attach({
+          store: opts.archiveStore ?? new SqliteCaptureStore({
+            db, blobs, urlKey: deps.urlKey, connectivity: () => (connectivity.snapshot().state === "offline" ? "offline" : "online"),
+          }),
+        });
+      }
+
       const runner = new JobRunner({
         queue, pool, activity, events, clock, log: app.log, pollMs: opts.runnerPollMs, leaseMs: opts.leaseMs,
+        mainHandlers: pipeline.handlers,
       });
 
       svc = {
-        config, clock, main, db, activity, auth, settings, volumes, blobs, connectivity, fetcher, events, queue, runner,
+        config, clock, main, db, activity, auth, settings, volumes, blobs, connectivity, fetcher, events, queue, runner, pipeline,
         throttle: new LoginThrottle(clock), guestMatcher,
       };
       state.attach(svc);

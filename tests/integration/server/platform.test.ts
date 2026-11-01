@@ -317,7 +317,7 @@ describe("archive listener", () => {
       expect((await get("/healthz")).status).toBe(200);
       for (const p of ["/api/system/health", "/api/auth/me", "/api/setup/status", "/a/token/p/pg_1", "/"]) {
         const r = await get(p, { cookie: "ncb_session=abc", "x-nocon-csrf": "1" });
-        expect(r.status, p).toBe(404);
+        expect(r.status, p).toBe(p.startsWith("/a/") ? 401 : 404);
         expect(r.headers.get("set-cookie")).toBeNull();
         expect(r.headers.get("content-security-policy")).toContain("sandbox");
         expect(await r.text()).not.toMatch(/"status"|unauthorized|user/i);

@@ -412,6 +412,21 @@ RETURNING *;
 
 **`maintenance_runs`**: `id`, `kind` (`verify`, `repair`, `gc`, `backup`, `integrity_check`, `scrub`), `dry_run INTEGER`, `state`, `started_at`, `finished_at`, `report_json` (counts and per-finding detail: orphan blobs, missing blobs, refcount mismatches, dangling references, index drift, stale reservations, temp files, `capturing` versions).
 
+### 3.4a Phase 2 implementation notes (migration 0003_pages_versions)
+
+Differences between the tables above and `packages/db/migrations/0003_pages_versions.sql`:
+
+- `page_versions.source_id` and `crawl_job_id` are plain integers (no foreign key) until `sources` and the crawl tables arrive in Phase 3. `jobs.version_id` is likewise unconstrained until a table rebuild.
+- `assets.blob_id` is nullable: failed, blocked and skipped fetches keep a negative record. `assets.status` adds `skipped` (per-capture cap), and `error_code`, `error_message`, `size_bytes` are added. Uniqueness is `(url_key, blob_id)` for stored assets and `(url_key, status)` for negative records.
+- The main document is also an `asset_references` row with role `document`, so `blobs.refcount` stays "asset references plus `version_content` references".
+- `page_versions` adds `duplicate_of_version_id` (stage 9 flag), `simhash` (reserved, unused), `metadata_json`, `mime`, `raw_bytes`, `failure_stage`, `failure_message`.
+- `version_content` adds `extraction_blob_id` (intermediate extraction result, counted as a reference) and `extraction_method`.
+- New table `version_resources`: `(version_id, resource_key, url, asset_id, via_resource_key, role, status)`, written by stage 11, read by the archive listener. `resource_key` is `r` plus 15 hex characters of the SHA-256 of the referenced URL.
+- `pipeline_stage_runs` adds `detail_json`. `links` adds `features_json`.
+- `pages.availability` defaults to `failed` until the first version is finalised.
+- `page_pins`, `page_sources` and `url_exclusions` are not created yet (they need `sources` or bookmarks).
+- Superseded versions (`latest_only`, `last_n`, `period`) are deleted in stage 15 rather than by the retention job; Phase 6 may move this.
+
 ## 4. Key relationships
 
 ### 4.1 Blobs, assets and references

@@ -11,6 +11,7 @@ import type { SettingsService } from "./services/settings.js";
 import type { VolumeService } from "./services/volumes.js";
 import type { LoginThrottle } from "./lib/throttle.js";
 import type { JobRunner } from "./runtime/runner.js";
+import type { PipelineService } from "./pipeline/service.js";
 
 /** Everything that exists once the database is open and migrated. */
 export interface Services {
@@ -28,6 +29,7 @@ export interface Services {
   events: EventBus;
   queue: JobQueue;
   runner: JobRunner;
+  pipeline: PipelineService;
   throttle: LoginThrottle;
   /** Returns true when the address may use trusted-LAN read-only access. Null when the mode is off. */
   guestMatcher: ((ip: string) => boolean) | null;

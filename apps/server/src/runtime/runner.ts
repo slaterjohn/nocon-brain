@@ -3,6 +3,10 @@ import { JobQueue, type Job, type StartupRecovery } from "@ncb/db";
 import type { ActivityLog } from "../services/activity.js";
 import type { EventBus } from "../services/events.js";
 import type { JobOutcome, SlotStatus, WorkerPool } from "./pool.js";
+import { PermanentJobError } from "./protocol.js";
+
+/** Test hook: thrown from a main handler to abandon a job without settling it (simulates a killed process). */
+export class SimulatedStop extends Error {}
 
 export interface RunnerOptions {
   queue: JobQueue;
@@ -14,9 +18,24 @@ export interface RunnerOptions {
   queues?: JobQueueName[];
   pollMs?: number;
   leaseMs?: number;
+  /**
+   * Handlers that run on the main thread (they need the database writer), keyed by job type. They are claimed
+   * from `mainQueues`; every other queue still goes to the worker pool.
+   */
+  mainHandlers?: Record<string, MainJobHandler>;
+  mainQueues?: JobQueueName[];
+  mainConcurrency?: number;
+}
+
+export type MainJobHandler = (job: Job, ctx: { signal: AbortSignal }) => Promise<void>;
+/** Thrown by a main-thread handler to retry later with specific delays. */
+export interface RetryHint {
+  retryAfterMs?: number;
+  hostBackoffMs?: number;
 }
 
 const DEFAULT_QUEUES: JobQueueName[] = ["crawl", "process", "index", "maintenance"];
+const DEFAULT_MAIN_QUEUES: JobQueueName[] = ["crawl", "process"];
 
 /** Which handler a job runs: `payload.handler` if set (used by tests and by job types with variants), else the job type. */
 export function handlerFor(job: Job): string {
@@ -31,6 +50,10 @@ export function handlerFor(job: Job): string {
  */
 export class JobRunner {
   private readonly queues: JobQueueName[];
+  private readonly mainQueues: JobQueueName[];
+  private mainRunning = 0;
+  private readonly mainAbort = new AbortController();
+  private readonly mainPromises = new Set<Promise<void>>();
   private readonly pollMs: number;
   private readonly leaseMs: number;
   private timer?: NodeJS.Timeout;
@@ -41,7 +64,8 @@ export class JobRunner {
   recovery?: StartupRecovery;
 
   constructor(private readonly o: RunnerOptions) {
-    this.queues = o.queues ?? DEFAULT_QUEUES;
+    this.mainQueues = o.mainHandlers ? (o.mainQueues ?? DEFAULT_MAIN_QUEUES) : [];
+    this.queues = (o.queues ?? DEFAULT_QUEUES).filter((q) => !this.mainQueues.includes(q));
     this.pollMs = o.pollMs ?? 500;
     this.leaseMs = o.leaseMs ?? 60_000;
   }
@@ -63,7 +87,7 @@ export class JobRunner {
   }
 
   get running(): number {
-    return this.inFlight.size;
+    return this.inFlight.size + this.mainRunning;
   }
 
   get lastTick(): number | null {
@@ -77,10 +101,12 @@ export class JobRunner {
   /** Claims work for every idle worker. Re-entrant calls are ignored. */
   async tick(): Promise<void> {
     const pool = this.o.pool;
-    if (this.stopping || this.ticking || !pool) return;
+    if (this.stopping || this.ticking) return;
     this.ticking = true;
     this.lastTickAt = this.o.clock.now();
     try {
+      this.tickMain();
+      if (!pool) return;
       for (;;) {
         const slotId = pool.acquire();
         if (!slotId) break;
@@ -100,6 +126,55 @@ export class JobRunner {
     } finally {
       this.ticking = false;
     }
+  }
+
+  private tickMain(): void {
+    const handlers = this.o.mainHandlers;
+    if (!handlers) return;
+    const max = this.o.mainConcurrency ?? 2;
+    while (this.mainRunning < max) {
+      let job: Job | undefined;
+      for (const q of this.mainQueues) {
+        job = this.o.queue.claim(q, "main", this.leaseMs);
+        if (job) break;
+      }
+      if (!job) return;
+      this.runMain(job, handlers[job.type]);
+    }
+  }
+
+  private runMain(job: Job, handler: MainJobHandler | undefined): void {
+    const q = this.o.queue;
+    this.mainRunning++;
+    const lease = setInterval(() => {
+      if (!q.heartbeat(job.id, "main", this.leaseMs)) this.mainAbort.abort();
+    }, Math.max(100, Math.floor(this.leaseMs / 3)));
+    lease.unref();
+    const p = (async () => {
+      try {
+        if (!handler) throw Object.assign(new Error(`No main-thread handler for job type "${job.type}"`), { permanent: true });
+        await handler(job, { signal: this.mainAbort.signal });
+        q.complete(job.id, "main");
+        this.o.events.publish("job", { jobId: job.id, type: job.type, state: "done" });
+      } catch (e) {
+        if (this.stopping) {
+          q.release(job.id, "main"); // shutdown: back on the queue, attempt not used
+          return;
+        }
+        if (e instanceof SimulatedStop) return; // leave the job running, as a killed process would
+        const err = e as Error & RetryHint & { permanent?: boolean };
+        const permanent = err.permanent || err.name === "PermanentJobError" || e instanceof PermanentJobError;
+        const next = q.fail(job.id, "main", err.message ?? String(e), { retry: !permanent, retryAfterMs: err.retryAfterMs, hostBackoffMs: err.hostBackoffMs });
+        this.o.activity.write({ level: "error", area: "system", message: `Job ${job.type} failed: ${err.message}`, jobId: job.id, details: { next } });
+        this.o.events.publish("job", { jobId: job.id, type: job.type, state: next, error: err.message });
+      } finally {
+        clearInterval(lease);
+        this.mainRunning--;
+        if (!this.stopping) void this.tick();
+      }
+    })();
+    this.mainPromises.add(p);
+    void p.finally(() => this.mainPromises.delete(p));
   }
 
   private dispatch(pool: WorkerPool, slotId: string, job: Job): void {
@@ -160,6 +235,8 @@ export class JobRunner {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     const pending = [...this.inFlight.entries()];
+    this.mainAbort.abort();
+    await Promise.race([Promise.allSettled([...this.mainPromises]), new Promise((r) => setTimeout(r, graceMs))]);
     await this.o.pool?.shutdown(graceMs);
     await Promise.allSettled(pending.map(([, v]) => v.promise));
     // Anything still marked running (a crash during shutdown) goes back to the queue without losing an attempt.

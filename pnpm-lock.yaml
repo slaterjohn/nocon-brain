@@ -20,6 +20,9 @@ importers:
       '@ncb/fetch':
         specifier: workspace:*
         version: link:packages/fetch
+      '@ncb/render':
+        specifier: workspace:*
+        version: link:packages/render
       '@ncb/server':
         specifier: workspace:*
         version: link:apps/server

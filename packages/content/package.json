@@ -1,0 +1,25 @@
+{
+  "name": "@ncb/content",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "css-tree": "^3.2.1",
+    "defuddle": "^0.19.6",
+    "franc-min": "^6.2.0",
+    "linkedom": "^0.18.15",
+    "parse5": "^8.1.0",
+    "tldts": "^7.4.19"
+  },
+  "devDependencies": {
+    "@types/css-tree": "^2.3.11"
+  }
+}

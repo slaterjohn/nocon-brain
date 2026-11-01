@@ -1,3 +1,4 @@
+import { runExtractOp, type ExtractPayload } from "../pipeline/extract-ops.js";
 import type { Handler } from "./protocol.js";
 
 /** `noop`: finishes at once. For tests and for checking that the runner works end to end. */
@@ -30,4 +31,7 @@ export const leak: Handler = async () => {
   }
 };
 
-export const BUILTIN_HANDLERS: Record<string, Handler> = { noop, sleep };
+/** `extract`: DOM work for the pipeline (metadata, readable content, outline, reader HTML, links). Pure, no database. */
+export const extract: Handler = async (payload) => ({ result: await runExtractOp(payload as ExtractPayload) });
+
+export const BUILTIN_HANDLERS: Record<string, Handler> = { noop, sleep, extract };
