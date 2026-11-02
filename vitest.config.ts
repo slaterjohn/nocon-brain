@@ -13,7 +13,7 @@ export default defineConfig({
       {
         test: {
           name: "integration",
-          include: ["tests/integration/**/*.test.ts"],
+          include: ["tests/integration/**/*.test.ts", "tests/provider-conformance/**/*.test.ts"],
           environment: "node",
           testTimeout: 180_000,
           hookTimeout: 120_000,

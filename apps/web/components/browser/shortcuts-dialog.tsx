@@ -86,10 +86,12 @@ export function ShortcutsDialog({
         className="max-w-2xl"
         aria-describedby="shortcuts-desc"
         onCloseAutoFocus={(e) => {
+          // Radix runs this a tick after the dialog is gone. If the Human has already moved focus (for example with Alt+Shift+L), leave it there.
           const el = returnFocusTo?.current;
+          const moved = document.activeElement && document.activeElement !== document.body;
           if (el && el.isConnected) {
             e.preventDefault();
-            el.focus();
+            if (!moved) el.focus();
           }
         }}
       >

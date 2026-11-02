@@ -245,7 +245,7 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
     bookmarkRoutes(a, state);
     sourceRoutes(a, state);
     collectionRoutes(a, state);
-    searchRoutes(a, state);
+    searchRoutes(a, state, { sseHeartbeatMs });
     downloadRoutes(a, state);
     scheduleRoutes(a, state);
   });

@@ -68,6 +68,8 @@ export interface FetchRequestOptions {
   truncateAtCap?: boolean;
   timeouts?: Partial<Timeouts>;
   hooks?: FetchHooks;
+  /** Extra request headers (an API token, for example). Sent only to the host of the first URL: a redirect to another host drops them. */
+  headers?: Record<string, string>;
 }
 
 export interface FetchTimings {
@@ -207,6 +209,14 @@ export function createFetcher(options: FetcherOptions = {}): Fetcher {
         accept: opts.accept ? [...opts.accept, "*/*;q=0.1"].join(", ") : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "accept-encoding": "gzip, deflate, br",
       };
+      const extraNames: string[] = [];
+      const firstHost = current.host;
+      for (const [k, v] of Object.entries(opts.headers ?? {})) {
+        const name = k.toLowerCase();
+        if (name === "host" || name === "content-length" || name === "transfer-encoding" || name === "connection") continue;
+        hostHeaders[name] = v;
+        extraNames.push(name);
+      }
       if (opts.conditional?.etag) hostHeaders["if-none-match"] = opts.conditional.etag;
       if (opts.conditional?.lastModified) hostHeaders["if-modified-since"] = opts.conditional.lastModified;
 
@@ -247,6 +257,7 @@ export function createFetcher(options: FetcherOptions = {}): Fetcher {
           if (seen.has(next.href)) throw new FetchError("redirect_loop", `redirect loop at ${next.href}`, { url: next.href });
           seen.add(next.href);
           current = next;
+          if (current.host !== firstHost) for (const n of extraNames) delete hostHeaders[n];
           continue;
         }
         if (status === 429) {

@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { BookmarkCheck, FolderPlus, History, Pencil, Play, Search as SearchIcon, Settings2, Trash2, X } from "lucide-react";
+import { BookmarkCheck, Eye, FolderPlus, ListChecks, History, Pencil, Play, Search as SearchIcon, Settings2, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,7 @@ import { useSearchPrefs, useSearchServerSettings, type SearchPrefs } from "@/lib
 import { readHistory, readSavedList, searchHref, stateFromSaved, type SavedSearch } from "@/lib/search";
 import { formatDate } from "@/components/library/format";
 import { SearchBox } from "./search-box";
+import { CandidatesDialog, SavedSourceDialog } from "./saved-source";
 
 type View = "saved" | "history" | "settings";
 const VIEWS: { id: View; label: string; icon: typeof SearchIcon }[] = [
@@ -71,6 +72,10 @@ function SavedSearches() {
   const [name, setName] = React.useState("");
   const [deleting, setDeleting] = React.useState<SavedSearch | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [makingSource, setMakingSource] = React.useState<SavedSearch | null>(null);
+  const [reviewing, setReviewing] = React.useState<SavedSearch | null>(null);
+  // Sources made in this visit, before the list is read again (the list itself carries `sourceId` after a reload).
+  const [sourceIds, setSourceIds] = React.useState<Record<string, string>>({});
 
   async function rename(e: React.FormEvent) {
     e.preventDefault();
@@ -138,12 +143,16 @@ function SavedSearches() {
               {!s.collectionId ? (
                 <Button size="sm" variant="outline" onClick={() => void asCollection(s)} data-testid="saved-collection"><FolderPlus aria-hidden="true" /> Save as collection<span className="sr-only">: {s.name}</span></Button>
               ) : null}
+              <Button size="sm" variant="outline" onClick={() => setMakingSource(s)} data-testid="saved-source"><Eye aria-hidden="true" /> Watch for new pages<span className="sr-only">: {s.name}</span></Button>
+              <Button size="sm" variant="outline" onClick={() => setReviewing(s)} data-testid="saved-candidates"><ListChecks aria-hidden="true" /> New pages<span className="sr-only"> from {s.name}</span></Button>
               <Button size="sm" variant="outline" onClick={() => setDeleting(s)} data-testid="saved-delete"><Trash2 aria-hidden="true" /> Delete<span className="sr-only"> {s.name}</span></Button>
             </div>
           </li>
         ))}
       </ul>
 
+      <SavedSourceDialog search={makingSource} onOpenChange={(o) => !o && setMakingSource(null)} onCreated={(sid, src) => setSourceIds((m) => ({ ...m, [sid]: src }))} />
+      <CandidatesDialog search={reviewing} sourceId={reviewing ? (sourceIds[reviewing.id] ?? reviewing.sourceId ?? undefined) : undefined} onOpenChange={(o) => !o && setReviewing(null)} />
       <Dialog open={!!renaming} onOpenChange={(o) => !o && setRenaming(null)}>
         <DialogContent aria-describedby="rename-desc">
           <div><DialogTitle>Rename this search</DialogTitle><DialogDescription id="rename-desc" className="mt-1">Only the name changes. The words and filters stay as they are.</DialogDescription></div>
@@ -273,6 +282,11 @@ function SearchSettings() {
           </Select>
           <p className="mt-1 text-xs text-muted-foreground">Applies to everything you open in the Browser, including search results.</p>
         </div>
+      </section>
+      <section aria-labelledby="set-online" className="space-y-2">
+        <h2 id="set-online" className="text-lg font-semibold">Online search</h2>
+        <p className="text-sm text-muted-foreground">Search the web as well as your saved pages. It is off until you switch it on and add a provider.</p>
+        <Link href="/storage/online-search" className="text-sm text-primary underline underline-offset-4 hover:no-underline" data-testid="online-settings-link">Online search settings</Link>
       </section>
       <section aria-labelledby="set-history" className="space-y-3">
         <h2 id="set-history" className="text-lg font-semibold">History</h2>

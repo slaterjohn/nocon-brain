@@ -101,6 +101,8 @@ export interface SourceServiceOptions {
   previewRobots?: Pick<RobotsService, "check">;
   /** Free bytes on the best writable volume, for the preview's size warning. */
   freeBytes?: () => number | undefined;
+  /** Runs a saved-search source (Phase 5, task O-11): the search, then candidates or downloads. */
+  runSavedSearch?: (source: { id: number; publicId: string; priority: PriorityNumber }, o: { requestedBy: "user" | "schedule" | "system"; signal?: AbortSignal }) => Promise<RunResult>;
 }
 
 const iso = (n: number | null): string | null => (n == null ? null : new Date(n).toISOString());
@@ -114,6 +116,11 @@ export class SourceService {
 
   get resourceProfile(): ResourceProfile {
     return (this.o.settings.internal("resources") as { profile: ResourceProfile }).profile;
+  }
+
+  /** Connects the saved-search runner (it needs the search services, which are built after this one). */
+  attachSavedSearchRunner(fn: NonNullable<SourceServiceOptions["runSavedSearch"]>): void {
+    this.o.runSavedSearch = fn;
   }
 
   // ---- system sources ------------------------------------------------------------------------
@@ -219,6 +226,26 @@ export class SourceService {
     const id = this.o.volumeId?.(publicId);
     if (id === undefined) throw new AppError("bad_request", "That storage volume does not exist.", { fields: [{ in: "body", path: "preferredVolumeId", message: "Choose a volume that exists" }] });
     return id;
+  }
+
+  /** Creates the source behind a saved search (task O-11). The type is not offered by `create`, which is for web sources. */
+  createSavedSearchSource(input: { name: string; savedSearchRowId: number; priority: PriorityNumber; schedule?: unknown; enabled?: boolean }): SourceOut {
+    const now = this.o.clock.now();
+    const config = resolveConfig({}, "single_page", "focused", this.resourceProfile);
+    const sid = this.db.transaction(() => {
+      const res = this.db.run(
+        `INSERT INTO sources (public_id, name, type, adapter, strategy, profile, priority, retention_mode, retention_json, automatic_eviction, saved_search_id, enabled, last_status, created_at, updated_at)
+         VALUES (?, ?, 'saved_search', 'http', 'capture', 'focused', ?, 'latest', '{"count":1}', ?, ?, ?, 'never', ?, ?)`,
+        [newId("src"), input.name, input.priority, input.priority >= 3 ? 1 : 0, input.savedSearchRowId, input.enabled === false ? 0 : 1, now, now]);
+      const id = Number(res.lastInsertRowid);
+      const cfg = this.db.run("INSERT INTO source_configs (source_id, version, config_json, created_at) VALUES (?, 1, ?, ?)", [id, JSON.stringify(config), now]);
+      this.db.run("UPDATE sources SET current_config_id = ? WHERE id = ?", [Number(cfg.lastInsertRowid), id]);
+      this.db.run("UPDATE saved_searches SET source_id = ? WHERE id = ?", [id, input.savedSearchRowId]);
+      if (input.schedule) this.o.schedules.create(id, input.schedule as never);
+      return id;
+    }, { durable: true });
+    this.o.activity.write({ level: "info", area: "crawl", message: `Source created: ${input.name}`, details: { type: "saved_search" } });
+    return this.out(this.db.get<Row>("SELECT * FROM sources WHERE id = ?", [sid])!);
   }
 
   create(body: unknown): SourceOut {
@@ -456,8 +483,21 @@ export class SourceService {
   private async runRow(r: Row, opts: { requestedBy?: "user" | "schedule" | "system"; signal?: AbortSignal; mode?: "refresh" }): Promise<RunResult> {
     if (r.enabled !== 1) throw new AppError("conflict", "This source is switched off. Turn it on before running it.");
     if (r.type === "imported_documents") throw new AppError("conflict", "This source holds files you upload. There is nothing to run; add documents with an import instead.");
-    if (!WEB_TYPES.has(r.type) || !r.start_url) throw new AppError("not_implemented", "This kind of source cannot be run yet.");
     const requestedBy = opts.requestedBy ?? "user";
+    if (r.type === "saved_search") {
+      if (!this.o.runSavedSearch) throw new AppError("not_implemented", "Saved-search sources are not available.");
+      const now = this.o.clock.now();
+      try {
+        const res = await this.o.runSavedSearch({ id: r.id, publicId: r.public_id, priority: r.priority as PriorityNumber }, { requestedBy, signal: opts.signal });
+        this.db.run("UPDATE sources SET last_run_at = ?, last_status = ? WHERE id = ?", [now, res.downloadIds.length ? "running" : "ok", r.id]);
+        this.o.events.publish("source", { sourceId: r.public_id, state: "run_started", downloads: res.downloadIds });
+        return res;
+      } catch (e) {
+        this.db.run("UPDATE sources SET last_run_at = ?, last_status = 'failed' WHERE id = ?", [now, r.id]);
+        throw e;
+      }
+    }
+    if (!WEB_TYPES.has(r.type) || !r.start_url) throw new AppError("not_implemented", "This kind of source cannot be run yet.");
     const { config, version } = this.config(r);
     const now = this.o.clock.now();
     const priority = r.priority as PriorityNumber;

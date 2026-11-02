@@ -336,6 +336,8 @@ export interface SavedSearch {
   scope?: Scope;
   includeOnline?: boolean;
   collectionId?: string | null;
+  /** The watched-search source made from it, if any. */
+  sourceId?: string | null;
   createdAt?: string;
   lastRunAt?: string | null;
   lastResultCount?: number | null;
@@ -355,6 +357,7 @@ export function readSaved(raw: unknown): SavedSearch | null {
     scope: SCOPES.includes(o.scope as Scope) ? (o.scope as Scope) : undefined,
     includeOnline: typeof o.includeOnline === "boolean" ? o.includeOnline : undefined,
     collectionId: str(o.collectionId) || null,
+    sourceId: str(o.sourceId) || null,
     createdAt: str(o.createdAt) || undefined,
     lastRunAt: str(o.lastRunAt) || null,
     lastResultCount: typeof o.lastResultCount === "number" ? o.lastResultCount : null,

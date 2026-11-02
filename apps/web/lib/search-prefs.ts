@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { api, ApiError, get, patch, useApi } from "@/lib/api";
+import type { ProvidersResponse } from "@/lib/online-search";
 
 // Search preferences live in the signed-in user's server settings (GET and PATCH /api/settings/user, key `search`). A guest has no
 // settings, so the defaults apply and a change lasts until the page is closed.
@@ -121,21 +122,44 @@ export function useSearchServerSettings() {
   return { settings, save, saving };
 }
 
-/** Whether online search can be used: switched on in settings and at least one provider enabled. Always false until providers exist. */
-export function useOnlineAvailable(): boolean {
-  const [available, setAvailable] = React.useState(false);
+export interface OnlineStatus {
+  /** False until the first answer has arrived. */
+  ready: boolean;
+  /** Switched on, acknowledged, at least one provider enabled, and not offline: the Online tab works. */
+  available: boolean;
+  /** Why it is not available: the master switch is off, no provider is enabled, or the server is offline. */
+  reason: "off" | "no_provider" | "offline" | null;
+  /** The master switch and acknowledgement are in place, whatever the providers say. */
+  enabled: boolean;
+  disclosure: string;
+}
+
+const NOT_READY: OnlineStatus = { ready: false, available: false, reason: "off", enabled: false, disclosure: "" };
+
+/** Online search status from GET /api/search/providers (a guest cannot read it, so a guest sees online search as off). */
+export function useOnlineStatus(): OnlineStatus {
+  const [status, setStatus] = React.useState<OnlineStatus>(NOT_READY);
   React.useEffect(() => {
     let live = true;
-    Promise.all([get<SearchServerSettings>("/api/settings"), get<unknown>("/api/search/providers")])
-      .then(([s, p]) => {
-        const o = p as { items?: { enabled?: boolean }[] } | { enabled?: boolean }[];
-        const list = Array.isArray(o) ? o : (o.items ?? []);
-        if (live) setAvailable(s.privacy?.onlineSearch?.enabled === true && list.some((x) => x.enabled !== false));
+    get<ProvidersResponse>("/api/search/providers")
+      .then((p) => {
+        if (!live) return;
+        const list = Array.isArray(p.items) ? p.items : [];
+        const enabled = p.online?.enabled === true && !!p.online?.acknowledgedAt;
+        const anyProvider = list.some((x) => x.enabled !== false);
+        const offline = p.online?.state === "offline";
+        const reason: OnlineStatus["reason"] = !enabled ? "off" : !anyProvider ? "no_provider" : offline ? "offline" : null;
+        setStatus({ ready: true, available: reason === null, reason, enabled, disclosure: p.online?.disclosure ?? "" });
       })
-      .catch(() => live && setAvailable(false));
+      .catch(() => live && setStatus({ ...NOT_READY, ready: true }));
     return () => {
       live = false;
     };
   }, []);
-  return available;
+  return status;
+}
+
+/** Whether online search can be used. */
+export function useOnlineAvailable(): boolean {
+  return useOnlineStatus().available;
 }

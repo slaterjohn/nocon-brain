@@ -178,3 +178,17 @@ describe("S-09 highlighting and grouping", () => {
     expect(reader.search({ query: "lighthouses keepers", group: false }).hits).toHaveLength(3);
   });
 });
+
+describe("per-result highlighting", () => {
+  it("each hit's titleHtml and snippet come from its own document", () => {
+    const { reader } = fx();
+    for (const query of ["astronomy", "planet", "solar system"]) {
+      const r = reader.search({ query });
+      for (const h of r.hits) {
+        const plain = h.titleHtml.replace(/<\/?mark>/g, "");
+        expect(plain, `${query}: ${h.title}`).toBe(h.title);
+      }
+      if (r.hits.length > 1) expect(new Set(r.hits.map((h) => h.titleHtml)).size).toBeGreaterThan(1);
+    }
+  });
+});

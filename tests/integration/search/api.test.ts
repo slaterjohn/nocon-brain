@@ -36,6 +36,13 @@ describe("search API (S-03 to S-09, S-12, S-14 server side)", () => {
     expect(r.status).toBe(200);
     expect(r.body).toMatchObject({ total: 2, page: 1, pageSize: 20, online: { state: "disabled" }, coverage: { cachedMatches: 2, basis: "local_exact" } });
     expect(r.body.searchId).toMatch(/^sch_/);
+    // Each result's highlighted title and snippet come from that page's own title and text (not one shared row).
+    const strip = (h: string) => h.replace(/<\/?mark>/g, "");
+    expect(new Set(r.body.results.map((x: any) => x.titleHtml)).size).toBe(2);
+    for (const x of r.body.results) {
+      expect(strip(x.titleHtml)).toBe(x.title);
+      expect(strip(x.snippet)).toContain(x.title === "Tidal turbines" ? "Pentland Firth" : "hills and offshore");
+    }
     const res = r.body.results.find((x: any) => x.pageId === a.pageId);
     expect(res).toMatchObject({ origin: "archive", availability: "cached", type: "html", storage: "persist", faviconUrl: null });
     expect(res.collections).toEqual([{ id: col.body.id, name: "Energy" }]);
@@ -52,8 +59,10 @@ describe("search API (S-03 to S-09, S-12, S-14 server side)", () => {
     // snapshot restore
     const snap = await t.api("GET", `/api/search/${r.body.searchId}`);
     expect(snap.body.results).toHaveLength(2);
-    // phase 5 routes answer 501
-    expect((await t.api("GET", `/api/search/${r.body.searchId}/events`)).status).toBe(501);
+    // Phase 5: with online search off the event stream has a single `done`; the provider list is empty.
+    expect(r.body.lastSeq).toBe(0);
+    expect((await t.api("GET", "/api/search/providers")).body).toMatchObject({ items: [], online: { enabled: false, state: "off" } });
+    expect((await t.api("GET", `/api/search/${r.body.searchId}?after=0`)).body).toMatchObject({ done: true, events: [{ type: "done", reason: "no_providers" }] });
     // user settings keys
     const us = await t.api("PATCH", "/api/settings/user", { search: { resultsPerPage: 25, homepageSections: { recentSearches: true } } });
     expect(us.body.search).toEqual({ resultsPerPage: 25, homepageSections: { recentSearches: true, bookmarks: false, favourites: false, libraryStats: false } });

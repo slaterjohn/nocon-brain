@@ -220,20 +220,24 @@ The listener injects one `<style>` block that styles `a[data-ncb-link="partial"|
 | Method | Path | Purpose | Auth |
 |---|---|---|---|
 | POST | `/api/search` | Start a search; returns local and ZIM results immediately plus a `searchId`. **Phase 4: local archive only** (see 6.1) | S+C, G |
-| GET | `/api/search/{searchId}/events` | **SSE** stream of online results and updates. *Phase 5; answers 501 `not_implemented` until then* | S/G |
-| GET | `/api/search/{searchId}` | Snapshot of the search (the stored `SearchResponse`, kept 30 minutes in memory); `?after=<seq>` returns events after a sequence number (Phase 5). Back-navigation restore | S/G |
-| POST | `/api/search/{searchId}/more` | Next page from providers (`{ providerId? }`). *Phase 5: 501 until then* | S+C |
+| GET | `/api/search/{searchId}/events` | **SSE** stream of online results and updates (6.2) | S/G |
+| GET | `/api/search/{searchId}` | Snapshot of the search (the stored `SearchResponse`, kept 30 minutes in memory); `?after=<seq>` returns events after a sequence number (6.2). Back-navigation restore | S/G |
+| POST | `/api/search/{searchId}/more` | Next page from providers (`{ providerId? }`) (6.2) | S+C |
 | GET | `/api/search/favicon/{pageId}` | The archived favicon of a page (image bytes, `nosniff`, sandboxed CSP, immutable cache); 404 when none was archived | S/G |
 | GET | `/api/search/suggestions` | `?q=&limit=8`: local autocomplete (titles, queries, domains) and did-you-mean; never calls providers. Shape in 6.1 | S/G |
-| POST | `/api/search/coverage/plan` | "Improve offline coverage": estimate for selected results *(Phase 5)* | S+C |
+| POST | `/api/search/coverage/plan` | "Improve offline coverage": estimate for selected results (6.2) | S+C |
 | POST | `/api/search/coverage/queue` | Queue the plan, optionally as a collection | S+C |
-| GET/POST | `/api/search/providers` | List / create providers *(Phase 5; all provider routes answer 501 until then)* | S / S+C |
+| GET/POST | `/api/search/providers` | List / create providers (6.2) | S / S+C |
 | GET/PATCH/DELETE | `/api/search/providers/{id}` | Read / update / delete | S / S+C |
 | POST | `/api/search/providers/{id}/test` | Health check and a small test query; returns latency and error code | S+C |
 | GET | `/api/search/providers/{id}/usage` | Request counts against caps | S |
 | GET/POST | `/api/search/saved` | List / create saved searches | S / S+C |
 | GET/PATCH/DELETE | `/api/search/saved/{id}` | Read / update / delete | S / S+C |
 | POST | `/api/search/saved/{id}/run` | Run it; returns a `SearchResponse`; updates `lastRunAt` and `lastResultCount` | S+C |
+| POST | `/api/search/{searchId}/results/{key}/save` | Save an online result for offline use: archives the page itself, links the result to the page (6.2) | S+C |
+| POST | `/api/search/saved/{id}/source` | Make a saved search a source (scheduled online run, candidates or downloads) (6.2) | S+C |
+| GET | `/api/search/saved/{id}/candidates` | Candidates of a saved-search source, including in-memory (transient) ones | S |
+| POST | `/api/search/saved/{id}/candidates/approve`, `/dismiss` | Queue or dismiss candidates `{ ids }` | S+C |
 | GET/DELETE | `/api/search/history` | Search history (only written if `privacy.searchHistory.enabled`); `DELETE` clears all; `DELETE /api/search/history/{id}` removes one | S / S+C |
 
 **Progressive results: SSE chosen (D-3).** Local and ZIM results return in the `POST` response within tens of milliseconds. Online providers answer in 300 ms to a few seconds, or never. The client opens `GET /api/search/{searchId}/events` and appends. SSE was chosen over polling for server push without an interval, native reconnection with `Last-Event-ID`, and low cost. The server keeps each search session in memory for 30 minutes (ring buffer of events, URLs and titles only; snippets from providers whose `storagePolicy` is `none` stay in memory and are never written to disk), so `GET /api/search/{id}` restores the exact list for back navigation and serves as the polling fallback for environments that buffer SSE. Heartbeat comment every 15 s; `X-Accel-Buffering: no`.
@@ -343,7 +347,7 @@ Brave results are `transient`: they are never written to the database; "Save for
 
 ### 6.1 Local search (Phase 4, as built)
 
-This is the contract of the tasks S-01 to S-15. `POST /api/search` answers from the local `index.db` only: `origin` is always `"archive"`, `zim` is `0` in `tookMs`, `online` is `{ state: "disabled", pending: [], disclosure: "" }` (or `"offline"` when forced offline) and `coverage` counts the local matches (`basis: "local_exact"`). Reads need a session or trusted-LAN guest; `POST`, `PUT`, `PATCH` and `DELETE` need a session and the CSRF header.
+This is the contract of the tasks S-01 to S-15. Phase 5 adds the online half on top of it (6.2); everything below describes the local half, which is unchanged. `POST /api/search` answers from the local `index.db` only: `origin` is always `"archive"`, `zim` is `0` in `tookMs`, `online` is `{ state: "disabled", pending: [], disclosure: "" }` (or `"offline"` when forced offline) and `coverage` counts the local matches (`basis: "local_exact"`). Reads need a session or trusted-LAN guest; `POST`, `PUT`, `PATCH` and `DELETE` need a session and the CSRF header.
 
 **`POST /api/search`.**
 
@@ -386,7 +390,8 @@ Order: title, query, domain, term, each group at most half of `limit`, and a gro
 **Saved searches** (`ss_` ids). `POST /api/search/saved` takes `{ name, query, filters?, scope?, includeOnline? }` (name 1 to 120 characters; the query must parse; stored locally in `main.db`) and returns 201 with
 ```ts
 interface SavedSearch { id: string; name: string; query: string; filters: SearchFilters; scope: SearchRequest["scope"]; includeOnline: boolean;
-  createdAt: Iso; lastRunAt?: Iso; lastResultCount?: number; collectionId?: string /* the saved-search collection built on it */ }
+  createdAt: Iso; lastRunAt?: Iso; lastResultCount?: number; collectionId?: string /* the saved-search collection built on it */;
+  sourceId: string | null /* the saved_search source made from it (6.2), else null */ }
 ```
 `GET /api/search/saved` returns `{ items }`, newest first. `PATCH` takes any of `name`, `query`, `filters`, `scope`, `includeOnline`. `DELETE` returns 204 and refuses with 409 while a saved-search collection uses it (delete the collection first). `POST /api/search/saved/{id}/run` takes `{ page?, pageSize? }` and returns a `SearchResponse` (it is not written to the history).
 
@@ -416,6 +421,97 @@ interface IndexStatus {
 **Ranking weights (6.1.4).** `GET` returns `{ weights: RankingWeights, defaults: RankingWeights, bm25: { title: 10, headings: 5, url: 3, body: 1 }, preferences: { domains: Record<string, number>, sources: Record<string, number> } }`; `PUT` takes `{ weights?: Partial<RankingWeights>, preferences?: ... }` (each weight is 0 to 5, each preference -1 to 1; unknown keys are a 400) and returns the same shape. `RankingWeights = { relevance, exactTitle, freshness, linkGraph, preference, cached }`. The BM25 column weights are fixed in Phase 4. Changes apply to the next query.
 
 **Documents and Images categories.** `scope: "documents"` lists PDF, text and Markdown pages by page type (`pages.content_type` `pdf` or `text`, set from the imported file's kind; the synthetic import URL is never consulted); `scope: "images"` lists pages whose `type` is `image`. No image pages are produced by the capture pipeline yet (it refuses non-HTML responses), so the category is empty until image pages exist; the filter and the facet work today. Per-`<img>` sub-documents are post-v1.
+
+
+### 6.2 Combined search (Phase 5, as built)
+
+This is the contract of tasks O-01 to O-05, O-07 to O-11 (server side). It extends 6.1: the response of `POST /api/search` is the same shape, the local part is unchanged and never waits for a provider, and online results arrive afterwards on the event stream. Reads need a session or trusted-LAN guest; writes need a session and the CSRF header. Adapters shipped: `searxng`, `brave`, `mojeek`. Everything below that says "provider" is an enabled row of `search_providers`.
+
+**When the server goes online.** A search starts an online run only when all of these hold: `scope` is `all` or `online`; `online` is not `"off"`; `privacy.onlineSearch.enabled` is true and `privacy.onlineSearch.acknowledgedAt` is set; at least one provider is enabled (and in `providers`, when that list is given); the server is not offline (`offline.forced`, or connectivity observed as offline). When any condition fails the response has `online.state = "disabled"` (setting off, no provider, `online: "off"`, scope without the web) or `"offline"`, the process makes **no provider connection at all** (not even a cache read), and nothing errors. `online: "on"` behaves like `"auto"`: it cannot override the master switch. `scope: "online"` returns no local results (`results: []`) and an online run.
+
+```ts
+// POST /api/search response additions (all other fields as in 6.1)
+online: {
+  state: "disabled" | "offline" | "pending" | "done";   // "pending" from the POST when a run started; "done" only on snapshots/polls
+  pending: string[];                                    // provider ids still to answer
+  disclosure: string;                                   // the privacy text, non-empty whenever state is pending or done
+  providers?: { id: string; name: string; adapter: string; state: "pending" | "ok" | "error" | "skipped"; count: number; hasMore: boolean; error?: { code: SearchErrorCode; message: string; retryAfterMs?: number } }[];
+};
+lastSeq: number;   // 0 on the POST; the highest event sequence number on snapshots. Open the stream with Last-Event-ID = lastSeq
+```
+
+**`GET /api/search/{searchId}/events`: SSE.** Headers as `GET /api/system/events` (`text/event-stream`, `no-cache, no-transform`, `X-Accel-Buffering: no`). Starts with `retry: 3000`. A comment line `: heartbeat` every 15 s (`sseHeartbeatMs`). Every frame is `id: <seq>\nevent: <type>\ndata: <json>\n\n`; the JSON always repeats `type`, plus `seq` and `at`. Use `addEventListener(<type>)` for each type (named events do not reach `onmessage`). `seq` starts at 1 per search and only goes up. **Resume**: send `Last-Event-ID: <seq>` (the web proxy forwards it) or `?after=<seq>`; the server replays every retained event after it and then follows live. The server retains every event of a search for 30 minutes. **End**: after `done` the server closes the stream. A client that reconnects with a `Last-Event-ID` at or after the final `done` while nothing new happened gets **204**, which stops `EventSource` from reconnecting. Unknown or expired search: 404. A search without an online run (`state` is `disabled` or `offline`) has exactly one event, `done` with `reason: "no_providers"`.
+
+```ts
+type SearchEvent = { seq: number; at: Iso } & (
+  | { type: "provider_started"; providerId: string; name: string; adapter: string; page: number; fallbackFor?: string }
+  | { type: "provider_results"; providerId: string; page: number; hasMore: boolean; tookMs: number; cached: boolean;
+      partial?: { failedEngines: string[] };            // SearXNG unresponsive_engines
+      dropped: number;                                  // results discarded because their URL was not http(s) or was malformed
+      append: SearchResult[];                           // new online-only results, in fused order among themselves
+      update: { key: string; alsoOnline?: true; addAttribution?: SearchResult["attribution"][number]; snippetExtra?: string /* escaped, <mark> only */ }[] }
+  | { type: "provider_error"; providerId: string; code: SearchErrorCode; message: string; retryAfterMs?: number; fallbackProviderId?: string }
+  | { type: "coverage"; coverage: Coverage }
+  | { type: "reorder_available"; fusedOrder: string[] }   // result keys of the whole list (local page + online), best first, by weighted RRF
+  | { type: "done"; reason: "all_providers_answered" | "deadline" | "cancelled" | "no_providers" }
+);
+```
+
+Event order for one run: per provider `provider_started` then `provider_results` or `provider_error` (a failing provider with a fallback emits `provider_error`, then `provider_started` with `fallbackFor`, then the fallback's result or error); after each provider answer a `coverage`; `reorder_available` after a `provider_results` that changes the fused order of items already in the list (never otherwise); finally one `done`. The server keeps appending until every provider answered or `search.onlineDeadlineMs` (default 10000) passes; the 2 s display time box is the client's job (late events are applied only through "Load more from the web"). `POST /more` starts a new round on the same stream: new events with higher `seq`, ending in another `done` (a client that saw the first `done` reopens the stream with `Last-Event-ID`).
+
+**Result shape for online hits** (`SearchResult` of 6.1 with these values): `origin: "online"`; `availability: "online_only"` (or `"cached"`/`"partial"` when the page is already archived: `pageId` is then set and `actions.open` is the library route); `storage: "transient"` when the provider's storage policy is `none` (Brave), else `"persist"` (meaning storing is allowed, nothing is stored by the search itself); `title` is plain text and `titleHtml`/`snippet` are escaped with `<mark>` as the only markup, so provider HTML never reaches the client as markup; `url` is always http or https with no credentials; `faviconUrl` is always `null` (icons are never fetched from the web); `actions.saveForOffline` is true while the page is not archived. `attribution` lists `{ kind: "provider", id, name, rank }` per provider that returned it and `{ kind: "local", ... }` when the archive has it too.
+
+**Merging.** Weighted reciprocal rank fusion, `score(d) = Σ w_i / (k + rank_i(d))` over the top `search.onlineTopN` (default 30) of each list, `k = search.rrfK` (60). Weights: local list `search.rrfLocalWeight` (1.5); ZIM `search.rrfZimWeight` (1.0, no ZIM lists yet); each provider list `provider.weight` (default 1.0), multiplied by `search.rrfSecondaryProviderWeight` (0.7) for a provider that overlaps an earlier one (order: `priority`, then id) in at least half of the smaller list. Dedup key: the canonical URL (`normaliseUrl` key with tracking parameters stripped; `*.wikipedia.org/wiki/<Title>` becomes `wikipedia:<lang>:<Title>`, so a ZIM or archived copy merges with the live hit and the offline copy wins). Ties: has a local source first, higher fused score, smaller best provider rank, then the canonical URL string. `fusedRank` and `fusedScore` on every result and `attribution[].rank` carry the numbers. Local results keep their position in the response; the fused order is only offered through `reorder_available` and the snapshot (`?order=fused`).
+
+**`GET /api/search/{searchId}`: snapshot and polling fallback.** Without parameters: the stored `SearchResponse` with `results` = local results followed by the online results appended so far (with updates applied, `availability` re-read from the archive so a page saved meanwhile shows as cached), a recomputed `coverage`, `online` (with `providers`) and `lastSeq`. `?order=fused` returns the same list in fused order. With `?after=<seq>` it returns `{ searchId, lastSeq, done: boolean, online, events: SearchEvent[] }` (events after `seq`, at most 200; call again with the new `lastSeq` until `done`). Kept 30 minutes; 404 after.
+
+**`POST /api/search/{searchId}/more`**, body `{ providerId?: string }` (session, CSRF). Asks each provider (or the one named) that reported `hasMore` for its next page. Answers 202 `{ searchId, started: string[], skipped: { providerId: string; reason: "no_more" | "disabled" | "offline" | "circuit_open" | "cap_reached" | "running" }[], lastSeq }` and the results arrive as events as above. Offline or online search off: 409 `offline` / `conflict`; nothing is sent.
+
+**Coverage.** `Coverage` counts only (no field is a share of "the internet"): `cachedMatches` (local matches in the archive), `onlineMatches` (distinct online results returned so far), `onlineNotArchived` (online results not archived and not queued), `queued` (online results with a save or download queued), `partial` (partial pages among local matches and online results), `basis` (`"local_exact"` until an online result exists, then `"online_page_estimate"`). Returned on the search response, in the `coverage` event and in snapshots.
+
+**Improve offline coverage.**
+- `POST /api/search/coverage/plan`, body `CoveragePlanRequest` of section 6 (`resultKeys` of online results not archived, or `"all_uncached"`; `strategy`, `depth` 0 to 3 (capture ignores it), `priority`, `retention`, optional `asCollection`). Answers `CoveragePlanResponse` `{ planId, urls, estimate, warnings, expiresAt }`. `estimate.estimate` is always `true`; `basis` says what it rests on ("average of 14 archived pages from these domains" or "default of 600 KiB per page: no archived pages from these domains yet"); `pages`, `bytes` and `durationSeconds` are `{ low, high }` and bounded by the resource profile's crawl ceilings; at most 200 URLs per plan (more: 400). Already-archived and non-http(s) URLs are skipped and counted in `warnings`. Plans live 30 minutes in memory. `estimate.confidence` is `low` for `explore`/`mirror` and for fewer than 10 archived pages to learn from, `medium` from 10, `high` from 50.
+- `POST /api/search/coverage/queue`, body `{ planId, name? }` (session, CSRF). Creates a source "Search: <query>" (or `name`) with the plan's priority and retention, an optional collection (`asCollection`; an existing `collectionId` or a new `{ name, icon? }`) attached to that source, and queues the work: `capture` queues one download per URL (`requested_by = 'search'`); `explore`/`mirror` start one crawl with all the URLs as seeds. Answers 202 `{ planId, queued: number, downloadIds: string[], sourceId: string, collectionId?: string }`; the chosen results then count as `queued` in the session's coverage. `capture` makes a `single_page` source with one download per URL; `explore` a `linked_collection` source and `mirror` a `website` source, each with one crawl (`explore`/`mirror` download) over all the URLs as seeds. A plan can be queued once (409 afterwards); an expired or unknown plan is 404. Offline: the captures wait, held, as for any save.
+
+**Save for offline.** `POST /api/search/{searchId}/results/{key}/save`, body `{ priority?: Priority, queue?: boolean }` (session, CSRF). Archives **the page itself** through the normal capture pipeline (fetched from the site, SSRF-guarded, robots rules as for any user save), into the Quick saves source. Nothing from the provider (title, snippet, URL as returned) is written anywhere: only the address of the page the Human chose to save goes into the download job. Answers 202 `{ downloadId, url, state: "queued", held: boolean, priority, key }`. The result is linked to the page afterwards by address: once the capture finishes, snapshots show that result as `cached` with its `pageId`, and the next search finds it locally. Offline without `queue: true`: 409 `offline` with `details.canQueue`. A key that is not in the session or that is already archived: 404 / 409.
+
+**Providers** (`prv_` ids). All provider routes need a session; none is readable by a guest. The credential is write-only: responses carry `hasCredentials` and never the key.
+```ts
+interface Provider {
+  id: string; adapter: "searxng" | "brave" | "mojeek"; name: string; enabled: boolean;
+  priority: number;                      // 1 first; orders runs, ties and the overlap rule. Default: next free number
+  baseUrl: string | null;                // searxng: required (for example http://searxng:8080); brave/mojeek: optional override (tests, proxies)
+  hasCredentials: boolean;               // brave, mojeek: required before enabling
+  timeoutMs: number;                     // 500 to 30000, default 4000
+  rateLimitPerSec: number;               // client-side token bucket, default 1 (searxng 5)
+  monthlyCap: number | null; dailyCap: number | null;        // requests, UTC periods; null = no cap
+  fallbackProviderId: string | null;     // answers for this provider when it fails with any error except `disabled` (including a reached cap)
+  language: string | null; region: string | null; safeSearch: "off" | "moderate" | "strict";
+  weight: number;                        // RRF weight, default 1.0
+  storage: { policy: "none" | "ttl" | "unrestricted"; ttlSeconds: number | null; adapterPolicy: "none" | "ttl" | "unrestricted"; maxTtlSeconds: number | null; note: string };
+  health: { state: "unknown" | "ok" | "degraded" | "down"; lastOkAt?: Iso; lastErrorCode?: SearchErrorCode; circuitOpenUntil?: Iso };
+  usage: { month: { period: string; requests: number; cap: number | null }; day: { period: string; requests: number; cap: number | null } };
+  createdAt: Iso; updatedAt: Iso;
+}
+```
+- `GET /api/search/providers` returns `{ items: Provider[], online: { enabled: boolean; acknowledgedAt: Iso | null; disclosure: string; state: "off" | "offline" | "ready" } }` (ordered by `priority`).
+- `POST /api/search/providers`, body `{ adapter, name, enabled?, priority?, baseUrl?, apiKey?, timeoutMs?, rateLimitPerSec?, monthlyCap?, dailyCap?, fallbackProviderId?, language?, region?, safeSearch?, weight?, storage?: { policy?, ttlSeconds? }, acknowledged?: true }`; 201 with the `Provider`. `PATCH /api/search/providers/{id}` takes any of those (`apiKey: null` removes the credential); `DELETE` returns 204 (and removes its cache rows and counters; a provider that is another's fallback is just unlinked).
+- **Disclosure.** Enabling a provider (`enabled: true` on create or patch) needs `privacy.onlineSearch.acknowledgedAt`. Without it the call is a 400 with `details.fields[0].path = "acknowledged"` and `details.disclosure`; with `acknowledged: true` in the same body the server records the acknowledgement (`privacy.onlineSearch.acknowledgedAt`, the same field the settings PATCH sets). A search goes online only when the master switch `privacy.onlineSearch.enabled` is also on (settings PATCH with `acknowledged: true` the first time).
+- Validation (400 with field paths): `searxng` needs an http(s) `baseUrl`; `brave` and `mojeek` need `apiKey` before `enabled: true`; `storage.policy` cannot be looser than the adapter allows (Brave: `none` only; Mojeek: `none` or `ttl` with `ttlSeconds` up to 3600; SearXNG: `unrestricted` by default but nothing is cached unless `ttlSeconds` > 0); a provider cannot be its own fallback.
+- Provider requests use the SSRF-guarded fetcher with the provider's own host (and port) as the only private-network exception, so a SearXNG at `http://searxng:8080` works and no other private address does. Custom headers are never forwarded to other hosts after a redirect.
+- `POST /api/search/providers/{id}/test` (session, CSRF): one small query now (counts as a request against the caps; ignores the circuit and the cache; refused offline with 409). Returns `{ ok: boolean, latencyMs: number, resultCount?: number, errorCode?: SearchErrorCode, message?: string, partial?: { failedEngines: string[] } }` and updates `health`. SearXNG answering 403 gives `errorCode: "bad_request"` and a message naming `search.formats: [html, json]`.
+- `GET /api/search/providers/{id}/usage` returns `{ month: {...}, day: {...}, history: { period: string; requests: number }[] }` (the last 12 months).
+- Errors: `SearchErrorCode` values as in section 6 with these meanings. `timeout` (no answer in `timeoutMs`), `rate_limited` (HTTP 429 or the local bucket; `retryAfterMs`; the circuit opens for that long, default 60 s), `auth` (401/403 from Brave/Mojeek), `quota_exhausted` (local cap, or 402/quota answers), `bad_request` (400, SearXNG JSON disabled, malformed JSON), `upstream` (5xx, malformed answer), `network` (connection failure), `disabled` (switched off), `unsupported`. One retry, with 100 to 300 ms of jitter, for `network` and `upstream` only. Never for `auth`, `quota_exhausted`, `rate_limited`, `bad_request`.
+- Result cache: only for `ttl`/`unrestricted` providers with `ttlSeconds` > 0 (Mojeek 3600 at most). A repeat of the same query and page within the TTL is answered from the cache without a request or a count (`cached: true` on the event); after the TTL it is fetched again. Rows can only hold normalised results (URL, title, snippet). A database trigger refuses any cache row for a `none` provider and any row that outlives its TTL.
+- **Brave is transient only.** No Brave title, snippet or URL is stored in any table: no cache rows (trigger), no history, no activity log, no candidate rows. Saving a Brave result archives the page itself and copies nothing from Brave.
+
+**Saved search as a source (O-11).** `POST /api/search/saved/{id}/source` (session, CSRF), body `{ onResult?: "candidates" | "downloads", maxResults?: 1..50, priority?: Priority, schedule?: ScheduleInput of section 8, enabled?: boolean }` creates a `saved_search` source for that saved search (`saved_searches.source_id`; 409 when it already has one) and returns the `Source` of section 7. From then on every saved-search payload (`GET /api/search/saved`, `GET`, `POST` and `PATCH /api/search/saved/{id}`) carries `sourceId`: the public id of that source, or `null` when the saved search is not a source (or the source was deleted). The web app uses it to offer "Run the search now" after a reload. Running the source (`POST /api/sources/{id}/run`, or its schedule) runs the saved search online with the enabled providers and: `downloads` queues a capture of each new result URL (requested by `search`); `candidates` records each new URL as a discovery candidate. A scheduled or manual run needs online search to be on and the server online: otherwise the run is refused (409 `conflict` or `offline` for a manual run; `lastStatus` becomes `failed` for a scheduled one). URLs already archived or already seen by this source are skipped. For a provider whose storage policy is `none` (Brave) candidates are **not stored**, in either mode (`downloads` then also waits for approval and the run reports a warning): they are held in memory until the next run, approval, dismissal or 24 hours, and only the URLs the Human approves are written, with no title and no snippet. A candidate from a time-limited provider (Mojeek) has no title and expires after the provider's cache time; one from SearXNG keeps the title. Candidates are created with provenance `saved_search` and never carry a snippet.
+- `GET /api/search/saved/{id}/candidates` returns `{ items: { id: string; url: string; title: string | null; state: "new" | "approved" | "queued" | "archived" | "dismissed"; transient: boolean; seenAt: Iso }[] }`; `transient` items have `id` = `tmp_...` and `title: null`.
+- `POST /api/search/saved/{id}/candidates/approve`, body `{ ids: string[], priority? }` queues a capture for each and answers 202 `{ queued: number, downloadIds: string[] }`. `POST .../candidates/dismiss` with `{ ids }` marks them dismissed (transient ones are forgotten).
+
+**Settings keys used by combined search.** `privacy.onlineSearch.enabled` / `.acknowledgedAt` (master switch and acknowledgement; PATCH `/api/settings` with `{ privacy: { onlineSearch: { enabled: true, acknowledged: true } } }` the first time), `privacy.searchHistory.enabled` (history also records `online_providers_json` ids only), `offline.forced` (work offline), `search.rrfK` (60), `search.rrfLocalWeight` (1.5), `search.rrfProviderWeight` (1.0, the default `weight` given to new providers), `search.rrfZimWeight` (1.0), `search.rrfSecondaryProviderWeight` (0.7), `search.onlineTopN` (30, 5 to 100), `search.onlineDeadlineMs` (10000, 1000 to 60000), `search.zimSearchBudgetMs` (unchanged).
+
+**Privacy guarantees (tested).** With online search off, no enabled provider, forced offline, or connectivity offline, no socket is opened to any provider. No telemetry. Remote favicons are never fetched. The search log (`activity_log`) never contains result URLs, titles or snippets; provider errors are logged by provider id and code. Provider credentials are AES-256-GCM encrypted at rest and never returned.
 
 
 ## 7. Sources and collections

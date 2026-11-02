@@ -10,6 +10,7 @@ import { useEvents } from "@/components/layout/events";
 import { useToast } from "@/components/ui/toast";
 import { errorMessage, post } from "@/lib/api";
 import { AVAILABILITY_LABELS, displayAddress, markedParts, typeLabel, type SearchResult } from "@/lib/search";
+import { safeHttpUrl } from "@/lib/online-search";
 import type { SaveResponse } from "@/lib/types";
 
 const day = (iso?: string) => {
@@ -33,16 +34,20 @@ function Favicon({ result }: { result: SearchResult }) {
 const AVAIL_ICON = { cached: Check, partial: CircleDashed, queued: Loader2, online_only: Cloud, zim: Library } as const;
 const AVAIL_VARIANT = { cached: "success", partial: "warning", queued: "secondary", online_only: "outline", zim: "success" } as const;
 
-export function ResultItem({ result, headingId }: { result: SearchResult; headingId: string }) {
+export function ResultItem({ result, headingId, onSaveOnline }: { result: SearchResult; headingId: string; onSaveOnline?: (r: SearchResult) => Promise<void> }) {
   const b = useBrowser();
   const ev = useEvents();
   const { toast } = useToast();
   const [save, setSave] = React.useState<"idle" | "saving" | "queued">("idle");
-  const local = result.origin !== "online" && result.availability !== "online_only";
+  // A web result that has since been saved is a saved page like any other.
+  const local = (result.origin !== "online" && result.availability !== "online_only") || result.availability === "cached" || result.availability === "partial";
   const AvIcon = AVAIL_ICON[result.availability];
   const canSave = result.actions?.saveForOffline ?? result.availability === "online_only";
   const address = displayAddress(result.url);
-  const href = local ? (result.actions?.open || (result.pageId ? `/library/pages/${result.pageId}` : result.url)) : result.url;
+  // Provider addresses are untrusted: only http and https ever become a link.
+  const liveUrl = safeHttpUrl(result.url);
+  const href = local ? (result.actions?.open || (result.pageId ? `/library/pages/${result.pageId}` : result.url)) : liveUrl;
+  const providers = (result.attribution ?? []).filter((a) => a.kind === "provider").map((a) => a.name);
 
   function open(e: React.MouseEvent<HTMLAnchorElement>) {
     if (!local || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
@@ -54,7 +59,8 @@ export function ResultItem({ result, headingId }: { result: SearchResult; headin
   async function saveForOffline() {
     setSave("saving");
     try {
-      await post<SaveResponse>("/api/browser/save", { url: result.url, queue: ev.connectivity === "offline" });
+      if (onSaveOnline) await onSaveOnline(result);
+      else await post<SaveResponse>("/api/browser/save", { url: result.url, queue: ev.connectivity === "offline" });
       setSave("queued");
       toast({ title: "Saving for offline", description: result.title || result.url, variant: "success" });
     } catch (e) {
@@ -71,21 +77,23 @@ export function ResultItem({ result, headingId }: { result: SearchResult; headin
   const meta = [result.sourceName, ...(result.collections ?? []).map((c) => c.name)].filter(Boolean);
 
   return (
-    <article className="min-w-0 py-4" data-testid="search-result" data-availability={result.availability} data-origin={result.origin} aria-labelledby={headingId}>
+    <article className="min-w-0 py-4" data-testid="search-result" data-result-key={result.key} data-availability={result.availability} data-origin={result.origin} aria-labelledby={headingId}>
       <div className="mb-0.5 flex min-w-0 items-center gap-2 text-sm">
         <Favicon result={result} />
         <span className="min-w-0 truncate text-muted-foreground" data-testid="result-address" title={local && address === "Imported document" ? undefined : result.url}>{address}</span>
       </div>
       <h3 id={headingId} className="text-lg leading-snug font-medium">
         {local ? (
-          <Link href={href} onClick={open} className="text-primary underline-offset-4 hover:underline" data-testid="result-title">
+          <Link href={href ?? result.url} onClick={open} className="text-primary underline-offset-4 hover:underline" data-testid="result-title">
             {titleNode}
           </Link>
-        ) : (
+        ) : href ? (
           <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline-offset-4 hover:underline" data-testid="result-title">
             {titleNode}
             <span className="sr-only"> (opens the live site in a new browser tab)</span>
           </a>
+        ) : (
+          <span data-testid="result-title">{titleNode}</span>
         )}
       </h3>
       {parts.length ? (
@@ -109,7 +117,8 @@ export function ResultItem({ result, headingId }: { result: SearchResult; headin
         {published ? <span>Published {published}</span> : null}
         {meta.length ? <span data-testid="result-meta">{meta.join(" · ")}</span> : null}
         {result.alsoOnline ? <span>Also on the web</span> : null}
-        {canSave ? (
+        {providers.length ? <span data-testid="result-providers">From {providers.join(", ")}</span> : null}
+        {canSave && !local && result.availability !== "queued" && liveUrl ? (
           save === "queued" ? (
             <span className="inline-flex items-center gap-1 text-foreground" role="status"><Check className="size-3.5" aria-hidden="true" /> Saving for offline</span>
           ) : (

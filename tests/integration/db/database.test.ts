@@ -13,11 +13,12 @@ describe("migrations from empty", () => {
     const dir = tempDir();
     const m = openMainDatabase({ dataDir: dir });
     try {
-      expect(m.migration.applied).toEqual(["0001_foundation", "0002_job_queue", "0003_pages_versions", "0004_bookmarks_history", "0005_crawl", "0006_sources_collections", "0007_downloads_refresh", "0008_imports", "0009_library_filters", "0010_search"]);
+      expect(m.migration.applied).toEqual(["0001_foundation", "0002_job_queue", "0003_pages_versions", "0004_bookmarks_history", "0005_crawl", "0006_sources_collections", "0007_downloads_refresh", "0008_imports", "0009_library_filters", "0010_search", "0011_online_search"]);
       const tables = m.db.all<{ name: string; strict: number }>(`PRAGMA table_list`).filter((t) => !t.name.startsWith("sqlite_"));
       const names = tables.map((t) => t.name);
       for (const t of ["users", "sessions", "settings", "user_settings", "app_meta", "activity_log", "volumes", "storage_policies",
-        "volume_reservations", "blobs", "storage_usage_cache", "download_jobs", "crawl_jobs", "jobs", "host_state"]) {
+        "volume_reservations", "blobs", "storage_usage_cache", "download_jobs", "crawl_jobs", "jobs", "host_state", "search_providers", "provider_result_cache", "usage_counters",
+        "discovery_candidates", "candidate_provenance"]) {
         expect(names, t).toContain(t);
       }
       expect(tables.filter((t) => t.strict !== 1).map((t) => t.name)).toEqual([]);

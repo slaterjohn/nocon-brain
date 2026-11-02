@@ -8,14 +8,22 @@ import { Button } from "@/components/ui/button";
 import { EmptyState, ErrorState } from "@/components/layout/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
-import { ApiError, errorMessage, post } from "@/lib/api";
+import { ApiError, errorMessage, get, post } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { useOnlineAvailable, useSearchPrefs } from "@/lib/search-prefs";
+import { useOnlineStatus, useSearchPrefs, type OnlineStatus } from "@/lib/search-prefs";
+import { useEvents } from "@/components/layout/events";
+import { holdCause, TIME_BOX_MS } from "@/lib/search-freeze";
+import { initialStream, onlineCount, streamReducer, summaryMessage } from "@/lib/search-stream";
+import { consumeHistoryTraversal, readRestore, saveRestore, updateScroll } from "@/lib/nav-restore";
+import type { OnlineInfo, SaveResponse, SearchEvent } from "@/lib/online-search";
 import {
   EMPTY_STATE, SCOPE_LABELS, filterCount, paramsFromState, readFacets, requestFromState, searchHref, stateFromParams, typeLabel,
   type Facets, type Scope, type SearchResponse, type SearchResult, type SearchState,
 } from "@/lib/search";
+import { CoverageDialog } from "./coverage-dialog";
 import { FiltersPanel } from "./filters";
+import { OnlineFooter, OnlineNote, OnlineStrip } from "./online-panel";
+import { useFreeze, useOnlineRun, useVisibleKeys } from "./online-hooks";
 import { OperatorHelp } from "./operator-help";
 import { ResultItem } from "./result-item";
 import { SaveSearchDialog } from "./save-search-dialog";
@@ -24,7 +32,14 @@ import { SearchBox } from "./search-box";
 const SCOPES: Scope[] = ["all", "offline", "online", "images", "documents"];
 const NO_FACETS: Facets = { sources: [], collections: [], domains: [], types: [], languages: [], availability: [], approximate: false };
 
-function CategoryTabs({ scope, onlineAvailable, onSelect }: { scope: Scope; onlineAvailable: boolean; onSelect: (s: Scope) => void }) {
+const ONLINE_OFF_TEXT: Record<NonNullable<OnlineStatus["reason"]>, string> = {
+  off: "Online search is off",
+  no_provider: "Online search has no provider set up",
+  offline: "You are offline",
+};
+
+function CategoryTabs({ scope, status, onSelect }: { scope: Scope; status: OnlineStatus; onSelect: (s: Scope) => void }) {
+  const onlineAvailable = status.available;
   const refs = React.useRef<Record<string, HTMLButtonElement | null>>({});
   const enabled = SCOPES.filter((s) => s !== "online" || onlineAvailable);
   function onKey(e: React.KeyboardEvent, s: Scope) {
@@ -71,7 +86,7 @@ function CategoryTabs({ scope, onlineAvailable, onSelect }: { scope: Scope; onli
           </button>
         );
       })}
-      <span id="online-off" className="sr-only">Online search is off</span>
+      <span id="online-off" className="sr-only">{ONLINE_OFF_TEXT[status.reason ?? "off"]}</span>
     </div>
   );
 }
@@ -117,31 +132,79 @@ function ResultsSkeleton() {
   );
 }
 
+type Snapshot = SearchResponse & { lastSeq?: number };
+
 export function ResultsView() {
   const params = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
   const { toast } = useToast();
+  const ev = useEvents();
   const [prefs, , prefsReady] = useSearchPrefs();
-  const onlineAvailable = useOnlineAvailable();
+  const status = useOnlineStatus();
+  const onlineAvailable = status.available;
   const state = React.useMemo(() => stateFromParams(params), [params]);
   const stateKey = paramsFromState(state).toString();
 
   const [text, setText] = React.useState(state.q);
   React.useEffect(() => setText(state.q), [state.q]);
 
-  const [data, setData] = React.useState<SearchResponse | null>(null);
-  const [results, setResults] = React.useState<SearchResult[]>([]);
+  const [data, setData] = React.useState<Snapshot | null>(null);
+  const [stream, dispatch] = React.useReducer(streamReducer, undefined, () => initialStream());
+  const results = stream.results;
   const [page, setPage] = React.useState(1);
   const [loading, setLoading] = React.useState(true);
   const [moreBusy, setMoreBusy] = React.useState(false);
+  const [webMoreBusy, setWebMoreBusy] = React.useState(false);
   const [error, setError] = React.useState<ApiError | Error | null>(null);
   const [retry, setRetry] = React.useState(0);
   const [announce, setAnnounce] = React.useState("");
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [saveOpen, setSaveOpen] = React.useState(false);
+  const [coverageOpen, setCoverageOpen] = React.useState(false);
+  const [epoch, setEpoch] = React.useState(0);
+  const [boxExpired, setBoxExpired] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const facetsRef = React.useRef<Facets>(NO_FACETS);
+  const panelRef = React.useRef<HTMLDivElement | null>(null);
+  const filtersRef = React.useRef<HTMLElement | null>(null);
+  const boxRef = React.useRef(false);
+  const roundOpen = React.useRef(false);
+  const announcedFor = React.useRef("");
+  const alive = React.useRef(true);
+  React.useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  const freezer = useFreeze(panelRef, filtersRef, `${stateKey}#${retry}`);
+  const visible = useVisibleKeys(panelRef, results.length);
+
+  const onlineRan = data?.online?.state === "pending" || data?.online?.state === "done";
+  const pending = onlineRan && !stream.done;
+
+  // Events that change the list apply at once only while it is open: before any interaction and inside the 2 s time box.
+  const onEvent = React.useCallback(
+    (e: SearchEvent) => {
+      const hold = !roundOpen.current && (freezer.ref.current.frozen || boxRef.current);
+      dispatch({ type: "event", event: e, hold, visible: visible.current });
+      if (e.type === "done") roundOpen.current = false;
+    },
+    [freezer.ref, visible],
+  );
+  useOnlineRun({ searchId: data?.searchId ?? null, active: pending, afterSeq: stream.lastSeq, epoch, onEvent });
+
+  // The 2 s time box starts when the answer to the search arrives.
+  React.useEffect(() => {
+    if (!data || data.online?.state !== "pending" || boxRef.current) return;
+    const t = setTimeout(() => {
+      boxRef.current = true;
+      setBoxExpired(true);
+    }, TIME_BOX_MS);
+    return () => clearTimeout(t);
+  }, [data]);
 
   const run = React.useCallback(
     (pageNo: number, signal: { cancelled: boolean }) =>
@@ -155,53 +218,185 @@ export function ResultsView() {
     [stateKey, prefs.resultsPerPage, onlineAvailable],
   );
 
+  // Back or Forward: the list comes back from the snapshot the server kept, not from a new search.
+  const mounted = React.useRef(false);
+  const mountTraversal = React.useRef(false);
+  if (!mounted.current) {
+    mounted.current = true;
+    mountTraversal.current = consumeHistoryTraversal();
+  }
+
   React.useEffect(() => {
-    // Wait for the saved page size so the first search is not run twice.
-    if (!prefsReady) return;
+    // Wait for the saved page size and the online status so the first search is not run twice.
+    if (!prefsReady || !status.ready) return;
     const signal = { cancelled: false };
+    const traversal = mountTraversal.current || consumeHistoryTraversal();
+    mountTraversal.current = false;
     setLoading(true);
     setError(null);
     setPage(1);
-    run(1, signal)
-      .then((res) => {
-        if (!res) return;
-        setData(res);
-        setResults(res.results);
-        const f = readFacets(res.facets);
-        facetsRef.current = res.facets ? f : facetsRef.current;
-        setLoading(false);
-        const n = res.total ?? res.results.length;
-        const plus = res.totalCapped ? " or more" : "";
-        setAnnounce(n === 0 ? `No results for ${state.q}.` : `${n}${plus} ${n === 1 ? "result" : "results"} for ${state.q}.`);
-      })
-      .catch((e: Error) => {
-        if (signal.cancelled) return;
-        setError(e);
-        setLoading(false);
-        setAnnounce("The search failed.");
-      });
+
+    const adopt = (res: Snapshot, restored: boolean, scrollY = 0) => {
+      setData(res);
+      dispatch({ type: "reset", results: res.results, online: res.online, coverage: res.coverage, lastSeq: res.lastSeq });
+      if (res.facets) facetsRef.current = readFacets(res.facets);
+      roundOpen.current = false;
+      // A restored list stays as it was: late results wait behind a button.
+      boxRef.current = restored;
+      setBoxExpired(restored);
+      if (!restored) freezer.reset();
+      setLoading(false);
+      saveRestore(stateKey, { searchId: res.searchId, scrollY });
+      if (restored && scrollY > 0) requestAnimationFrame(() => window.scrollTo(0, scrollY));
+    };
+
+    (async () => {
+      const rec = traversal && !state.saved ? readRestore(stateKey) : null;
+      if (rec) {
+        try {
+          const snap = await get<Snapshot>(`/api/search/${encodeURIComponent(rec.searchId)}`);
+          if (signal.cancelled) return;
+          adopt(snap, true, rec.scrollY);
+          return;
+        } catch {
+          /* gone after 30 minutes, or the server restarted: search again */
+        }
+      }
+      const res = await run(1, signal);
+      if (!res) return;
+      adopt(res, false);
+    })().catch((e: Error) => {
+      if (signal.cancelled) return;
+      setError(e);
+      setLoading(false);
+      setAnnounce("The search failed.");
+    });
     return () => {
       signal.cancelled = true;
     };
-  }, [run, retry, state.q, prefsReady]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run, retry, state.q, prefsReady, status.ready]);
+
+  // Remember the scroll position for Back.
+  React.useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const onScroll = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => updateScroll(stateKey, window.scrollY), 150);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (t) clearTimeout(t);
+    };
+  }, [stateKey]);
+
+  // One live message per search, made when it has settled: at once without a web search, otherwise when the web search is done or
+  // the time box has passed. Everything else on the page that changes by itself is not a live region.
+  React.useEffect(() => {
+    if (!data || loading || announcedFor.current === data.searchId) return;
+    if (pending && !boxExpired) return;
+    announcedFor.current = data.searchId;
+    const local = data.total ?? data.results.filter((r) => r.origin !== "online").length;
+    setAnnounce(summaryMessage(state.q, { total: data.total ?? data.results.length, capped: data.totalCapped, local, online: onlineCount(stream.results), onlineRan, pending }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, loading, pending, boxExpired, stream.done]);
 
   async function loadMore() {
     setMoreBusy(true);
     try {
       const res = await run(page + 1, { cancelled: false });
       if (!res) return;
-      setResults((cur) => {
-        const seen = new Set(cur.map((r) => r.key));
-        const fresh = res.results.filter((r) => !seen.has(r.key));
-        setAnnounce(`${fresh.length} more ${fresh.length === 1 ? "result" : "results"} loaded, ${cur.length + fresh.length} in total.`);
-        return [...cur, ...fresh];
-      });
-      setData((d) => (d ? { ...d, nextCursor: res.nextCursor } : res));
+      const seen = new Set(results.map((r) => r.key));
+      const fresh = res.results.filter((r) => !seen.has(r.key));
+      setAnnounce(`${fresh.length} more ${fresh.length === 1 ? "result" : "results"} loaded, ${results.length + fresh.length} in total.`);
+      dispatch({ type: "append_local", results: fresh });
+      setData((d) => (d ? { ...d, nextCursor: res.nextCursor } : (res as Snapshot)));
       setPage((p) => p + 1);
     } catch (e) {
       toast({ title: "Couldn't load more results", description: errorMessage(e), variant: "error" });
     } finally {
       setMoreBusy(false);
+    }
+  }
+
+  // ---- The web half ----
+
+  function showNew() {
+    const n = stream.held.append.length;
+    dispatch({ type: "release" });
+    if (n) setAnnounce(`${n} new web ${n === 1 ? "result" : "results"} shown at the end of the list.`);
+  }
+
+  async function rerank() {
+    if (!data) return;
+    try {
+      const snap = await get<Snapshot>(`/api/search/${encodeURIComponent(data.searchId)}?order=fused`);
+      dispatch({ type: "replace", results: snap.results, online: snap.online, coverage: snap.coverage, lastSeq: snap.lastSeq });
+      setAnnounce("Results re-ranked with web results.");
+      panelRef.current?.querySelector<HTMLElement>("[data-testid=results-list]")?.focus();
+    } catch (e) {
+      toast({ title: "Couldn't re-rank the results", description: errorMessage(e), variant: "error" });
+    }
+  }
+
+  async function loadMoreWeb() {
+    if (!data) return;
+    setWebMoreBusy(true);
+    try {
+      const res = await post<{ started: string[] }>(`/api/search/${encodeURIComponent(data.searchId)}/more`, {});
+      if (!res.started.length) {
+        toast({ title: "No more web results", description: "None of the providers has another page.", variant: "default" });
+        return;
+      }
+      // The Human asked for these, so this round may add to the list as it arrives.
+      dispatch({ type: "release" });
+      roundOpen.current = true;
+      dispatch({ type: "reopen" });
+      setEpoch((n) => n + 1);
+    } catch (e) {
+      toast({ title: "Couldn't load more from the web", description: errorMessage(e), variant: "error" });
+    } finally {
+      setWebMoreBusy(false);
+    }
+  }
+
+  const saveOnline = React.useCallback(
+    async (r: SearchResult) => {
+      if (!data) throw new Error("The search has ended. Search again to save this result.");
+      const out = await post<SaveResponse>(`/api/search/${encodeURIComponent(data.searchId)}/results/${encodeURIComponent(r.key)}/save`, { queue: ev.connectivity === "offline" });
+      dispatch({ type: "mark_queued", key: r.key });
+      void trackSave(out.downloadId, r);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, ev.connectivity],
+  );
+
+  /** Follows the capture until the page is saved, then shows the result as a saved page that links to the archive. */
+  async function trackSave(downloadId: string, r: SearchResult) {
+    for (let i = 0; i < 120 && alive.current; i++) {
+      await new Promise((res) => setTimeout(res, i < 4 ? 500 : 1500));
+      if (!alive.current) return;
+      try {
+        const c = await get<{ state: string; pageId?: string }>(`/api/archive/captures/${encodeURIComponent(downloadId)}`);
+        if (c.state === "completed") {
+          let pageId = c.pageId;
+          if (!pageId) {
+            const found = await post<{ resolution?: { page?: { id: string } } }>("/api/browser/resolve", { input: r.url });
+            pageId = found.resolution?.page?.id;
+          }
+          dispatch({ type: "mark_saved", key: r.key, pageId });
+          toast({ title: pageId ? "Saved for offline" : "Couldn't find the saved page", description: r.title || r.url, variant: pageId ? "success" : "error" });
+          return;
+        }
+        if (c.state === "failed" || c.state === "cancelled") {
+          dispatch({ type: "mark_saved", key: r.key });
+          toast({ title: "The page could not be saved", description: r.title || r.url, variant: "error" });
+          return;
+        }
+      } catch {
+        /* try again */
+      }
     }
   }
 
@@ -239,10 +434,14 @@ export function ResultsView() {
   const dym = data?.didYouMean;
   const nFilters = filterCount(state);
   const hasMore = !!data?.nextCursor;
-  const cov = data?.coverage;
+  const cov = stream.coverage ?? data?.coverage;
   const warnings = data?.parsed?.warnings ?? [];
   const rebuilding = data?.index && data.index.state !== "ok";
   const showDym = dym && !(state.exact && dym.appliedAutomatically);
+  const online: OnlineInfo = { ...(data?.online ?? { state: "disabled", pending: [], disclosure: "" }), disclosure: data?.online?.disclosure ?? "" };
+  const noteReason = onlineRan || !status.ready ? null : status.available ? (data?.online?.state === "offline" ? "offline" : null) : status.reason;
+  const webOff = state.scope === "online" && !loading && !onlineRan && !!data;
+  const uncached = results.filter((r) => r.origin === "online" && r.availability === "online_only");
 
   return (
     <div className="mx-auto w-full max-w-6xl p-4 sm:p-6" data-testid="results-page">
@@ -258,11 +457,11 @@ export function ResultsView() {
         </Button>
       </div>
 
-      <CategoryTabs scope={state.scope} onlineAvailable={onlineAvailable} onSelect={(scope) => go({ scope })} />
-      <p className="mt-1.5 text-xs text-muted-foreground" hidden={onlineAvailable}>Online search is off. Results come from your saved pages.</p>
+      <CategoryTabs scope={state.scope} status={status} onSelect={(scope) => go({ scope })} />
+      <OnlineNote reason={noteReason} scopeOnline={state.scope === "online"} />
 
       <div className="mt-4 grid gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]">
-        <aside aria-label="Filters" className="min-w-0">
+        <aside aria-label="Filters" className="min-w-0" ref={filtersRef}>
           <Button type="button" variant="outline" size="sm" className="lg:hidden" aria-expanded={filtersOpen} aria-controls="filters-wrap" onClick={() => setFiltersOpen((o) => !o)} data-testid="filters-toggle">
             <ListFilter aria-hidden="true" /> Filters{nFilters ? ` (${nFilters})` : ""}
           </Button>
@@ -271,7 +470,7 @@ export function ResultsView() {
           </div>
         </aside>
 
-        <div id="results-panel" role="tabpanel" aria-labelledby={`cat-${state.scope}`} className="min-w-0" aria-busy={loading}>
+        <div id="results-panel" role="tabpanel" aria-labelledby={`cat-${state.scope}`} className="min-w-0" aria-busy={loading || pending}>
           <div role="status" aria-live="polite" className="sr-only" data-testid="results-status">{announce}</div>
           {showDym ? (
             <p className="mb-3 text-base" data-testid="did-you-mean">
@@ -294,44 +493,69 @@ export function ResultsView() {
             </p>
           ) : null}
           {warnings.length ? <ul className="mb-3 space-y-1 text-sm text-muted-foreground">{warnings.map((w) => <li key={w}>{w}</li>)}</ul> : null}
-          {cov && !loading ? (
+          {onlineRan && !loading ? (
+            <OnlineStrip
+              stream={stream}
+              cause={holdCause({ frozen: freezer.frozen, reason: freezer.reason }, boxExpired ? TIME_BOX_MS + 1 : 0)}
+              pending={pending}
+              timeBoxExpired={boxExpired}
+              moreBusy={webMoreBusy}
+              onShow={showNew}
+              onRerank={() => void rerank()}
+              onLoadMore={() => void loadMoreWeb()}
+              onImprove={() => setCoverageOpen(true)}
+              coverage={cov}
+            />
+          ) : cov && !loading ? (
             <p className="mb-1 text-sm text-muted-foreground" data-testid="coverage-strip">
               {cov.cachedMatches} {cov.cachedMatches === 1 ? "match" : "matches"} in your saved pages{cov.partial ? `, ${cov.partial} partly saved` : ""}
             </p>
           ) : null}
           <ActiveFilters state={state} onChange={(p) => go(p)} />
 
-          {loading && results.length === 0 ? <ResultsSkeleton /> : null}
-          {error ? <ErrorState title="The search failed" message={errorMessage(error)} onRetry={() => setRetry((n) => n + 1)} className="mt-4" /> : null}
-          {!loading && !error && results.length === 0 ? (
-            <EmptyState
-              icon={SearchIcon}
-              title={`No results for "${state.q}"`}
-              description={nFilters || state.scope !== "all" ? "Try removing a filter or choosing All." : "Check the spelling, try fewer or different words, or look in the Library."}
-              action={nFilters ? <Button variant="outline" onClick={() => go({ ...EMPTY_STATE, q: state.q })}>Clear filters and category</Button> : undefined}
-              className="mt-4"
-            />
-          ) : null}
-          {results.length > 0 ? (
-            <>
-              <h2 className="sr-only">Results</h2>
-              <ol className={cn("divide-y", loading && "opacity-60")} data-testid="results-list" aria-label="Results">
-                {results.map((r, i) => (
-                  <li key={r.key}>
-                    <ResultItem result={r} headingId={`result-${i}`} />
-                  </li>
-                ))}
-              </ol>
-              <div className="flex flex-col items-center gap-2 py-6">
-                <p className="text-sm text-muted-foreground" data-testid="results-count">{data?.total != null ? `Showing ${results.length} of ${data.total}${data.totalCapped ? "+" : ""} results` : `Showing ${results.length} ${results.length === 1 ? "result" : "results"}`}</p>
-                {hasMore ? (
-                  <Button variant="outline" onClick={() => void loadMore()} disabled={moreBusy} data-testid="load-more">
-                    {moreBusy ? "Loading…" : "Load more results"}
-                  </Button>
-                ) : null}
-              </div>
-            </>
-          ) : null}
+          <div ref={panelRef} data-testid="results-body">
+            {loading && results.length === 0 ? <ResultsSkeleton /> : null}
+            {error ? <ErrorState title="The search failed" message={errorMessage(error)} onRetry={() => setRetry((n) => n + 1)} className="mt-4" /> : null}
+            {webOff ? (
+              <EmptyState
+                icon={SearchIcon}
+                title="The web was not searched"
+                description={online.state === "offline" ? "You are offline. Choose All or Offline to search your saved pages." : "Online search is off, or no search provider is set up. Choose All or Offline to search your saved pages."}
+                action={<Button asChild variant="outline"><Link href="/storage/online-search">Online search settings</Link></Button>}
+                className="mt-4"
+              />
+            ) : null}
+            {!loading && !error && !webOff && results.length === 0 && !(pending && !boxExpired) ? (
+              <EmptyState
+                icon={SearchIcon}
+                title={`No results for "${state.q}"`}
+                description={nFilters || state.scope !== "all" ? "Try removing a filter or choosing All." : "Check the spelling, try fewer or different words, or look in the Library."}
+                action={nFilters ? <Button variant="outline" onClick={() => go({ ...EMPTY_STATE, q: state.q })}>Clear filters and category</Button> : undefined}
+                className="mt-4"
+              />
+            ) : null}
+            {results.length > 0 ? (
+              <>
+                <h2 className="sr-only">Results</h2>
+                <ol className={cn("divide-y", loading && "opacity-60")} data-testid="results-list" aria-label="Results" tabIndex={-1}>
+                  {results.map((r, i) => (
+                    <li key={r.key}>
+                      <ResultItem result={r} headingId={`result-${i}`} onSaveOnline={r.origin === "online" && data ? saveOnline : undefined} />
+                    </li>
+                  ))}
+                </ol>
+                <div className="flex flex-col items-center gap-2 py-6">
+                  <p className="text-sm text-muted-foreground" data-testid="results-count">{data?.total != null && !onlineRan ? `Showing ${results.length} of ${data.total}${data.totalCapped ? "+" : ""} results` : `Showing ${results.length} ${results.length === 1 ? "result" : "results"}`}</p>
+                  {hasMore ? (
+                    <Button variant="outline" onClick={() => void loadMore()} disabled={moreBusy} data-testid="load-more">
+                      {moreBusy ? "Loading…" : "Load more results"}
+                    </Button>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
+          </div>
+          {onlineRan && !loading ? <OnlineFooter stream={stream} pending={pending} disclosure={online.disclosure} /> : null}
         </div>
       </div>
       <SaveSearchDialog
@@ -340,6 +564,18 @@ export function ResultsView() {
         state={state}
         onSaved={(s) => toast({ title: "Search saved", description: `${s.name}. Find it in the Search area under Saved searches.`, variant: "success" })}
       />
+      {data ? (
+        <CoverageDialog
+          open={coverageOpen}
+          onOpenChange={setCoverageOpen}
+          searchId={data.searchId}
+          candidates={uncached}
+          onQueued={(keys, info) => {
+            for (const key of keys) dispatch({ type: "mark_queued", key });
+            toast({ title: "Queued for saving", description: `${info.queued} ${info.queued === 1 ? "page" : "pages"} will be saved in the background.`, variant: "success" });
+          }}
+        />
+      ) : null}
     </div>
   );
 }

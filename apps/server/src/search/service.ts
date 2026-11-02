@@ -13,6 +13,7 @@ import {
 import { parseOrThrow, RequestValidationError } from "../lib/zod.js";
 import type { SettingsService } from "../services/settings.js";
 import type { ActivityLog } from "../services/activity.js";
+import type { OnlineSearch } from "../online/session.js";
 import type { CheckReport, FromIndexWorker, FromSearchWorker, IndexCommand, IndexStatusReply, IndexWorkerData, SearchReply, SearchRequest, SearchWorkerData } from "./protocol.js";
 
 const iso = (n: number | null | undefined): string | undefined => (n == null ? undefined : new Date(n).toISOString());
@@ -122,6 +123,8 @@ export class SearchService {
   onApplied?: () => void;
   /** Set by the server: evaluates saved-search collections. */
   collectionRefresh?: () => Promise<void>;
+  /** Set by the server: the online half of combined search (Phase 5). */
+  online?: OnlineSearch;
 
   constructor(private readonly o: SearchServiceOptions) {}
 
@@ -184,6 +187,7 @@ export class SearchService {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.online?.stop();
     if (this.pruneTimer) clearInterval(this.pruneTimer);
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     if (this.indexW && !this.indexExited) {
@@ -426,6 +430,8 @@ export class SearchService {
     const facets = out?.facets ? this.labelFacets(out.facets) : undefined;
     const searchId = ctx.searchIdFor ?? newId("sch");
     const total = out?.total ?? 0;
+    let plan: ReturnType<OnlineSearch["plan"]> | undefined;
+    try { plan = this.online?.plan({ scope: b.scope, online: b.online, providers: b.providers, page: b.page }); } catch { plan = undefined; }
     const response: Record<string, unknown> = {
       searchId,
       parsed: out?.parsed ?? { terms: parsed.terms.map((t) => t.text), phrases: [], excluded: [], operators: {}, warnings: parsed.warnings },
@@ -434,7 +440,8 @@ export class SearchService {
       coverage: { cachedMatches: total, onlineMatches: 0, onlineNotArchived: 0, queued: 0, partial: facets?.availability.find((f) => f.value === "partial")?.count ?? 0, basis: "local_exact" },
       ...(facets ? { facets } : {}),
       total, totalCapped: out?.totalCapped ?? false, page: b.page, pageSize: b.pageSize,
-      online: { state: this.o.isOffline() ? "offline" : "disabled", pending: [], disclosure: "" },
+      online: plan ? this.online!.initialBlock(plan) : { state: this.o.isOffline() ? "offline" : "disabled", pending: [], disclosure: "" },
+      lastSeq: 0,
       tookMs: { local: out?.tookMs ?? 0, zim: 0 },
       index: { state: this.state },
       ...(out?.hasMore ? { nextCursor: String(b.page + 1) } : {}),
@@ -443,24 +450,32 @@ export class SearchService {
     if (empty && this.state !== "ok") response.warnings = ["The search index is being rebuilt. Results will appear when it is ready."];
     this.sessions.set(searchId, { at: Date.now(), body: response });
     this.sweepSessions();
-    if (b.record && b.page === 1 && ctx.recordHistory !== false && ctx.userId !== undefined && b.query.trim()) this.recordHistory(ctx.userId, b.query, b.scope, total);
+    if (b.record && b.page === 1 && ctx.recordHistory !== false && ctx.userId !== undefined && b.query.trim()) {
+      this.recordHistory(ctx.userId, b.query, b.scope, total, plan?.state === "pending" ? plan.runtimes.map((r) => r.id) : undefined);
+    }
     void t0;
+    // The local response is complete here. The online half starts afterwards and can never throw into it.
+    if (plan && this.online) {
+      const p = response.parsed as { terms: string[]; phrases: string[] };
+      this.online.register(searchId, plan, { query: b.query, terms: [...(p.terms ?? []), ...(p.phrases ?? [])], response, userId: ctx.userId });
+    }
     return response;
   }
 
   private docsHint = 0;
 
   private sweepSessions(): void {
+    this.online?.sweep();
     const cutoff = Date.now() - 30 * 60_000;
     for (const [k, v] of this.sessions) if (v.at < cutoff) this.sessions.delete(k);
     if (this.sessions.size > 500) for (const k of [...this.sessions.keys()].slice(0, this.sessions.size - 500)) this.sessions.delete(k);
   }
 
-  snapshot(searchId: string): unknown {
+  snapshot(searchId: string, o: { order?: "fused" } = {}): unknown {
     this.sweepSessions();
     const s = this.sessions.get(searchId);
     if (!s) throw new AppError("not_found", "That search has expired. Run it again.");
-    return s.body;
+    return this.online ? this.online.decorate(s.body as Record<string, unknown>, searchId, o.order) : s.body;
   }
 
   private labelFacets(f: Facets): Facets {
@@ -552,10 +567,11 @@ export class SearchService {
     try { return (this.o.settings.internal("privacy") as { searchHistory: { enabled: boolean } }).searchHistory.enabled; } catch { return false; }
   }
 
-  private recordHistory(userId: number, query: string, scope: string, count: number): void {
+  private recordHistory(userId: number, query: string, scope: string, count: number, providers?: string[]): void {
     if (!this.historyEnabled()) return;
     const norm = query.trim().toLowerCase().replace(/\s+/g, " ");
-    this.db.run("INSERT INTO search_history (user_id, query, normalised_query, at, local_count, scope) VALUES (?, ?, ?, ?, ?, ?)", [userId, query.trim().slice(0, 500), norm.slice(0, 500), this.o.clock.now(), count, scope]);
+    this.db.run("INSERT INTO search_history (user_id, query, normalised_query, at, local_count, scope, online_providers_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [userId, query.trim().slice(0, 500), norm.slice(0, 500), this.o.clock.now(), count, scope, providers?.length ? JSON.stringify(providers) : null]);
     this.db.run("DELETE FROM search_history WHERE user_id = ? AND id NOT IN (SELECT id FROM search_history WHERE user_id = ? ORDER BY id DESC LIMIT 1000)", [userId, userId]);
   }
 
@@ -578,12 +594,14 @@ export class SearchService {
 
   // ---- saved searches ------------------------------------------------------------------------
 
-  private savedOut(r: { public_id: string; name: string; query: string; filters_json: string; scope: string; include_online: number; created_at: number; last_run_at: number | null; last_result_count: number | null; collection_id: number | null }) {
+  private savedOut(r: { public_id: string; name: string; query: string; filters_json: string; scope: string; include_online: number; created_at: number; last_run_at: number | null; last_result_count: number | null; collection_id: number | null; source_id?: number | null }) {
+    const src = r.source_id == null ? undefined : this.db.get<{ public_id: string }>("SELECT public_id FROM sources WHERE id = ? AND deleted_at IS NULL", [r.source_id])?.public_id;
     const col = r.collection_id == null ? undefined : this.db.get<{ public_id: string }>("SELECT public_id FROM collections WHERE id = ? AND deleted_at IS NULL", [r.collection_id])?.public_id;
     return {
       id: r.public_id, name: r.name, query: r.query, filters: JSON.parse(r.filters_json) as unknown, scope: r.scope, includeOnline: r.include_online === 1,
       createdAt: iso(r.created_at), ...(r.last_run_at ? { lastRunAt: iso(r.last_run_at) } : {}),
       ...(r.last_result_count != null ? { lastResultCount: r.last_result_count } : {}), ...(col ? { collectionId: col } : {}),
+      sourceId: src ?? null,
     };
   }
   private savedRow(userId: number, publicId: string) {
@@ -623,7 +641,7 @@ export class SearchService {
   }
   async runSaved(userId: number, id: string, body: { page?: number; pageSize?: number }): Promise<Record<string, unknown>> {
     const cur = this.savedRow(userId, id);
-    const res = await this.search({ query: cur.query, scope: cur.scope, filters: JSON.parse(cur.filters_json), page: body.page ?? 1, pageSize: body.pageSize ?? 20, record: false }, { userId, recordHistory: false });
+    const res = await this.search({ query: cur.query, scope: cur.scope, filters: JSON.parse(cur.filters_json), page: body.page ?? 1, pageSize: body.pageSize ?? 20, record: false, online: cur.include_online === 1 ? "auto" : "off" }, { userId, recordHistory: false });
     this.db.run("UPDATE saved_searches SET last_run_at = ?, last_result_count = ? WHERE id = ?", [this.o.clock.now(), res.total as number, cur.id]);
     return res;
   }

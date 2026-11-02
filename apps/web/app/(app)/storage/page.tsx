@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Activity, LayoutDashboard } from "lucide-react";
+import { Activity, Globe, LayoutDashboard } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/layout/states";
 
@@ -27,6 +27,15 @@ export default function StoragePage() {
           </CardHeader>
           <CardContent>
             <Link href="/storage/activity" className="text-sm text-primary underline underline-offset-2">Open the activity log</Link>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Globe className="size-4" aria-hidden="true" /> Online search</CardTitle>
+            <CardDescription>Search the web as well as your saved pages. Choose providers, limits and privacy.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/storage/online-search" className="text-sm text-primary underline underline-offset-2">Open online search settings</Link>
           </CardContent>
         </Card>
       </div>

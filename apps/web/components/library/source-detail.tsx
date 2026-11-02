@@ -39,8 +39,12 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 export function SourceDetailView({ id }: { id: string }) {
   const router = useRouter();
-  const src = useApi<Source>(`/api/sources/${id}`);
+  // The source itself is polled while it runs, so the badge leaves "Running" on its own when the downloads end (a slow machine
+  // can still be indexing an import when the page opens).
+  const [polling, setPolling] = React.useState(false);
+  const src = useApi<Source>(`/api/sources/${id}`, { refreshInterval: polling ? 2500 : undefined });
   const running = src.data?.lastStatus === "running";
+  React.useEffect(() => setPolling(running), [running]);
   const stats = useApi<SourceStats>(`/api/sources/${id}/stats`, { refreshInterval: running ? 4000 : undefined });
   const [limit, setLimit] = React.useState(25);
   const pages = useApi<Page<SourcePageRow>>(`/api/sources/${id}/pages?limit=${limit}`, { refreshInterval: running ? 6000 : undefined });

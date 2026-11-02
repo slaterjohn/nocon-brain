@@ -46,6 +46,7 @@ test("single-key shortcuts can be switched off", async ({ page }) => {
   await expect(sw).toBeChecked();
   await sw.click();
   await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toHaveCount(0);
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await page.keyboard.press("/");
   await expect(bar).not.toBeFocused();

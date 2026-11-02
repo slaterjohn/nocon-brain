@@ -67,6 +67,14 @@ export function buildGroupSchemas(config: ResolvedConfig) {
       rrfK: intIn(60, 1, 1000),
       rrfLocalWeight: z.number().min(0).max(10).default(1.5),
       rrfProviderWeight: z.number().min(0).max(10).default(1),
+      /** Weight of each ZIM list (Phase 8 supplies the lists). */
+      rrfZimWeight: z.number().min(0).max(10).default(1),
+      /** Multiplier for a provider whose results overlap an earlier provider's by at least half. */
+      rrfSecondaryProviderWeight: z.number().min(0).max(10).default(0.7),
+      /** How many results of each list take part in the fusion. */
+      onlineTopN: intIn(30, 5, 100),
+      /** Hard stop for one round of provider requests in a search session. */
+      onlineDeadlineMs: intIn(10_000, 1000, 60_000),
       zimSearchBudgetMs: intIn(800, 100, 10_000),
     }),
     discovery: z.object({

@@ -8,6 +8,7 @@ const items = [
   { href: "/storage", label: "Overview" },
   { href: "/storage/dashboard", label: "Dashboard" },
   { href: "/storage/activity", label: "Activity log" },
+  { href: "/storage/online-search", label: "Online search" },
 ];
 
 /** Local navigation inside the Storage and settings area. */

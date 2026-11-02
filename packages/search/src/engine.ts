@@ -861,6 +861,8 @@ export class Fts5Index implements SearchIndex {
     return out;
   }
 
+  // NB: better-sqlite3 binds JS numbers as REAL, and FTS5 ignores a REAL rowid constraint when combined with MATCH
+  // (it returns the first match instead), so the id must be CAST to INTEGER here.
   private snippetFor(row: DocRow, expr: string, used: { group: "en" | "default"; expr: string }[]): { snippet: string; titleHtml: string } {
     const T = this.ftsTable(row.fts_group);
     const fallbackLead = (): string => {
@@ -870,7 +872,7 @@ export class Fts5Index implements SearchIndex {
     if (!expr) return { snippet: fallbackLead(), titleHtml: escapeHtml(row.title || row.url) };
     try {
       const r = this.st(`SELECT snippet(${T}, 3, '${MARK_OPEN}', '${MARK_CLOSE}', '…', 24) AS body, snippet(${T}, 1, '${MARK_OPEN}', '${MARK_CLOSE}', '…', 16) AS heads,
-          highlight(${T}, 0, '${MARK_OPEN}', '${MARK_CLOSE}') AS title FROM ${T} WHERE ${T} MATCH ? AND rowid = ?`).get(expr, row.id) as { body: string; heads: string; title: string } | undefined;
+          highlight(${T}, 0, '${MARK_OPEN}', '${MARK_CLOSE}') AS title FROM ${T} WHERE ${T} MATCH ? AND rowid = CAST(? AS INTEGER)`).get(expr, row.id) as { body: string; heads: string; title: string } | undefined;
       if (!r) return { snippet: fallbackLead(), titleHtml: escapeHtml(row.title || row.url) };
       let sn = r.body && r.body.includes(MARK_OPEN) ? r.body : r.heads && r.heads.includes(MARK_OPEN) ? r.heads : "";
       const snippet = sn ? sanitiseMarked(sn) : fallbackLead();

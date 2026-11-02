@@ -76,6 +76,12 @@ export default async function globalSetup() {
   process.env.E2E_ARTICLE_URL = fixtures.urls.article;
   process.env.E2E_EDGE_URL = fixtures.urls.edge;
   process.env.E2E_LINKGRAPH_URL = fixtures.urls.linkGraph;
+  // The fake search providers (SearXNG, Brave, Mojeek) of the same fixture server, with their credentials.
+  process.env.E2E_SEARXNG_URL = fixtures.urls.searxng;
+  process.env.E2E_BRAVE_URL = fixtures.urls.brave;
+  process.env.E2E_MOJEEK_URL = fixtures.urls.mojeek;
+  process.env.E2E_BRAVE_TOKEN = fixtures.credentials.braveToken;
+  process.env.E2E_MOJEEK_KEY = fixtures.credentials.mojeekApiKey;
   closers.push(() => fixtures.close());
 
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "ncb-e2e-logs-"));

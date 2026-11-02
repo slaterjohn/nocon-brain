@@ -35,6 +35,12 @@ import { crawlConfigForDownload, DownloadService } from "./downloads/index.js";
 import { RefreshService } from "./refresh/index.js";
 import { ResourceGovernor } from "./limits/governor.js";
 import { SearchService, type SearchServiceOptions } from "./search/service.js";
+import { ProviderHttp } from "./online/http.js";
+import { ProviderRunner } from "./online/runner.js";
+import { ProviderService } from "./online/providers.js";
+import { OnlineSearch } from "./online/session.js";
+import { CoverageService } from "./online/coverage.js";
+import { SavedSearchSources } from "./online/saved-source.js";
 import { workerStatuses } from "./routes/system.js";
 import type { PipelineFaults, PipelineFetcher } from "./pipeline/types.js";
 import { VERSION } from "./version.js";
@@ -76,6 +82,7 @@ export { collectionReferences } from "./collections/references.js";
 export { ImportService } from "./imports/service.js";
 export { RenderService } from "./renderer/service.js";
 export { SearchService } from "./search/service.js";
+export * from "./online/index.js";
 export { GuardedProxy } from "./renderer/proxy.js";
 export { decideRender } from "./renderer/triggers.js";
 
@@ -115,6 +122,8 @@ export interface ServerOptions extends BuildOptions {
   archiveStore?: CaptureStore;
   /** Search workers and test flags (task S-01). */
   search?: Partial<Pick<SearchServiceOptions, "searchWorkerFile" | "indexWorkerFile" | "workerExecArgv" | "pollMs" | "batch" | "testFlags" | "autoRebuild">>;
+  /** Online search providers (Phase 5). Tests shorten the retry pause. */
+  online?: { retryDelayMs?: [number, number] };
 }
 
 export interface NcbServer {
@@ -161,6 +170,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
   let jumpTimer: NodeJS.Timeout | undefined;
   let maintenanceTimer: NodeJS.Timeout | undefined;
   let renderProxy: GuardedProxy | undefined;
+  let onlineCloser: (() => Promise<void>) | undefined;
 
   const server: NcbServer = {
     get renderProxy() {
@@ -416,6 +426,24 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       searchRef = search;
       collections.savedSearches = { ref: (id) => search.savedSearchRef(id), link: (sid, cid) => search.linkCollection(sid, cid) };
       search.collectionRefresh = () => search.refreshAllCollections();
+      // Combined search (Phase 5): providers, the runner, sessions, coverage and saved-search sources.
+      const netOffline = () => connectivity.snapshot().state === "offline";
+      const providerHttp = new ProviderHttp({ userAgent, isOffline: netOffline });
+      const providerRunner = new ProviderRunner({
+        db, clock, http: (p) => providerHttp.clientFor(p.config.baseUrl, p.adapter.info.defaultBaseUrl), isOffline: netOffline, log: app.log, retryDelayMs: opts.online?.retryDelayMs,
+      });
+      const providers = new ProviderService({ db, clock, settings, activity, secretKey, runner: providerRunner, http: providerHttp, isOffline: netOffline });
+      const online = new OnlineSearch({
+        db, clock, settings, providers, runner: providerRunner, isOffline: netOffline, urlKey: (u) => pipeline.urlKey(u), log: app.log,
+        saveUrl: (i) => browser.save(i),
+      });
+      search.online = online;
+      onlineCloser = () => providerHttp.close();
+      const coverage = new CoverageService({
+        db, clock, online, sources, collections, pipeline, activity, startCrawl: (cfg) => crawl.startCrawl(cfg), profile: () => settings.internal("resources").profile, isOffline: netOffline,
+      });
+      const savedSources = new SavedSearchSources({ db, clock, providers, runner: providerRunner, sources, pipeline, activity, isOffline: netOffline });
+      sources.attachSavedSearchRunner((src, o) => savedSources.run(src, o));
       const downloads = new DownloadService({
         db, clock, queue, events, activity, crawl, pipeline, refresh, sources, scheduler, schedules, connectivity, governor: limits, settings,
         workers: () => workerStatuses(svc!),
@@ -424,7 +452,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
 
       svc = {
         config, clock, main, db, activity, auth, settings, volumes, blobs, connectivity, fetcher, events, queue, runner, pipeline, imports, render, crawl,
-        archive, browser, bookmarks, history, library, sources, collections, schedules, scheduler, downloads, refresh, limits, search, throttle: new LoginThrottle(clock), guestMatcher,
+        archive, browser, bookmarks, history, library, sources, collections, schedules, scheduler, downloads, refresh, limits, search, providers, providerRunner, coverage, savedSources, throttle: new LoginThrottle(clock), guestMatcher,
       };
       state.attach(svc);
 
@@ -478,6 +506,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         archiveServer?.closeAllConnections();
         await app.close();
         await svc?.search.stop();
+        await onlineCloser?.().catch(() => undefined);
         main?.close(); // wal_checkpoint(TRUNCATE), close, release the writer lock
       })();
       return closed;

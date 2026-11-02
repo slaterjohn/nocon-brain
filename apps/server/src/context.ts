@@ -27,6 +27,10 @@ import type { DownloadService } from "./downloads/service.js";
 import type { RefreshService } from "./refresh/service.js";
 import type { ResourceGovernor } from "./limits/governor.js";
 import type { SearchService } from "./search/service.js";
+import type { ProviderService } from "./online/providers.js";
+import type { CoverageService } from "./online/coverage.js";
+import type { SavedSearchSources } from "./online/saved-source.js";
+import type { ProviderRunner } from "./online/runner.js";
 
 /** Everything that exists once the database is open and migrated. */
 export interface Services {
@@ -62,6 +66,10 @@ export interface Services {
   refresh: RefreshService;
   limits: ResourceGovernor;
   search: SearchService;
+  providers: ProviderService;
+  providerRunner: ProviderRunner;
+  coverage: CoverageService;
+  savedSources: SavedSearchSources;
   throttle: LoginThrottle;
   /** Returns true when the address may use trusted-LAN read-only access. Null when the mode is off. */
   guestMatcher: ((ip: string) => boolean) | null;
