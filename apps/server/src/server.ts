@@ -190,16 +190,6 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
     async initialize() {
       // Let the event loop answer `starting` health checks before the synchronous database work begins.
       await new Promise((r) => setImmediate(r));
-      for (const d of ["db", "index", "secrets", "tmp", "backups"]) fs.mkdirSync(path.join(config.NCB_DATA_DIR, d), { recursive: true });
-
-      main = openMainDatabase({
-        dataDir: config.NCB_DATA_DIR,
-        clock,
-        migrationsDir: migrationsDir(),
-        log: (m) => app.log.info(m),
-      });
-      const db = main.db;
-      await new Promise((r) => setImmediate(r));
       // Fail fast on an unsafe trusted-LAN configuration, before the data directory or its writer lock is touched.
       if (config.NCB_AUTH_MODE === "trusted-lan") {
         try {
@@ -210,6 +200,16 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         }
         if (config.NCB_TRUSTED_LAN_CIDRS.length === 0) throw new AppError("bad_request", "NCB_AUTH_MODE=trusted-lan needs NCB_TRUSTED_LAN_CIDRS.");
       }
+      for (const d of ["db", "index", "secrets", "tmp", "backups"]) fs.mkdirSync(path.join(config.NCB_DATA_DIR, d), { recursive: true });
+
+      main = openMainDatabase({
+        dataDir: config.NCB_DATA_DIR,
+        clock,
+        migrationsDir: migrationsDir(),
+        log: (m) => app.log.info(m),
+      });
+      const db = main.db;
+      await new Promise((r) => setImmediate(r));
 
       const events = new EventBus(clock);
       const activity = new ActivityLog(db, clock);
@@ -483,6 +483,17 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       return closed;
     },
   };
+  // A failed start must not keep the data directory locked: release the writer lock before rethrowing.
+  const initialize = server.initialize.bind(server);
+  server.initialize = async () => {
+    try {
+      return await initialize();
+    } catch (e) {
+      main?.close();
+      main = undefined;
+      throw e;
+    }
+  };
   return server;
 }
 
@@ -496,14 +507,3 @@ function renderConcurrency(settings: SettingsService, fallback: number): number 
   }
   return fallback;
 }
-  // A failed start must not keep the data directory locked: release the writer lock before rethrowing.
-  const initialize = server.initialize.bind(server);
-  server.initialize = async () => {
-    try {
-      return await initialize();
-    } catch (e) {
-      main?.close();
-      main = undefined;
-      throw e;
-    }
-  };
