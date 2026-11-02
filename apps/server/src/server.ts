@@ -200,6 +200,16 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       });
       const db = main.db;
       await new Promise((r) => setImmediate(r));
+      // Fail fast on an unsafe trusted-LAN configuration, before the data directory or its writer lock is touched.
+      if (config.NCB_AUTH_MODE === "trusted-lan") {
+        try {
+          privateCidrMatcher(config.NCB_TRUSTED_LAN_CIDRS);
+        } catch (e) {
+          if (e instanceof CidrError) throw new AppError("bad_request", `NCB_TRUSTED_LAN_CIDRS: ${e.message}`);
+          throw e;
+        }
+        if (config.NCB_TRUSTED_LAN_CIDRS.length === 0) throw new AppError("bad_request", "NCB_AUTH_MODE=trusted-lan needs NCB_TRUSTED_LAN_CIDRS.");
+      }
 
       const events = new EventBus(clock);
       const activity = new ActivityLog(db, clock);
@@ -486,3 +496,14 @@ function renderConcurrency(settings: SettingsService, fallback: number): number 
   }
   return fallback;
 }
+  // A failed start must not keep the data directory locked: release the writer lock before rethrowing.
+  const initialize = server.initialize.bind(server);
+  server.initialize = async () => {
+    try {
+      return await initialize();
+    } catch (e) {
+      main?.close();
+      main = undefined;
+      throw e;
+    }
+  };
