@@ -414,7 +414,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         crawlControl: { pause: (id) => crawlRef?.pause(id), resume: (id) => crawlRef?.resume(id), cancel: (id) => crawlRef?.cancel(id) },
       });
       sources.ensureSystemSources();
-      const imports = new ImportService({ deps, maxBytes: config.NCB_IMPORT_MAX_MB * 1024 * 1024, importsSourceId: () => sources.systemId("imports") });
+      const imports = new ImportService({ deps, maxBytes: config.NCB_IMPORT_MAX_MB * 1024 * 1024, importsSourceId: () => sources.systemId("imports"), onImportStarted: (id) => sources.noteRunStarted(id) });
       collections.ensureFavourites();
       const browser = new BrowserService({ db, clock, config, settings, connectivity, pipeline, archive, history, head, quickSavesSourceId: () => sources.systemId("quick_saves") });
       const bookmarks = new BookmarksService({ db, clock, settings, pipeline, onReferencesChanged: (ids) => { storage.priority.recomputePages(ids); storage.usage.invalidate(); } });

@@ -729,6 +729,12 @@ export class SourceService {
     this.db.run("UPDATE sources SET last_status = ? WHERE id = ? AND deleted_at IS NULL AND last_status IS NOT ?", [map[last.state] ?? last.state, rowId, map[last.state] ?? last.state]);
   }
 
+  /** A download that is not a source run (an upload into an imported-documents source) has just opened: the source shows it as running. */
+  noteRunStarted(rowId: number): void {
+    this.db.run("UPDATE sources SET last_run_at = ? WHERE id = ? AND deleted_at IS NULL", [this.o.clock.now(), rowId]);
+    this.refreshStatus(rowId);
+  }
+
   /**
    * Sources whose stored status disagrees with their downloads: still "running" with nothing open, or "never"/"ok" while the newest
    * download ended differently (an import, a failure inside a pipeline stage, a crash repaired at start). Their status is recomputed.

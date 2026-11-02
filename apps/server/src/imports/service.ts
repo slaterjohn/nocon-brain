@@ -60,6 +60,11 @@ export interface ImportServiceOptions {
   importsSourceId: () => number;
   /** A PDF that takes longer than this to read is refused. Default 60 s. */
   pdfTimeoutMs?: number;
+  /**
+   * Called, after the import is recorded and before the upload is answered, with the row id of the source it went into.
+   * The source's status must show the open import at once ("running"); until a download ends nothing else moves it off "never".
+   */
+  onImportStarted?: (sourceRowId: number) => void;
 }
 
 const sha256 = (b: Uint8Array | string) => createHash("sha256").update(b).digest("hex");
@@ -160,6 +165,7 @@ export class ImportService {
       return { duplicate: false as const, pageId: pagePublic, versionId: verPublic, downloadId: dlPublic, downloadJobId };
     });
     if (!out.duplicate) {
+      this.o.onImportStarted?.(source.id);
       publishCapture(d.db, d.events, out.downloadJobId);
       d.activity.write({ level: "info", area: "pipeline", message: `Imported ${filename} (${detected.kind}, ${req.data.length} bytes)`, downloadJobId: out.downloadJobId });
     }

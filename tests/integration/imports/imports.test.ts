@@ -217,6 +217,22 @@ describe("C-14 checks and clean refusals", () => {
     expect(json.statusCode).toBe(400);
   });
 
+  it("an import moves its source off 'never' at once, and to 'ok' when the import ends", async () => {
+    const t = await startBrowserServer();
+    const created = await t.api("POST", "/api/sources", { name: "Status papers", type: "imported_documents", priority: "P2" });
+    expect(created.status).toBe(201);
+    expect(created.body.lastStatus).toBe("never");
+    const r = await upload(t, "status.txt", Buffer.from(`Status check ${Date.now()}\n\nA paragraph.`), "text/plain", `?sourceId=${created.body.id}`);
+    expect(r.status).toBe(202);
+    // The answer to the upload is already enough for the Library to see a run in progress (it polls only while "running").
+    const during = await t.api("GET", `/api/sources/${created.body.id}`);
+    expect(during.body.lastRunAt).not.toBeNull();
+    expect(["running", "ok"]).toContain(during.body.lastStatus);
+    expect(during.body.lastStatus).not.toBe("never");
+    await until(() => t.pipeline.getCapture(r.body.downloadId)?.state === "completed");
+    await until(async () => (await t.api("GET", `/api/sources/${created.body.id}`)).body.lastStatus === "ok");
+  });
+
   it("imports into a chosen imported_documents source and refuses other source types", async () => {
     const t = await startBrowserServer();
     const created = await t.api("POST", "/api/sources", { name: "Papers", type: "imported_documents", priority: "P2" });
