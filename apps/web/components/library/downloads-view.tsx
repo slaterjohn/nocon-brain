@@ -15,6 +15,7 @@ import { useToast } from "@/components/ui/toast";
 import { EmptyState, ErrorState, LoadingSkeleton, PageHeader } from "@/components/layout/states";
 import { useEvents } from "@/components/layout/events";
 import { FAILURE_COPY, KIND_LABEL, PRIORITIES, STATE_LABEL } from "@/lib/library-copy";
+import { waitText } from "@/lib/storage";
 import { cn, formatBytes, formatDate, formatDuration } from "@/lib/utils";
 
 const TABS: DownloadState[] = ["queued", "running", "paused", "completed", "failed", "cancelled"];
@@ -139,6 +140,7 @@ function Row({ job, onChange }: { job: DownloadJob; onChange: () => void }) {
           . This is an estimate, not a measurement ({est.basis}).
         </p>
       ) : null}
+      {job.wait ? <p className="text-sm text-warning" data-testid="download-wait" data-reason={job.wait.reason}>{waitText(job.wait)} <Link href="/storage/policy" className="underline underline-offset-2">Storage policy</Link></p> : null}
       {job.pause ? <p className="text-sm text-muted-foreground" data-testid="download-pause">{PAUSE_WORDS[job.pause.reason] ?? job.pause.message}</p> : null}
       {job.stop && job.state === "completed" ? <p className="text-sm text-muted-foreground">{job.stop.message}</p> : null}
       {job.summary ? <p className="text-sm text-muted-foreground">Checked {job.summary.checked} pages: {job.summary.changed} changed, {job.summary.unchanged} unchanged, {job.summary.gone} gone, {job.summary.failed} failed.</p> : null}
@@ -262,10 +264,11 @@ export function DownloadsView() {
           <div>
             <p className="font-medium">{counts ? `${counts.running} running, ${counts.queued} queued` : "Queue"}</p>
             {q?.disk.paused ? <p className="text-warning">Background downloads are paused because a storage volume is low on space.</p> : null}
+            {q?.storageThrottle?.downloads ? <p className="text-warning" data-testid="storage-throttle">{q.storageThrottle.downloads} background {q.storageThrottle.downloads === 1 ? "download is" : "downloads are"} waiting because storage is nearly full.</p> : null}
             {q?.throttle.active ? <p className="text-muted-foreground">Downloads are slowed because the machine is busy.</p> : null}
             {(q?.connectivity ?? connectivity) === "offline" ? <p className="text-muted-foreground">There is no internet. Downloads wait until it returns.</p> : null}
             {stream === "lost" ? <p className="text-warning">Live updates have stopped. Reload the page to restart them.</p> : null}
-            {!q?.disk.paused && !q?.throttle.active && (q?.connectivity ?? connectivity) !== "offline" && stream !== "lost" ? <p className="text-muted-foreground">Everything is working normally.</p> : null}
+            {!q?.disk.paused && !q?.storageThrottle?.downloads && !q?.throttle.active && (q?.connectivity ?? connectivity) !== "offline" && stream !== "lost" ? <p className="text-muted-foreground">Everything is working normally.</p> : null}
           </div>
         </div>
       </section>

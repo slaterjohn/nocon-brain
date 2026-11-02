@@ -31,6 +31,7 @@ import type { ProviderService } from "./online/providers.js";
 import type { CoverageService } from "./online/coverage.js";
 import type { SavedSearchSources } from "./online/saved-source.js";
 import type { ProviderRunner } from "./online/runner.js";
+import type { StorageService } from "./storage/service.js";
 
 /** Everything that exists once the database is open and migrated. */
 export interface Services {
@@ -43,6 +44,8 @@ export interface Services {
   settings: SettingsService;
   volumes: VolumeService;
   blobs: BlobStore;
+  /** Intelligent storage (Phase 6): planner, executor, admission control, usage, forecast, maintenance. */
+  storage: StorageService;
   connectivity: ConnectivityService;
   fetcher: Fetcher;
   events: EventBus;

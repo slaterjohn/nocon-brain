@@ -3,7 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BookOpen, Download, ExternalLink, FolderPlus, RefreshCw, Trash2 } from "lucide-react";
+import { BookOpen, Download, ExternalLink, FolderPlus, RefreshCw, ShieldQuestion, Trash2 } from "lucide-react";
 import { errorMessage, post, useApi } from "@/lib/api";
 import type { PageDetail as PageDetailData } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
@@ -121,6 +121,7 @@ export function PageDetailView({ id }: { id: string }) {
 
       <div className="mb-6 flex flex-wrap gap-2">
         <Button variant="outline" size="sm" onClick={() => setAddOpen(true)} data-testid="detail-add-collection"><FolderPlus aria-hidden="true" /> Add to collection</Button>
+        <Button variant="outline" size="sm" asChild data-testid="detail-why-kept"><Link href={`/storage/pages/${page.id}`}><ShieldQuestion aria-hidden="true" /> Why is this kept?</Link></Button>
         {imported ? null : <Button variant="outline" size="sm" onClick={() => void recapture()} disabled={busy}><RefreshCw aria-hidden="true" /> Save a new version</Button>}
         <Button variant="ghost" size="sm" onClick={(e) => { opener.current = e.currentTarget; setDeleting(true); }}><Trash2 aria-hidden="true" /> Delete<span className="sr-only"> {page.title}</span></Button>
       </div>

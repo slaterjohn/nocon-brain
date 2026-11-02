@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 /** Prefixes from docs/data-model.md section 1 (D-9). */
 export const ID_PREFIXES = [
-  "usr", "src", "col", "pg", "ver", "job", "dl", "vol", "prv", "cand", "zim", "bm", "ss", "hs", "sch", "win", "plan", "tmp",
+  "usr", "src", "col", "pg", "ver", "job", "dl", "vol", "prv", "cand", "zim", "bm", "ss", "hs", "sch", "win", "plan", "tmp", "evr", "mnt",
 ] as const;
 export type IdPrefix = (typeof ID_PREFIXES)[number];
 

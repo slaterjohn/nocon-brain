@@ -9,6 +9,10 @@ export const DISCLOSURE_TEXT =
   "Online search sends the words you type to the search providers you enable. Those providers can see the query and your server's IP address. " +
   "Nothing is sent while online search is switched off or while the server is working offline.";
 
+export const P2_PERMIT_WARNING =
+  "With this on, when space runs short NoConBrain may delete Important (P2) content after all Standard and Opportunistic content has gone. " +
+  "Protected (P1) content is never deleted automatically. Deleted copies can be downloaded again only while the original sites still have them.";
+
 /** `true` where a group field is a secret: stored encrypted, never returned (a `has<Field>` flag is returned instead). */
 export type SecretFields = Record<string, string[]>;
 
@@ -82,10 +86,24 @@ export function buildGroupSchemas(config: ResolvedConfig) {
       passiveCandidates: bool(true),
     }),
     storage: z.object({
+      /** Lets automatic eviction reclaim Important (P2) content, last. Protected (P1) content is never evicted, whatever this says. */
       permitImportantEviction: bool(false),
+      /** When the Human turned the permit on (the confirmation they gave). Set by the server. */
+      permitAcknowledgedAt: z.iso.datetime().nullable().default(null),
+      /** Slow Opportunistic (P4) downloads while a volume is above its soft threshold. */
       throttleOpportunistic: bool(true),
+      /** Remove copies that no source's retention rule keeps any more when tidying up. */
       pruneSurplusVersions: bool(true),
+      /** How long an unused file is kept before it is deleted. */
       orphanGraceSeconds: intIn(86_400, 0, 31_536_000),
+      /** Free space automatically when a volume passes its eviction-start threshold. Off means eviction only runs when asked. */
+      autoEviction: bool(true),
+      /** Most bytes one tidy-up (not a space-pressure run) removes. Empty means no limit. */
+      maxEvictionBatchBytes: z.number().int().min(1).nullable().default(null),
+      /** How far ahead the forecast looks. */
+      forecastHorizonDays: intIn(30, 7, 365),
+      /** Hash check ("scrub") budget per maintenance pass, in megabytes. 0 turns the scrub off. */
+      scrubMegabytesPerRun: intIn(64, 0, 4096),
     }),
     logging: z.object({
       level: z.enum(["debug", "info", "warn", "error"]).default("info"),
@@ -211,11 +229,12 @@ export class SettingsService {
    * Applies a partial update to one or more groups. Unknown groups are ignored. Throws a 400 with field
    * errors if any value is invalid; nothing is written in that case.
    */
-  patch(body: unknown, userId?: number): { applied: GroupName[]; disclosure?: string } {
+  patch(body: unknown, userId?: number): { applied: GroupName[]; disclosure?: string; warning?: string } {
     if (!isObj(body)) throw new RequestValidationError([{ in: "body", path: "", message: "Send an object of settings groups." }]);
     const fields: FieldIssue[] = [];
     const next = new Map<GroupName, Json>();
     let disclosure: string | undefined;
+    let warning: string | undefined;
 
     for (const g of GROUP_NAMES) {
       const patch = body[g];
@@ -245,6 +264,19 @@ export class SettingsService {
           }
           if (ack === true) online.acknowledgedAt = new Date(this.o.clock.now()).toISOString();
         }
+      }
+
+      if (g === "storage") {
+        const turnedOn = value.permitImportantEviction === true && previous.permitImportantEviction !== true;
+        if (turnedOn) {
+          warning = P2_PERMIT_WARNING;
+          if (patch.acknowledged !== true) {
+            fields.push({ in: "body", path: "storage.acknowledged", message: "Read the warning and confirm before letting Important content be removed automatically." });
+            continue;
+          }
+          value.permitAcknowledgedAt = new Date(this.o.clock.now()).toISOString();
+        }
+        if (value.permitImportantEviction === false) value.permitAcknowledgedAt = null;
       }
 
       // Secrets: encrypt whatever the patch supplied (null clears).
@@ -281,7 +313,7 @@ export class SettingsService {
       this.cache.set(g, value);
       for (const l of this.listeners) l(g, value, previousValues.get(g)!);
     }
-    return { applied: [...next.keys()], ...(disclosure ? { disclosure } : {}) };
+    return { applied: [...next.keys()], ...(disclosure ? { disclosure } : {}), ...(warning ? { warning } : {}) };
   }
 
   /**

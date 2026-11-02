@@ -1,6 +1,6 @@
 # Data model
 
-Status: proposed schema. Nothing is built. This is the design the Drizzle schema and hand-written SQL migrations will implement (Drizzle for ordinary tables, raw SQL migrations for FTS5 virtual tables, triggers and partial indexes; see [technology-decisions.md](technology-decisions.md#orm-and-migrations)).
+Status: the schema through migration 0012 is built; sections 3.4a to 3.5a, 6.2, 6.3 and 5.6 record where the built schema differs from the proposals below. The tables below are the design that the Drizzle schema and the hand-written SQL migrations implement (Drizzle for ordinary tables, raw SQL migrations for FTS5 virtual tables, triggers and partial indexes; see [technology-decisions.md](technology-decisions.md#orm-and-migrations)).
 
 ## 1. Conventions
 
@@ -410,7 +410,7 @@ RETURNING *;
 
 **`indexing_jobs`**: `id`, `kind` (`rebuild`, `reindex_page`, `optimize`, `vocab_rebuild`, `consistency_check`), `scope_json`, `state`, `docs_total`, `docs_done`, `generation_id` FK NULL, `error`, `created_at`, `finished_at`. Progress for the admin UI; the work itself is `jobs` rows of type `index`.
 
-**`maintenance_runs`**: `id`, `kind` (`verify`, `repair`, `gc`, `backup`, `integrity_check`, `scrub`), `dry_run INTEGER`, `state`, `started_at`, `finished_at`, `report_json` (counts and per-finding detail: orphan blobs, missing blobs, refcount mismatches, dangling references, index drift, stale reservations, temp files, `capturing` versions).
+**`maintenance_runs`** (built in 0012 with a `public_id`): `id`, `kind` (`verify`, `repair`, `gc`, `backup`, `integrity_check`, `scrub`), `dry_run INTEGER`, `state`, `started_at`, `finished_at`, `report_json` (counts and per-finding detail: orphan blobs, missing blobs, refcount mismatches, dangling references, index drift, stale reservations, temp files, `capturing` versions).
 
 ### 3.4a Phase 2 implementation notes (migration 0003_pages_versions)
 
@@ -424,7 +424,7 @@ Differences between the tables above and `packages/db/migrations/0003_pages_vers
 - New table `version_resources`: `(version_id, resource_key, url, asset_id, via_resource_key, role, status)`, written by stage 11, read by the archive listener. `resource_key` is `r` plus 15 hex characters of the SHA-256 of the referenced URL.
 - `pipeline_stage_runs` adds `detail_json`. `links` adds `features_json`.
 - `pages.availability` defaults to `failed` until the first version is finalised.
-- `page_pins`, `page_sources` and `url_exclusions` were not created in Phase 2; `page_sources` and `url_exclusions` arrived with migration 0006 (see 3.3a), `page_pins` is still to come.
+- `page_pins`, `page_sources` and `url_exclusions` were not created in Phase 2; `page_sources` and `url_exclusions` arrived with migration 0006 (see 3.3a), `page_pins` arrived with migration 0012 (5.6).
 - Migration `0004_bookmarks_history` (A-17) creates `bookmarks` and `history_entries`. Differences from the descriptions above: `bookmarks.collection_id` and `bookmarks.zim_package_id` are plain integers until `collections` and `zim_packages` exist; `bookmarks.reference_priority` stores `browser.bookmarkPriority` at creation for Phase 6; one live bookmark per user and URL key (partial unique index); history `public_id` uses the `hs_` prefix; the archive reference of a bookmark is resolved by URL when listed, `page_id` and `version_id` are only the link made at creation. There is no frame-grant table: archive tokens are stateless.
 - Superseded versions (`latest_only`, `last_n`, `period`) are deleted in stage 15 rather than by the retention job; Phase 6 may move this.
 
@@ -540,7 +540,7 @@ A version `V` of page `A` is **eligible for automatic eviction** only if all of 
 4. The class of `V` is `priority(V)` as defined in 5.1. A surplus version (no retaining reference) counts as priority 4. Rules 5 and 6 apply by class.
 5. **P2 only under explicitly permitted policy.** If `priority(V) = 2`, `V` is eligible only if the global `storage_policies.permit_important_eviction = 1`. Default is 0.
 6. **P3 and P4** are eligible (subject to rules 1 to 3).
-7. **Incoming gate.** When eviction frees space for an incoming download of priority `q`, a candidate must satisfy `priority(V) > q`, or `priority(V) = q` with `q` in `{3, 4}`. A P4 download can reclaim only P4. A P3 download can reclaim P3 and P4. A P2 download can reclaim P3 and P4, and P2 only if permitted. A P1 download can reclaim P2 (if permitted), P3 and P4. Maintenance-driven eviction (no incoming job) uses `q = 1` (anything eligible by rules 1 to 6).
+7. **Incoming gate.** (Built as the formula in this rule; see 5.6 for the clarification about P2 downloads.) When eviction frees space for an incoming download of priority `q`, a candidate must satisfy `priority(V) > q`, or `priority(V) = q` with `q` in `{3, 4}`. A P4 download can reclaim only P4. A P3 download can reclaim P3 and P4. A P2 download can reclaim P3 and P4, and P2 only if permitted. A P1 download can reclaim P2 (if permitted), P3 and P4. Maintenance-driven eviction (no incoming job) uses `q = 1` (anything eligible by rules 1 to 6).
 8. **Blob rule.** Even for an eligible version, a blob is removed only when its `refcount` falls to 0 and the grace period has elapsed. Blobs referenced by any non-evicted version, in particular a protected one, are never removed.
 9. **Re-derivation.** The executor recomputes `priority(V)` and rules 2, 3 and 5 from reference rows inside the same transaction that marks `V` as `evicting`. If the result differs from the plan, the version is skipped and logged. Cached priority columns are never the basis for a delete.
 
@@ -576,6 +576,36 @@ Execution (two phases, safe to interrupt): phase A, one transaction per version:
 
 - Usage by priority groups blobs by effective priority (min across non-evicted referencing versions). Usage by source attributes bytes to each referencing source twice (shared bytes appear under every source) and reports `exclusive_bytes` and `shared_bytes` separately; UI totals use the deduplicated blob sum.
 - Forecasts (T-08) are estimates computed from observed bytes per page per source, planned page counts and, for crawl previews, a sampled average; they carry `estimate: true`, a low/high range and an input description. They are never presented as measured values.
+
+### 5.6 Phase 6 as built (migration `0012_intelligent_storage`, tasks T-01 to T-12)
+
+Code: `packages/storage-planner` (pure: priority, retention, eligibility, planner, forecast, explanation; no clock, no I/O, no randomness) and `apps/server/src/storage` (inventory reader, executor, admission, usage, maintenance, service). The API is in [api.md section 10](api.md#10-storage-phase-6-as-built).
+
+**Tables added** (all `STRICT`):
+
+| Table | Columns | Notes |
+|---|---|---|
+| `page_pins` | `id`, `page_id` FK CASCADE, `user_id` FK CASCADE, `priority` 1 to 4, `reason`, `created_at`; UNIQUE `(page_id, user_id)` | A pin retains the latest copy only. A P1 pin has `autoEvict=false`, which vetoes automatic eviction of every copy of the page. |
+| `eviction_runs` | `id`, `public_id` (`evr_`), `trigger` (`admission`, `threshold`, `prune`, `manual`, `recovery`), `state` (`running`, `done`, `failed`, `interrupted`), `incoming_priority`, `bytes_needed`, `volume_id` FK SET NULL, `versions_planned`, `versions_evicted`, `versions_skipped`, `bytes_freed`, `blobs_deleted`, `error`, `started_at`, `finished_at` | One row per execution of the executor. A crash leaves `running`, which recovery turns into `interrupted`. |
+| `storage_audit` | `id`, `kind` (`evicted`, `deleted`), `at`, `run_id` FK SET NULL, `page_id` and `version_id` (plain integers, no foreign keys, so the row outlives the page), `page_url`, `version_no`, `priority` 1 to 4 or NULL, `surplus`, `step`, `reason`, `trigger` (`explicit` for a deletion), `exclusive_bytes`, `refs_json`, `confirmed_protected`, `user_id` | The durable "why". `activity_log` is pruned by the retention window; this is not. Written in the same transaction as the eviction or the deletion. Invariant I-13 reads it. |
+| `maintenance_runs` | as in 3.9 plus `public_id` (`mnt_`) | `report_json` holds the full `MaintenanceRun`. |
+
+**Columns added:** `volume_reservations.priority`, `volume_reservations.source_id` (FK SET NULL), and a unique index on `(volume_id, download_job_id)` (one row per download per volume; a crawl adds to it page by page and gives back page by page).
+
+**Deviations from 5.1 to 5.5:**
+
+- **The incoming gate (5.2 rule 7).** The built rule is the formula: a candidate qualifies when `priority(V) > q`, or `priority(V) = q` with `q` in `{3, 4}`. The sentence in the proposal that a P2 download may reclaim P2 if permitted is not built: an equal-priority P2 download does not evict P2 content. Maintenance eviction (no incoming download) uses `q = 1`.
+- **Phase B uses no grace for what the run just un-referenced.** The proposal had garbage collection delete files after `orphan_grace_seconds`. Under space pressure the space must come back at once, so blobs whose last reference this run removed are deleted straight away (they are unreferenced by the rows the same transaction committed). Blobs that were already orphaned are only touched when they are past `orphan_grace_seconds`, which is re-checked at deletion. After a crash the normal grace applies.
+- **Blob deletion order.** `BlobStore.deleteIfUnreferenced` recounts the references from the rows (never the cached `refcount`), sets the blob row to `quarantined`, deletes the file, then deletes the row, all inside a per-hash gate shared with `put`. A crash between the steps leaves a `quarantined` row with no references, which `finishPendingDeletes` completes at start-up; a row in state `ready` never points at a missing file. `put` takes a re-used zero-reference blob off the collector's list (`zero_since = NULL`) until its reference arrives, and heals a `missing` blob when the same bytes are stored again.
+- **A version being captured holds its original by hash.** Counting references for deletion includes `page_versions.raw_hash` of a `capturing` version, because its asset reference does not exist until stage 2.
+- **Phase A removes everything at once.** In the one transaction the executor sets `evicting`, deletes `asset_references`, `version_resources`, `version_content` and the import document, clears `document_blob_id`, releases the blob counts, deletes assets nothing uses, repoints `pages.latest_version_id` (to the newest remaining copy, or NULL with `availability = 'evicted'`) and writes the audit and log rows. Phase B deletes files, then sets `evicted` and deletes the version's outgoing `links` (recomputing `inbound_count` of the targets). The outbox rows come from the migration 0010 triggers on those statements; the executor writes none by hand.
+- **Policy lives in settings.** The group `storage` is the source of truth (api.md 10.9); the `storage_policies` global row is kept equal to it. Thresholds stay on `volumes`; there are no per-volume policy rows yet.
+- **Usage cache.** `storage_usage_cache` rows are `(volume, dimension, key)` with `bytes` = exclusive + shared, `shared_bytes` and `blob_count`; keys are `P1`..`P4` and `unreferenced`, source public ids (or `unassigned`/`unreferenced`), and blob kinds. The API computes fresh figures; the cache is rewritten by the storage pass.
+- **Cached priorities.** `pages.effective_priority` and `page_versions.retained` are refreshed (`PriorityCache`) when a page is finalised, a source's priority, retention or flag changes, a source is deleted, a bookmark is made or removed, or a pin changes. Nothing that deletes reads them.
+
+**Admission and the byte budget.** Each download reserves room before it writes (`AdmissionService`): the estimate is 1.5 times the median size of the source's last 200 copies (else the archive's, else 1 MiB), cut to the capture caps. The crawl engine also reserves each page's share of `maxBytes` (HB-06) and measures time with the steady clock (HB-04).
+
+**5.7 Volume-to-volume migration (design note, task T-11, post-v1).** `POST /api/storage/volumes/{id}/migrate` answers 501. The intended design, so that nothing built now blocks it: because a blob's path derives from `(volume root, sha256)`, migration is "copy blob files, flip `blobs.volume_id`, delete the source file", blob by blob, each step crash safe in the same way as eviction. (1) Set the source volume `draining` (no new blobs go there). (2) For each blob on it, in batches: pick a target by the placement policy; reserve its bytes there; write to `tmp/`, fsync, rename into place; verify the SHA-256; in one transaction set `volume_id` (the row never points at a missing file because the new file exists before the flip); then delete the old file under the same per-hash gate as `deleteIfUnreferenced`. (3) Record progress in a `volume_migrations` table (source, target, state, bytes done) so a restart resumes; a blob found already at the target is skipped. (4) When the volume holds no blobs it can be removed (the existing refusal rule). Offline source volumes cannot be migrated; a target going offline pauses the job. No change to the reference model, priorities or the planner is needed, because they never look at paths.
 
 ## 6. Search index database (`index.db`)
 

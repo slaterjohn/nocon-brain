@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Archive, ExternalLink, FolderPlus, Search, Trash2 } from "lucide-react";
+import { Archive, ExternalLink, FolderPlus, Search, ShieldQuestion, Trash2 } from "lucide-react";
 import { api, del, errorMessage } from "@/lib/api";
 import type { DeletePreview, Page, PageSummary, SourcePageRow } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
@@ -340,6 +340,9 @@ export function LibraryView() {
                     <div className="flex justify-end gap-1">
                       <Button size="sm" variant="outline" onClick={() => b.openInBrowser(p.url)}>
                         <ExternalLink aria-hidden="true" /> Open<span className="sr-only"> {p.title} in the browser</span>
+                      </Button>
+                      <Button size="sm" variant="ghost" asChild>
+                        <Link href={`/storage/pages/${p.id}`} data-testid="why-kept-link"><ShieldQuestion aria-hidden="true" /> Why kept?<span className="sr-only"> {p.title}</span></Link>
                       </Button>
                       <Button size="sm" variant="ghost" onClick={(e) => { opener.current = e.currentTarget; setTarget(p); }}>
                         <Trash2 aria-hidden="true" /> Delete<span className="sr-only"> {p.title}</span>

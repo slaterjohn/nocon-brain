@@ -13,9 +13,9 @@ export function settingsRoutes(app: FastifyInstance, state: ServerState): void {
   r.patch("/api/settings", { config: { auth: "session" }, schema: { body: z.looseObject({}) } }, async (req) => {
     const svc = state.svc;
     const user = admin(req);
-    const { applied, disclosure } = svc.settings.patch(req.body, user.userId);
+    const { applied, disclosure, warning } = svc.settings.patch(req.body, user.userId);
     svc.activity.write({ level: "info", area: "system", message: `Settings changed: ${applied.join(", ")}`, userId: user.userId });
-    return { ...svc.settings.getAll(), ...(disclosure ? { disclosure } : {}) };
+    return { ...svc.settings.getAll(), ...(disclosure ? { disclosure } : {}), ...(warning ? { warning } : {}) };
   });
 
   r.get("/api/settings/schema", { config: { auth: "session" } }, async () => state.svc.settings.jsonSchema());

@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { LOG_AREAS, LOG_LEVELS, isPublicId } from "@ncb/shared";
@@ -151,16 +153,26 @@ export function systemRoutes(app: FastifyInstance, state: ServerState, o: { sseH
       used += svc.volumes.usedBytes(v.id);
       if (v.state === "online" || v.state === "readonly" || v.state === "draining") available += svc.volumes.toDto(v).availableBytes;
     }
+    const byPriority = () => {
+      const out = { P1: 0, P2: 0, P3: 0, P4: 0 };
+      for (const i of svc.storage.usage.compute("priority").items) out[(i.key === "unreferenced" ? "P4" : i.key) as keyof typeof out] += i.exclusiveBytes + i.sharedBytes;
+      return out;
+    };
     const counts = svc.queue.counts();
     const sum = (state: string) => Object.values(counts).reduce((n, q) => n + ((q as Record<string, number>)[state] ?? 0), 0);
     const lastDone = svc.db.get<{ t: number | null }>("SELECT MAX(finished_at) AS t FROM jobs WHERE state = 'done'")?.t ?? null;
     return {
       // Pages, sources, collections and the index arrive in Phases 2 to 4; their counters are zero until then.
-      pages: { total: 0, archived: 0, partial: 0, evicted: 0 },
-      sources: { total: 0, enabled: 0 },
-      collections: 0,
+      pages: {
+        total: num("SELECT COUNT(*) AS n FROM pages WHERE deleted_at IS NULL"),
+        archived: num("SELECT COUNT(*) AS n FROM pages WHERE deleted_at IS NULL AND availability = 'archived'"),
+        partial: num("SELECT COUNT(*) AS n FROM pages WHERE deleted_at IS NULL AND availability = 'partial'"),
+        evicted: num("SELECT COUNT(*) AS n FROM pages WHERE deleted_at IS NULL AND availability = 'evicted'"),
+      },
+      sources: { total: num("SELECT COUNT(*) AS n FROM sources WHERE deleted_at IS NULL"), enabled: num("SELECT COUNT(*) AS n FROM sources WHERE deleted_at IS NULL AND enabled = 1") },
+      collections: num("SELECT COUNT(*) AS n FROM collections WHERE deleted_at IS NULL"),
       index: svc.search.indexStatusSimple(),
-      storage: { usedBytes: used, availableBytes: available, byPriority: { P1: 0, P2: 0, P3: 0, P4: 0 } },
+      storage: { usedBytes: used, availableBytes: available, byPriority: byPriority() },
       jobs: {
         active: sum("running"),
         queued: sum("queued") + sum("held"),
@@ -170,6 +182,38 @@ export function systemRoutes(app: FastifyInstance, state: ServerState, o: { sseH
       workers: workerStatuses(svc),
       connectivity: svc.connectivity.snapshot().state,
     };
+  });
+
+  // ---- verify and repair (Phase 6, T-10) -----------------------------------------------------------
+
+  r.post(
+    "/api/system/maintenance/verify",
+    { config: { auth: "session" }, schema: { body: z.object({ repair: z.boolean().default(false), checks: z.array(z.string().max(8)).max(14).optional() }).default({ repair: false }) } },
+    async (req) => {
+      admin(req);
+      return state.svc.storage.maintenance.verify({ repair: req.body.repair, checks: req.body.checks });
+    },
+  );
+
+  r.get("/api/system/maintenance/runs", { config: { auth: "session" }, schema: { querystring: z.object({ limit: z.coerce.number().int().min(1).max(200).default(50) }) } }, async (req) =>
+    state.svc.storage.maintenance.list(req.query.limit),
+  );
+
+  r.get("/api/system/maintenance/runs/:id", { config: { auth: "session" }, schema: { params: z.object({ id: z.string().refine((v) => isPublicId(v, "mnt"), "Not a maintenance run id") }) } }, async (req) =>
+    state.svc.storage.maintenance.get(req.params.id),
+  );
+
+  /** `VACUUM INTO` a backup of `main.db` under the data directory. */
+  r.post("/api/system/maintenance/backup", { config: { auth: "session" } }, async (req) => {
+    const svc = state.svc;
+    const user = admin(req);
+    const dir = path.join(svc.config.NCB_DATA_DIR, "backups");
+    fs.mkdirSync(dir, { recursive: true });
+    const stamp = new Date(svc.clock.now()).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+    const dest = path.join(dir, `main-${stamp}.db`);
+    svc.db.backupTo(dest);
+    svc.activity.write({ level: "info", area: "storage", message: "Database backup written", details: { file: path.basename(dest) }, userId: user.userId });
+    return { file: path.basename(dest), sizeBytes: fs.statSync(dest).size };
   });
 
   r.get("/api/system/logs", { config: { auth: "session" }, schema: { querystring: logsQuery } }, async (req) => {

@@ -5,7 +5,8 @@ import {
 import { backoffDelayMs, type Db, type Job, type JobQueue } from "@ncb/db";
 import { FetchError, type RobotsService } from "@ncb/fetch";
 import type { Clock } from "@ncb/shared";
-import { AppError, newId } from "@ncb/shared";
+import { AppError, newId, steadyClock } from "@ncb/shared";
+import { AdmissionDenied, type AdmissionTicket } from "../storage/admission.js";
 import { PermanentJobError } from "../runtime/protocol.js";
 import { RetryJobLater, RobotsBlocked, type FetchStoreOutcome, type MainHandler, type PipelineService } from "../pipeline/service.js";
 import { DEFAULT_CAPS, type CaptureOptions } from "../pipeline/types.js";
@@ -113,6 +114,8 @@ const causedBy = <T extends Error>(e: unknown, C: new (...a: never[]) => T): T |
 
 const hostOf = (u: string) => new URL(u).hostname.toLowerCase();
 const SEED_SCORE = 1000;
+/** Below this many bytes of budget left a crawl counts as full (a page is never smaller than a few KiB). */
+const MIN_PAGE_BYTES = 1024;
 
 /**
  * The crawl engine (tasks C-01 to C-05). `startCrawl` creates the rows; the `fetch` jobs it enqueues are claimed by the
@@ -123,8 +126,17 @@ export class CrawlService {
   private readonly cache = new Map<number, Loaded>();
   private readonly aborts = new Map<number, Set<AbortController>>();
   private sweeper?: NodeJS.Timeout;
+  /** Bytes reserved by the pages in flight, per crawl: the budget a new page may still use (HB-06). */
+  private readonly inFlightBytes = new Map<number, number>();
+  private readonly d: CrawlServiceDeps;
 
-  constructor(private readonly d: CrawlServiceDeps) {}
+  /**
+   * Every time the engine reads or writes (deadlines, `started_at`, pause and resume) goes through the steady clock (HB-04): a
+   * wall-clock jump, such as a Raspberry Pi without a clock getting its time from NTP, can no longer end a crawl early or extend it.
+   */
+  constructor(d: CrawlServiceDeps) {
+    this.d = { ...d, clock: steadyClock(d.clock) };
+  }
 
   /** Main-thread handlers for the runner: frontier `fetch` jobs go to the engine, plain captures to the pipeline. */
   mainHandlers(base: Record<string, MainHandler>): Record<string, MainHandler> {
@@ -443,9 +455,31 @@ export class CrawlService {
     return "ok";
   }
 
-  private captureOptions(c: Loaded, job?: Job): CaptureOptions {
+  /**
+   * HB-06: how many bytes the next page may use, taken from what is left of `maxBytes` after the pages already in flight have
+   * reserved theirs. The per-document cap and the asset cap are cut to it (the assets get what the document leaves, once its size is
+   * known), so a crawl can no longer overshoot its budget by a page or more. `null` means nothing useful is left.
+   */
+  private reservePage(c: Loaded): number | null {
     const cfg = c.config;
-    const remaining = Math.max(64 * 1024, cfg.limits.maxBytes - c.row.bytes_fetched);
+    const max = c.row.max_bytes ?? cfg.limits.maxBytes;
+    const caps = { ...DEFAULT_CAPS, ...(cfg.capture?.caps ?? {}) };
+    const remaining = max - c.row.bytes_fetched - (this.inFlightBytes.get(c.row.id) ?? 0);
+    const want = Math.min(remaining, caps.maxDocumentBytes + caps.maxTotalAssetBytes);
+    if (want < MIN_PAGE_BYTES) return null;
+    this.inFlightBytes.set(c.row.id, (this.inFlightBytes.get(c.row.id) ?? 0) + want);
+    return want;
+  }
+
+  private releasePage(c: Loaded, reserved: number): void {
+    const left = (this.inFlightBytes.get(c.row.id) ?? 0) - reserved;
+    if (left > 0) this.inFlightBytes.set(c.row.id, left);
+    else this.inFlightBytes.delete(c.row.id);
+  }
+
+  private captureOptions(c: Loaded, job?: Job, budget?: number): CaptureOptions {
+    const cfg = c.config;
+    const remaining = budget ?? Math.max(MIN_PAGE_BYTES, cfg.limits.maxBytes - c.row.bytes_fetched);
     const caps = { ...(cfg.capture?.caps ?? {}), assetConcurrency: cfg.politeness.assetConcurrency } as Record<string, number>;
     caps.maxDocumentBytes = Math.min(caps.maxDocumentBytes ?? DEFAULT_CAPS.maxDocumentBytes, remaining);
     caps.maxTotalAssetBytes = Math.min(caps.maxTotalAssetBytes ?? DEFAULT_CAPS.maxTotalAssetBytes, remaining);
@@ -491,7 +525,21 @@ export class CrawlService {
     set.add(ctrl);
     const signal = AbortSignal.any([runnerSignal, ctrl.signal]);
     const last = job.attempts >= job.maxAttempts;
-    const opts = this.captureOptions(c, job);
+    // HB-06: reserve the page's share of the byte budget before fetching.
+    const budget = this.reservePage(c);
+    if (budget === null) {
+      const others = this.inFlightBytes.get(c.row.id) ?? 0;
+      if (others === 0) {
+        this.finish(c.row.id, "max_bytes");
+        return;
+      }
+      // Pages in flight still hold the rest of the budget: wait for them to settle, as the page limit does.
+      this.d.queue.release(job.id, "main");
+      this.d.db.run("UPDATE jobs SET run_at = run_at + 200 WHERE id = ?", [job.id]);
+      return;
+    }
+    const opts = this.captureOptions(c, job, budget);
+    let ticket: AdmissionTicket | undefined;
     try {
       // A previous run may have stored the document and died before the stages finished: pick that version up.
       const pending = db.get<{ id: number; final_url: string; http_status: number; raw_bytes: number }>(
@@ -500,6 +548,19 @@ export class CrawlService {
       let out: FetchStoreOutcome;
       if (pending) out = { kind: "stored", versionId: pending.id, status: pending.http_status, finalUrl: pending.final_url, rawBytes: pending.raw_bytes, redirects: 0 };
       else {
+        // Storage admission (Phase 6, T-07): reserve room for this page, evict what the priority rules allow, or stop.
+        try {
+          ticket = await this.d.pipeline.admitForCrawl(c.row.download_job_id, opts);
+        } catch (e) {
+          if (e instanceof AdmissionDenied) {
+            if (e.code === "throttled" || e.code === "volume_unavailable") {
+              this.d.queue.release(job.id, "main");
+              this.d.db.run("UPDATE jobs SET run_at = ? WHERE id = ?", [this.d.clock.now() + (e.retryAfterMs ?? 30_000), job.id]);
+            } else this.finish(c.row.id, e.code === "source_budget" ? "source_budget" : "volume_full");
+            return;
+          }
+          throw e;
+        }
         out = await this.d.pipeline.fetchForCrawl({
           downloadJobId: c.row.download_job_id, url: job.url, options: opts, signal, beforeHop: (u) => this.beforeHop(c, job, payload, u),
         });
@@ -513,6 +574,8 @@ export class CrawlService {
         return;
       }
       this.tombstoneFinalUrl(c, job, out.finalUrl);
+      // The assets get what is left of this page's share once the document's size is known (HB-06).
+      if (out.kind === "stored" && opts.caps) opts.caps.maxTotalAssetBytes = Math.min(opts.caps.maxTotalAssetBytes ?? budget, Math.max(0, budget - out.rawBytes));
 
       let linkVersion: number | null = null;
       let added = 0;
@@ -526,7 +589,7 @@ export class CrawlService {
         if (run.kind === "done") {
           linkVersion = out.versionId;
           const v = db.get<{ bytes: number; dup: number }>(
-            `SELECT COALESCE(raw_bytes, 0) + COALESCE(total_bytes, 0) AS bytes,
+            `SELECT MAX(COALESCE(raw_bytes, 0), COALESCE(total_bytes, 0)) AS bytes,
                     (duplicate_of_version_id IS NOT NULL OR EXISTS (SELECT 1 FROM page_versions o WHERE o.download_job_id = page_versions.download_job_id
                        AND o.content_hash = page_versions.content_hash AND o.id <> page_versions.id AND o.status IN ('ready','partial'))) AS dup
              FROM page_versions WHERE id = ?`, [out.versionId])!;
@@ -545,9 +608,21 @@ export class CrawlService {
     } catch (e) {
       if (runnerSignal.aborted) throw e; // shutdown: the runner puts the job back
       if (ctrl.signal.aborted) return; // cancelled
+      // HB-06: a document that is too big for what was left of the byte budget is the budget running out, not a bad page.
+      const fe = causedBy(e, FetchError);
+      if (fe && (fe.code === "size_cap" || fe.code === "content_length_exceeded") && budget < (c.config.capture?.caps?.maxDocumentBytes ?? DEFAULT_CAPS.maxDocumentBytes)) {
+        if ((this.inFlightBytes.get(c.row.id) ?? 0) > budget) {
+          // Other pages in flight hold part of the budget: look again when they have settled.
+          this.d.queue.release(job.id, "main");
+          this.d.db.run("UPDATE jobs SET run_at = run_at + 200 WHERE id = ?", [job.id]);
+        } else this.finish(c.row.id, "max_bytes");
+        return;
+      }
       await this.handleError(c, job, e, last);
     } finally {
       set.delete(ctrl);
+      this.releasePage(c, budget);
+      this.d.pipeline.releaseAdmission(ticket);
     }
   }
 

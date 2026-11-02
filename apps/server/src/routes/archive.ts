@@ -89,7 +89,7 @@ export function archiveRoutes(app: FastifyInstance, state: ServerState, o: { pro
       const lib = state.svc.library;
       admin(req);
       if (req.query.dryRun) return lib.preview(req.params.id);
-      return lib.deletePage(req.params.id, { confirmProtected: req.query.confirmProtected, exclude: req.query.exclude });
+      return lib.deletePage(req.params.id, { confirmProtected: req.query.confirmProtected, exclude: req.query.exclude, userId: admin(req).userId });
     },
   );
 

@@ -12,6 +12,7 @@ import { captureEvent, publishCapture } from "./progress.js";
 import { sha256Hex } from "./store.js";
 import { linkPageSource } from "../sources/references.js";
 import { pageByKey } from "./stages/links.js";
+import { AdmissionDenied, type AdmissionService, type AdmissionTicket } from "../storage/admission.js";
 import {
   DEFAULT_CAPS, type CaptureOptions, type FetchJobPayload, type PipelineDeps, type PipelineFetcher, type PipelineFetchResult,
 } from "./types.js";
@@ -78,6 +79,8 @@ export interface PipelineServiceOptions {
   robots?: Pick<RobotsService, "check">;
   /** Applied to every key the pipeline computes. Default `strip_tracking`. */
   queryPolicy?: "keep_all" | "strip_tracking";
+  /** Admission control (Phase 6, T-07). Without it a download is never refused for space here (tests, tools). */
+  admission?: Pick<AdmissionService, "admit" | "release" | "releaseJob" | "estimateBytes">;
 }
 
 export function createPipelineDeps(d: Omit<PipelineDeps, "urlKey" | "newId" | "sleep" | "maxStageAttempts"> & Partial<Pick<PipelineDeps, "sleep" | "maxStageAttempts">> & { queryPolicy?: "keep_all" | "strip_tracking" }): PipelineDeps {
@@ -301,6 +304,8 @@ export class PipelineService {
     if (!row) return; // discarded earlier
     if (row.status === "ready" || row.status === "partial") return;
     const outcome = await this.runVersion(job.versionId, payload.options ?? {}, signal);
+    // The bytes the capture reserved now exist on disk (and count as usage): give the reservation back.
+    if (job.downloadJobId != null) this.o.admission?.releaseJob(job.downloadJobId);
     if (outcome.kind === "failed") throw new PermanentJobError(`Stage ${outcome.stage} failed: ${outcome.message}`);
   }
 
@@ -322,6 +327,7 @@ export class PipelineService {
     if (state === "running") this.d.db.run("UPDATE download_jobs SET state = 'running', started_at = COALESCE(started_at, ?) WHERE id = ? AND state IN ('queued','running')", [now, id]);
     else if (state === "completed") this.d.db.run("UPDATE download_jobs SET state = 'completed', finished_at = ? WHERE id = ? AND state <> 'cancelled'", [now, id]);
     else this.d.db.run("UPDATE download_jobs SET state = 'failed', failure_code = ?, failure_message = ?, finished_at = ? WHERE id = ? AND state <> 'cancelled'", [extra.code ?? "internal", (extra.message ?? "").slice(0, 500), now, id]);
+    if (state !== "running") this.o.admission?.releaseJob(id);
     const logged = { running: "Started: fetching the page", completed: "Finished", failed: `Failed: ${extra.message ?? "the page could not be saved"}` }[state];
     if (state !== "running" || this.d.db.get("SELECT 1 AS x FROM activity_log WHERE download_job_id = ? LIMIT 1", [id]) === undefined) {
       this.d.activity.write({ level: state === "failed" ? "error" : "info", area: "pipeline", message: logged, downloadJobId: id, details: state === "failed" ? { code: extra.code ?? "internal" } : undefined });
@@ -347,6 +353,16 @@ export class PipelineService {
     try {
       out = await this.fetchAndStore(p, signal, (u) => this.beforeHop(u, p, opts), true);
     } catch (e) {
+      if (e instanceof AdmissionDenied) {
+        if (e.code === "throttled" || e.code === "volume_unavailable") {
+          // Waiting costs no attempt: put the job back and look again later.
+          this.d.queue.release(job.id, "main");
+          this.d.db.run("UPDATE jobs SET run_at = ? WHERE id = ?", [this.d.clock.now() + (e.retryAfterMs ?? 30_000), job.id]);
+          return;
+        }
+        this.markDownload(p.downloadJobId, "failed", { code: e.code === "source_budget" ? "limit_reached" : "disk_full", message: e.message });
+        throw new PermanentJobError(e.message);
+      }
       const code = failureCodeFor(e);
       const msg = e instanceof Error ? e.message : String(e);
       if (e instanceof FetchError && e.code === "rate_limited") {
@@ -386,6 +402,10 @@ export class PipelineService {
   ): Promise<FetchStoreOutcome> {
     const opts = p.options ?? {};
     const d = this.d;
+    // Admission control for a single capture: room is reserved (and made, within the priority rules) before anything is fetched.
+    // A denial is an `AdmissionDenied` that `handleFetch` turns into a wait or a failure. A crawl admits each page itself
+    // (`admitForCrawl`) because it also has to give the reservation back.
+    if (enqueueProcess && this.o.admission) await this.admitCapture(p.downloadJobId, opts, false);
     const key = d.urlKey(p.url);
     const page = pageByKey({ deps: d }, key);
     const versioning = parseVersioning(opts.versioning);
@@ -458,6 +478,30 @@ export class PipelineService {
       return vid;
     });
     return { kind: "stored", versionId, status: res.status, finalUrl: res.finalUrl, rawBytes: body.length, redirects: res.redirects?.length ?? 0 };
+  }
+
+  /** Expected bytes of one capture for the reservation: the source's average page, within the capture caps. */
+  private admissionBytes(opts: CaptureOptions): number | undefined {
+    if (!this.o.admission) return undefined;
+    const caps = { ...DEFAULT_CAPS, ...opts.caps };
+    return this.o.admission.estimateBytes(opts.sourceId ?? null, caps.maxDocumentBytes + caps.maxTotalAssetBytes);
+  }
+
+  private admitCapture(downloadJobId: number, opts: CaptureOptions, additive: boolean): Promise<AdmissionTicket> {
+    const human = opts.userInitiated ?? (opts.requestedBy ?? "user") === "user";
+    return this.o.admission!.admit({
+      downloadJobId, priority: opts.priority ?? 3, sourceId: opts.sourceId ?? null, additive, userInitiated: human, bytes: this.admissionBytes(opts),
+    });
+  }
+
+  /** The crawl engine asks for room for one page. Resolves to a ticket to give back with `releaseAdmission`, or undefined with no admission control. */
+  async admitForCrawl(downloadJobId: number, opts: CaptureOptions): Promise<AdmissionTicket | undefined> {
+    return this.o.admission ? this.admitCapture(downloadJobId, opts, true) : undefined;
+  }
+
+  /** Gives back what a crawl page reserved (the crawl calls this when the page is stored). */
+  releaseAdmission(t: AdmissionTicket | undefined): void {
+    if (t) this.o.admission?.release(t);
   }
 
   private async beforeHop(url: string, p: FetchJobPayload, opts: CaptureOptions): Promise<void> {

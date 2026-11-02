@@ -57,7 +57,9 @@ describe("A-17 bookmarks", () => {
     const saved = await saveAndWait(t, url);
     await t.api("POST", "/api/bookmarks", { url });
     expect((await t.api("DELETE", `/api/archive/pages/${saved.pageId}?dryRun=true`)).body.references.bookmarks).toBe(1);
-    expect((await t.api("DELETE", `/api/archive/pages/${saved.pageId}`)).status).toBe(200);
+    // A bookmark references the page at Important (P2), so deleting it on purpose needs a confirmation (Phase 6, data-model 5.2).
+    expect((await t.api("DELETE", `/api/archive/pages/${saved.pageId}`)).status).toBe(409);
+    expect((await t.api("DELETE", `/api/archive/pages/${saved.pageId}?confirmProtected=true`)).status).toBe(200);
     const list = await t.api("GET", "/api/bookmarks");
     expect(list.body.items[0]).toMatchObject({ originalUrl: url });
     expect(list.body.items[0].archive).toBeUndefined();

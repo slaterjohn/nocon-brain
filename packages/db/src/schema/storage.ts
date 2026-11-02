@@ -56,8 +56,10 @@ export const volumeReservations = sqliteTable(
     writtenBytes: integer("written_bytes").notNull().default(0),
     createdAt: integer("created_at").notNull(),
     expiresAt: integer("expires_at").notNull(),
+    priority: integer("priority"),
+    sourceId: integer("source_id"),
   },
-  (t) => [index("volume_reservations_volume_idx").on(t.volumeId)],
+  (t) => [index("volume_reservations_volume_idx").on(t.volumeId), uniqueIndex("volume_reservations_job_uq").on(t.volumeId, t.downloadJobId)],
 );
 
 export const blobs = sqliteTable(

@@ -7,3 +7,4 @@ export * from "./browsing.js";
 export * from "./sources.js";
 export * from "./imports.js";
 export * from "./search.js";
+export * from "./phase6.js";

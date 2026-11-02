@@ -5,7 +5,13 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const items = [
-  { href: "/storage", label: "Overview" },
+  { href: "/storage", label: "Settings" },
+  { href: "/storage/space", label: "Space" },
+  { href: "/storage/volumes", label: "Volumes" },
+  { href: "/storage/policy", label: "Policy" },
+  { href: "/storage/eviction", label: "Removal preview" },
+  { href: "/storage/maintenance", label: "Check and repair" },
+  { href: "/storage/audit", label: "Removal record" },
   { href: "/storage/dashboard", label: "Dashboard" },
   { href: "/storage/activity", label: "Activity log" },
   { href: "/storage/online-search", label: "Online search" },
@@ -18,7 +24,7 @@ export function StorageNav() {
     <nav aria-label="Storage and settings sections" className="mb-6 border-b">
       <ul className="-mb-px flex gap-1 overflow-x-auto">
         {items.map((i) => {
-          const active = pathname === i.href;
+          const active = pathname === i.href || (i.href === "/storage/audit" && pathname.startsWith("/storage/pages/"));
           return (
             <li key={i.href}>
               <Link

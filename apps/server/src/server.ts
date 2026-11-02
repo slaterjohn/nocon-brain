@@ -53,6 +53,7 @@ import { EventBus } from "./services/events.js";
 import { ConnectivityGuardedFetcher, isNetworkError, NotImplementedFetcher, type Fetcher } from "./services/fetcher.js";
 import { SettingsService } from "./services/settings.js";
 import { GIB, VolumeService, type VolumeProbes } from "./services/volumes.js";
+import { StorageService } from "./storage/service.js";
 
 export { buildApp } from "./app.js";
 export * from "./archive/index.js";
@@ -77,6 +78,9 @@ export { CollectionService } from "./collections/service.js";
 export { ScheduleService } from "./schedule/service.js";
 export { Scheduler } from "./schedule/scheduler.js";
 export * from "./sources/crawl-port.js";
+export { StorageService } from "./storage/service.js";
+export type { FaultHook, FaultPoint } from "./storage/executor.js";
+export { AdmissionDenied } from "./storage/admission.js";
 export { linkPageSource, sourceReferences } from "./sources/references.js";
 export { collectionReferences } from "./collections/references.js";
 export { ImportService } from "./imports/service.js";
@@ -99,6 +103,10 @@ export interface ServerOptions extends BuildOptions {
   probe?: ProbeFn;
   volumeProbes?: VolumeProbes;
   blobFault?: BlobStoreOptions["faultBeforeRename"];
+  /** Fault injection for the eviction executor (tests): called at every step; throw, or kill the process, to simulate a crash. */
+  storageFault?: import("./storage/executor.js").FaultHook;
+  /** How often the storage pass runs (evict above the threshold, prune, collect garbage, scrub). Default 5 minutes; 0 turns the timer off (tests call `svc.storage.tick()`). */
+  storageTickMs?: number;
   runnerPollMs?: number;
   leaseMs?: number;
   /** Replaces the real guarded fetcher for captures (tests). */
@@ -237,6 +245,20 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         probes: opts.volumeProbes,
       });
       const blobs = new BlobStore({ db, clock, volumes, faultBeforeRename: opts.blobFault });
+      let searchRefForStorage: SearchService | undefined;
+      let storageRef: StorageService | undefined;
+      const storage = new StorageService({
+        db, clock, volumes, blobs, settings, activity, fault: opts.storageFault, log: app.log,
+        indexCheck: async (repair) => {
+          if (!searchRefForStorage) throw new Error("The search index is not running.");
+          return searchRefForStorage.check(repair);
+        },
+        onPageChanged: () => searchRefForStorage?.wake(),
+        onThrottleChange: (id) => svc?.downloads.touch(id),
+      });
+      storageRef = storage;
+      settings.onChange((group) => { if (group === "storage") storage.mirrorPolicy(); });
+      storage.mirrorPolicy();
       const connectivity = new ConnectivityService({ clock, settings, events, probe: opts.probe });
       const fetcher = new ConnectivityGuardedFetcher(opts.fetcher ?? new NotImplementedFetcher(), connectivity);
 
@@ -309,7 +331,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       let render: RenderService | undefined;
       const deps = createPipelineDeps({
         db, clock, blobs, fetcher: captureFetcher, extract: extractClient, activity, events, queue, log: app.log,
-        faults: opts.pipelineFaults, stageOverrides: opts.stageOverrides, onPageChanged: (id) => { collections.onPageChanged(id); searchRef?.wake(); },
+        faults: opts.pipelineFaults, stageOverrides: opts.stageOverrides, onPageChanged: (id) => { collections.onPageChanged(id); storageRef?.priority.recomputePage(id); searchRef?.wake(); },
         onVersionDone: (id, o) => render?.consider(id, o),
       });
       render = new RenderService({
@@ -339,6 +361,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         fetcher: captureFetcher,
         robots,
         deps,
+        admission: storage.admission,
       });
 
       const store: CaptureStore = opts.archiveStore ?? new SqliteCaptureStore({
@@ -382,6 +405,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         volumeId: (pid) => db.get<{ id: number }>("SELECT id FROM volumes WHERE public_id = ?", [pid])?.id,
         deletePage: (pid) => { libraryRef?.deletePage(pid, { confirmProtected: true, exclude: true }); },
         onCollectionsChanged: (id) => collections.backfillSource(id),
+        onReferencesChanged: (ids) => { storage.priority.recomputePages(ids); storage.usage.invalidate(); },
         refresh, previewRobots: robots,
         freeBytes: () => {
           const room = volumes.list().filter((v) => v.state === "online").map((v) => Math.max(0, (v.statFree ?? 0) - v.reserveFreeBytes));
@@ -393,7 +417,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       const imports = new ImportService({ deps, maxBytes: config.NCB_IMPORT_MAX_MB * 1024 * 1024, importsSourceId: () => sources.systemId("imports") });
       collections.ensureFavourites();
       const browser = new BrowserService({ db, clock, config, settings, connectivity, pipeline, archive, history, head, quickSavesSourceId: () => sources.systemId("quick_saves") });
-      const bookmarks = new BookmarksService({ db, clock, settings, pipeline });
+      const bookmarks = new BookmarksService({ db, clock, settings, pipeline, onReferencesChanged: (ids) => { storage.priority.recomputePages(ids); storage.usage.invalidate(); } });
       const library = new LibraryService({ db, clock, pipeline, browser, store, blobs, activity, collections });
       libraryRef = library;
       // Captures queued while offline wait, held, until the server is no longer known to be offline (the connection is seen
@@ -424,6 +448,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         db, clock, settings, activity, dataDir: config.NCB_DATA_DIR, log: app.log, isOffline: () => connectivity.forced, ...(opts.search ?? {}),
       });
       searchRef = search;
+      searchRefForStorage = search;
       collections.savedSearches = { ref: (id) => search.savedSearchRef(id), link: (sid, cid) => search.linkCollection(sid, cid) };
       search.collectionRefresh = () => search.refreshAllCollections();
       // Combined search (Phase 5): providers, the runner, sessions, coverage and saved-search sources.
@@ -445,13 +470,13 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       const savedSources = new SavedSearchSources({ db, clock, providers, runner: providerRunner, sources, pipeline, activity, isOffline: netOffline });
       sources.attachSavedSearchRunner((src, o) => savedSources.run(src, o));
       const downloads = new DownloadService({
-        db, clock, queue, events, activity, crawl, pipeline, refresh, sources, scheduler, schedules, connectivity, governor: limits, settings,
+        db, clock, queue, events, activity, crawl, pipeline, refresh, sources, scheduler, schedules, connectivity, governor: limits, settings, admission: storage.admission,
         workers: () => workerStatuses(svc!),
         buildCrawl: (a) => crawlConfigForDownload(a, settings.internal("resources").profile),
       });
 
       svc = {
-        config, clock, main, db, activity, auth, settings, volumes, blobs, connectivity, fetcher, events, queue, runner, pipeline, imports, render, crawl,
+        config, clock, main, db, activity, auth, settings, volumes, blobs, storage, connectivity, fetcher, events, queue, runner, pipeline, imports, render, crawl,
         archive, browser, bookmarks, history, library, sources, collections, schedules, scheduler, downloads, refresh, limits, search, providers, providerRunner, coverage, savedSources, throttle: new LoginThrottle(clock), guestMatcher,
       };
       state.attach(svc);
@@ -459,6 +484,9 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       // Startup housekeeping: every volume's leftovers from a crash are removed before any writer runs.
       await volumes.refreshAll();
       const cleaned = await blobs.cleanTmpAll(0);
+      // Finish any eviction a crash interrupted before anything can write: versions left `evicting`, files marked for deletion.
+      await storage.executor.recover();
+      storage.admission.releaseAll();
       if (cleaned > 0) activity.write({ level: "info", area: "storage", message: `Removed ${cleaned} unfinished temporary file${cleaned === 1 ? "" : "s"} left by a crash` });
       activity.prune(settings.internal("logging").retentionDays);
       auth.sweepExpired();
@@ -468,6 +496,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       crawl.start(); // finishes crawls whose last job ended before a crash; watches deadlines
       downloads.start(); // closes downloads whose work all ended; publishes download.update
       limits.start(); // CPU and disk guards
+      storage.start(opts.storageTickMs ?? 300_000); // evict above the threshold, prune, collect garbage, scrub
       jumpTimer = setInterval(() => svc?.auth.jumps.check(), 1000);
       jumpTimer.unref();
       maintenanceTimer = setInterval(() => {
@@ -498,6 +527,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         svc?.crawl.stop();
         svc?.downloads.stop();
         svc?.limits.stop();
+        svc?.storage.stop();
         await renderProxy?.close();
         // Stop claiming, let running stages reach a checkpoint, put the rest back on the queue.
         const drain = svc ? await svc.runner.stop(graceMs) : undefined;
@@ -536,3 +566,5 @@ function renderConcurrency(settings: SettingsService, fallback: number): number 
   }
   return fallback;
 }
+export { MaintenanceService } from "./storage/maintenance.js";
+export type { MaintenanceRun } from "./storage/maintenance.js";

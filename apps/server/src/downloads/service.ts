@@ -14,7 +14,8 @@ import type { EventBus } from "../services/events.js";
 import type { SettingsService } from "../services/settings.js";
 import type { SourceService } from "../sources/service.js";
 import { statusToApi } from "../schedule/windows.js";
-import { failureFor, PAUSE_MESSAGES, STOP_MESSAGES, type PauseReason } from "./failures.js";
+import { failureFor, PAUSE_MESSAGES, STOP_MESSAGES, WAIT_MESSAGES, type PauseReason } from "./failures.js";
+import type { AdmissionService } from "../storage/admission.js";
 import { ACTIONS, allowed, RETRYABLE_KINDS, type DownloadAction, type DownloadState } from "./state.js";
 
 const KINDS = ["capture", "explore", "mirror", "refresh", "wikipedia", "zim_import", "import", "discovery", "coverage"] as const;
@@ -46,6 +47,8 @@ export interface DownloadDto {
   progress: { pagesDone: number; pagesFailed: number; pagesDiscovered?: number; bytesDone: number; percent?: number; label?: string; etaSeconds?: number };
   estimate?: DownloadEstimate;
   pause?: { reason: PauseReason; automatic: boolean; message: string };
+  /** Why a queued or running download is not making progress although it is not paused. */
+  wait?: { reason: "throttled"; message: string };
   failure?: { code: string; message: string; retryable: boolean; hint: string };
   stop?: { reason: string; message: string };
   summary?: { checked: number; unchanged: number; changed: number; gone: number; failed: number };
@@ -88,6 +91,8 @@ export interface DownloadServiceDeps {
   connectivity: Pick<ConnectivityService, "snapshot">;
   governor: ResourceGovernor;
   settings: Pick<SettingsService, "internal">;
+  /** Storage admission: tells which downloads wait because Opportunistic downloads are throttled. */
+  admission?: Pick<AdmissionService, "isThrottled" | "throttledCount">;
   workers: () => unknown[];
   /** Builds a crawl config for an `explore` or `mirror` download made without a source. */
   buildCrawl: (a: { url: string; mode: "explore" | "mirror"; priority: PriorityNumber; config: unknown }) => Parameters<CrawlService["startCrawl"]>[0];
@@ -170,8 +175,8 @@ export class DownloadService implements DiskGuardTarget {
   }
 
   private publishQueue(force: boolean): void {
-    const payload = { counts: this.counts(), throttle: this.d.governor.throttleStatus(), disk: this.d.governor.diskStatus() };
-    const key = JSON.stringify({ c: payload.counts, t: [payload.throttle.active, payload.throttle.reason], d: [payload.disk.paused, payload.disk.pausedDownloads] });
+    const payload = { counts: this.counts(), throttle: this.d.governor.throttleStatus(), disk: this.d.governor.diskStatus(), storageThrottle: { downloads: this.d.admission?.throttledCount() ?? 0 } };
+    const key = JSON.stringify({ s: payload.storageThrottle.downloads, c: payload.counts, t: [payload.throttle.active, payload.throttle.reason], d: [payload.disk.paused, payload.disk.pausedDownloads] });
     if (!force && key === this.lastQueueKey) return;
     this.lastQueueKey = key;
     this.d.events.publish("download.queue", payload);
@@ -284,6 +289,7 @@ export class DownloadService implements DiskGuardTarget {
       const reason: PauseReason = offlineHold ? "offline" : r.paused_by_limit === 1 ? "volume_full" : r.paused_by_window === 1 ? "window_closed" : "user";
       pause = { reason, automatic: reason !== "user", message: PAUSE_MESSAGES[reason] };
     }
+    const wait: DownloadDto["wait"] = (state === "queued" || state === "running") && this.d.admission?.isThrottled(r.id) ? { reason: "throttled", message: WAIT_MESSAGES.throttled } : undefined;
     const failure = state === "failed" ? failureFor(r.failure_code, r.failure_message) : undefined;
 
     const controls = this.controlsFor(state, r.kind, pause?.reason);
@@ -295,7 +301,7 @@ export class DownloadService implements DiskGuardTarget {
         pagesDone, pagesFailed, ...(discovered !== undefined ? { pagesDiscovered: discovered } : {}), bytesDone,
         ...(percent !== undefined ? { percent } : {}), ...(label ? { label } : {}), ...(etaSeconds !== undefined ? { etaSeconds } : {}),
       },
-      ...(estimate ? { estimate } : {}), ...(pause ? { pause } : {}), ...(failure ? { failure } : {}),
+      ...(estimate ? { estimate } : {}), ...(pause ? { pause } : {}), ...(wait ? { wait } : {}), ...(failure ? { failure } : {}),
       ...(r.stop_reason ? { stop: { reason: r.stop_reason, message: STOP_MESSAGES[r.stop_reason] ?? r.stop_reason } } : {}),
       ...(summary ? { summary } : {}),
       attempts: r.attempts, controls,
@@ -434,7 +440,7 @@ export class DownloadService implements DiskGuardTarget {
       counts: this.counts(), running: this.toDtos(running, false), workers: this.d.workers(),
       window: { open: win.open, ...(win.opensAt ? { opensAt: win.opensAt } : {}), ...(win.closesAt ? { closesAt: win.closesAt } : {}) },
       limits: this.d.governor.limits(), throttle: this.d.governor.throttleStatus(), disk: this.d.governor.diskStatus(),
-      connectivity: this.d.connectivity.snapshot().state, ...(next ? { nextScheduled: next } : {}),
+      connectivity: this.d.connectivity.snapshot().state, storageThrottle: { downloads: this.d.admission?.throttledCount() ?? 0 }, ...(next ? { nextScheduled: next } : {}),
     };
   }
 

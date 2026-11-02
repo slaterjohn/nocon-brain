@@ -187,7 +187,7 @@ export class LibraryService {
    * else uses. Bookmarks that pointed here lose the archive reference but keep the address. The address is added to `url_exclusions` (unless
    * `exclude` is false), so crawls skip it; saving it by hand still works.
    */
-  deletePage(idOrPublic: string, opts: { confirmProtected?: boolean; exclude?: boolean } = {}): { deletedVersions: number } {
+  deletePage(idOrPublic: string, opts: { confirmProtected?: boolean; exclude?: boolean; userId?: number } = {}): { deletedVersions: number } {
     const { db, blobs, pipeline, activity } = this.o;
     const p = pipeline.getPage(idOrPublic);
     if (!p) throw new AppError("not_found", "That page is not in the archive.");
@@ -197,7 +197,17 @@ export class LibraryService {
     }
     const count = db.transaction(() => {
       const targets = db.all<{ to_page_id: number }>("SELECT DISTINCT to_page_id FROM links WHERE from_page_id = ? AND to_page_id IS NOT NULL AND to_page_id <> ?", [p.id, p.id]);
-      const versionIds = db.all<{ id: number }>("SELECT id FROM page_versions WHERE page_id = ?", [p.id]);
+      const versionIds = db.all<{ id: number; version_no: number }>("SELECT id, version_no FROM page_versions WHERE page_id = ?", [p.id]);
+      // Explicit deletion is not eviction: it is recorded as its own kind, with who confirmed it, so "why is this gone?" has an answer
+      // and the Phase 6 invariant check (I-13) can tell the two apart.
+      const now = this.o.clock.now();
+      const priority = p.effectivePriority ?? null;
+      for (const v of versionIds) {
+        db.run(
+          `INSERT INTO storage_audit (kind, at, page_id, page_url, version_id, version_no, priority, surplus, step, reason, trigger, exclusive_bytes, confirmed_protected, user_id)
+           VALUES ('deleted', ?, ?, ?, ?, ?, ?, 0, NULL, ?, 'explicit', 0, ?, ?)`,
+          [now, p.id, p.canonicalUrl, v.id, v.version_no, priority, "Deleted by you" + (prev.requiresConfirmation ? ", after confirming that it was protected" : ""), opts.confirmProtected && prev.requiresConfirmation ? 1 : 0, opts.userId ?? null]);
+      }
       for (const v of versionIds) deleteVersion(db, blobs, v.id);
       // Remember the deletion so a crawl does not fetch the page again. The Human can still save it by hand.
       if (opts.exclude !== false) addExclusion(db, p.urlKey, null, "deleted_by_user", this.o.clock.now());

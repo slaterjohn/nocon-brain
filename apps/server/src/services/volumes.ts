@@ -388,24 +388,44 @@ export class VolumeService {
     return current;
   }
 
-  /** Picks where a new blob goes: the default volume if it is writable, otherwise any writable one. */
-  async pickWritable(bytesHint = 0): Promise<VolumeRow> {
-    const candidates = this.list().filter((v) => v.state !== "disabled");
+  /**
+   * Room on a volume for new bytes: free space above the reserve, capped by the quota, less what running downloads have reserved.
+   * Zero (never negative) when it is full. Uses the cached `statfs`.
+   */
+  availableFor(v: VolumeRow): number {
+    const free = Math.max(0, (v.statFree ?? 0) - v.reserveFreeBytes);
+    const roomByQuota = v.quotaBytes !== null ? Math.max(0, v.quotaBytes - this.usedBytes(v.id)) : Infinity;
+    return Math.max(0, Math.min(free, roomByQuota) - this.reservedBytes(v.id));
+  }
+
+  /**
+   * Placement policy (task T-06): the preferred volume if it is writable and has room, otherwise the writable volume with the most
+   * room (ties go to the default volume, then the lowest id). A volume that is offline, read-only, draining or disabled is never chosen.
+   */
+  async pickWritable(bytesHint = 0, opts: { preferredVolumeId?: number; excludeVolumeIds?: number[] } = {}): Promise<VolumeRow> {
+    const candidates = this.list().filter((v) => v.state !== "disabled" && !(opts.excludeVolumeIds ?? []).includes(v.id));
     if (candidates.length === 0) throw new AppError("setup_required", "No storage volume is set up yet. Add one in Storage settings.");
     let lastError: VolumeUnavailableError | undefined;
+    const usable: { v: VolumeRow; room: number }[] = [];
     for (const v of candidates) {
       try {
         const u = await this.assertUsable(v, "write");
         const s = await this.stat(u);
-        if (s.free - bytesHint < u.reserveFreeBytes) {
+        if (s.free - bytesHint < u.reserveFreeBytes || (u.quotaBytes !== null && this.usedBytes(u.id) + bytesHint > u.quotaBytes)) {
           lastError = new VolumeUnavailableError(u, "not enough free space left above the reserve");
           continue;
         }
-        return u;
+        usable.push({ v: u, room: this.availableFor(u) });
       } catch (e) {
         if (e instanceof VolumeUnavailableError) lastError = e;
         else throw e;
       }
+    }
+    if (usable.length > 0) {
+      const preferred = opts.preferredVolumeId !== undefined ? usable.find((x) => x.v.id === opts.preferredVolumeId) : undefined;
+      if (preferred) return preferred.v;
+      usable.sort((a, b) => b.room - a.room || Number(b.v.isDefault) - Number(a.v.isDefault) || a.v.id - b.v.id);
+      return usable[0]!.v;
     }
     if (lastError && lastError.reason.includes("free space")) {
       throw new AppError("insufficient_storage", "There is not enough free space on the storage volumes. Free some space or add a volume.");
@@ -498,7 +518,7 @@ export class VolumeService {
     )!.n;
   }
 
-  toDto(v: VolumeRow): VolumeDto {
+  toDto(v: VolumeRow, usageByPriority?: VolumeDto["usageByPriority"]): VolumeDto {
     const used = this.usedBytes(v.id);
     const capacity = v.statTotal ?? 0;
     const free = v.statFree ?? 0;
@@ -516,8 +536,7 @@ export class VolumeService {
       reservedBytes: this.reservedBytes(v.id),
       reserveFreeBytes: v.reserveFreeBytes,
       thresholds: { softPct: v.softThresholdPct, evictStartPct: v.evictStartPct, evictTargetPct: v.evictTargetPct },
-      // Priorities are derived from page references, which arrive in Phase 2. Until then nothing is prioritised.
-      usageByPriority: { P1: 0, P2: 0, P3: 0, P4: 0 },
+      usageByPriority: usageByPriority ?? { P1: 0, P2: 0, P3: 0, P4: 0 },
     };
   }
 

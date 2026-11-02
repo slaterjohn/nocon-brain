@@ -42,6 +42,9 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit == 'true'
         run: pnpm exec playwright install-deps chromium
       - run: pnpm test:integration
+      # Phase 6 (T-12): P1 never evicted, shared assets kept, retention respected, interrupted eviction safe, index updated, deletion distinct from eviction. Blocking on both architectures.
+      - name: Storage safety suite
+        run: pnpm test:storage-safety
       # The browser suite is timing-sensitive on shared runners (a different test flakes each run), so it runs on x64 only,
       # retries twice, and is advisory (continue-on-error) until the flaky specs are stabilised.
       - name: Browser end-to-end tests (advisory)

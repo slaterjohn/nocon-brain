@@ -601,6 +601,7 @@ interface DownloadJob {
     label?: string /* "Saving the page", "Checking 12 of 40 pages" */; etaSeconds?: number };
   estimate?: DownloadEstimate;                  // always an estimate; the UI labels it "Estimated"
   pause?: { reason: "user" | "window_closed" | "volume_full" | "offline"; automatic: boolean; message: string };
+  wait?: { reason: "throttled"; message: string };   // queued or running but held back: "throttled" is a background P4 download waiting above the soft storage threshold (not a pause: no state change, no attempt used, it retries every 30 s)
   failure?: { code: FailureCode; message: string; retryable: boolean; hint: string };
   stop?: { reason: string; message: string };   // crawls: why it ended (completed, max_pages, max_bytes, max_depth, deadline, volume_full, cancelled)
   summary?: { checked: number; unchanged: number; changed: number; gone: number; failed: number };   // refresh jobs
@@ -616,7 +617,7 @@ interface DownloadEstimate { estimate: true; pages?: { low: number; high: number
   durationSeconds?: { low: number; high: number }; basis: string; confidence: "low" | "medium" | "high" }
 interface QueueSummary { counts: Record<DownloadJob["state"], number>; running: DownloadJob[]; workers: WorkerStatus[];
   window: { open: boolean; opensAt?: Iso; closesAt?: Iso }; limits: ResourceLimits; throttle: ThrottleStatus; disk: DiskGuardStatus;
-  connectivity: "online" | "offline" | "unknown"; nextScheduled?: { scheduleId: string; sourceId: string; sourceName: string; at: Iso } }
+  connectivity: "online" | "offline" | "unknown"; storageThrottle: { downloads: number } /* how many downloads wait with wait.reason "throttled" */; nextScheduled?: { scheduleId: string; sourceId: string; sourceName: string; at: Iso } }
 interface ResourceLimits { fetchConcurrency: number; perHostConcurrency: number; perHostDelayMs: number; bandwidthKbps?: number;
   workerMemoryMb: number; extractWorkers: number; renderConcurrency: number; cpuThrottle: "off" | "low" | "medium"; minFreeDiskBytes: number;
   profile: "pi-lite" | "standard"; effectiveFetchConcurrency: number /* after CPU throttling */ }
@@ -686,33 +687,303 @@ interface Candidate { id: string; url: string; title?: string; state: "new" | "a
 
 Scoring is a transparent weighted sum (no AI). Defaults are conservative: `active.mode = "off"`, `searchDriven.*` all false, `requireApproval = true`.
 
-## 10. Storage
+## 10. Storage (Phase 6, as built)
+
+All routes need a signed-in session unless marked `G` (a trusted-LAN guest may read). Writes also need the CSRF header. Errors use the common envelope (`{ error, message, details? }`); the codes used here are `bad_request` (400, with `details.fields`), `not_found` (404), `conflict` (409) and `not_implemented` (501). Priorities travel as `"P1"` to `"P4"`; a request may also send the number 1 to 4. Sizes are bytes. Instants are ISO 8601 strings.
+
+Terms. **Protected (P1)** content is never removed automatically, whatever any flag says. **Eviction** is the automatic removal of saved copies to make room; **deletion** is the Human removing something on purpose (`DELETE /api/archive/pages/{id}`), which is recorded separately. **Exclusive bytes** are bytes that would actually be freed: a file shared with content that stays is not counted. A **surplus** copy is one that no source's retention rule, collection floor, pin or bookmark keeps any more; it counts as Opportunistic (P4) and goes first.
 
 | Method | Path | Purpose | Auth |
 |---|---|---|---|
-| GET | `/api/storage` | Overview: totals, usage by priority and by source, forecast, thresholds, eviction state | S/G |
-| GET/POST | `/api/storage/volumes` | List / register a volume | S , S+C |
-| GET/PATCH/DELETE | `/api/storage/volumes/{id}` | Detail incl. capacity, used, available, reservations / limits, state / drain and remove (refused while it holds blobs) | S , S+C |
-| POST | `/api/storage/volumes/{id}/verify` | Check marker, write test, scan | S+C |
-| POST | `/api/storage/volumes/{id}/migrate` | **Reserved; returns 501 `not_implemented` in v1** (migration between volumes comes later, task T-11) | S+C |
-| GET | `/api/storage/usage` | `?by=priority\|source\|kind\|volume` with `exclusiveBytes` and `sharedBytes` | S/G |
-| GET | `/api/storage/forecast` | Estimates (labelled), `?sourceId=` | S/G |
-| GET/PUT | `/api/storage/policy` | Global policy: `permitImportantEviction`, thresholds, grace, prune surplus | S , S+C |
-| POST | `/api/storage/eviction/plan` | Dry run: `{ bytesNeeded?, incomingPriority? }` returns the plan with reasons | S+C |
-| POST | `/api/storage/eviction/run` | Execute a plan (`planId`), or run maintenance eviction | S+C |
-| POST | `/api/storage/maintenance/verify` | Verify-and-repair (see system) | S+C |
+| GET | `/api/storage` | Overview: volumes, totals, usage by priority and by source, forecast, policy, eviction and maintenance state | S/G |
+| GET, POST | `/api/storage/volumes` | List (`{ items: Volume[] }`) / register a volume | S , S+C |
+| GET, PATCH, DELETE | `/api/storage/volumes/{id}` | Detail with reservations and blob count / change / remove (refused while it holds blobs) | S , S+C |
+| POST | `/api/storage/volumes/{id}/verify` | Marker, write test and a scan of blob rows against files (report only) | S+C |
+| POST | `/api/storage/volumes/{id}/migrate` | **501 `not_implemented`.** Volume-to-volume migration is post-v1 (design note in data-model.md 5.6) | S+C |
+| GET | `/api/storage/usage` | `?by=priority\|source\|kind\|volume`, optional `&volumeId=` | S/G |
+| GET | `/api/storage/forecast` | Estimate, optional `?sourceId=` and `&horizonDays=` (7 to 365) | S/G |
+| GET, PUT | `/api/storage/policy` | Global policy, including the P2 permit | S , S+C |
+| POST | `/api/storage/eviction/plan` | Dry run: nothing changes; returns a stored plan with reasons | S+C |
+| POST | `/api/storage/eviction/run` | Execute a stored plan (`{ planId }`) or run a maintenance pass (`{ maintenance: true }`) | S+C |
+| GET | `/api/storage/eviction/runs` | History of executor runs (`?limit=`, default 20) | S |
+| GET | `/api/storage/pages/{pageId}` | "Why was this kept or evicted?" for a page | S |
+| PUT, DELETE | `/api/storage/pages/{pageId}/pin` | Keep a page at a priority / stop keeping it | S+C |
+| GET | `/api/storage/audit` | The record of every eviction and explicit deletion | S |
+| POST | `/api/storage/maintenance/verify` | Verify-and-repair; same as `/api/system/maintenance/verify` | S+C |
 
 ```ts
-interface Volume { id: string; name: string; rootPath: string; state: "online" | "offline" | "readonly" | "draining" | "disabled"; isDefault: boolean;
-  capacityBytes: number; quotaBytes?: number; usedBytes: number; availableBytes: number; reservedBytes: number; reserveFreeBytes: number;
-  thresholds: { softPct: number; evictStartPct: number; evictTargetPct: number }; usageByPriority: Record<Priority, number> }
-interface EvictionPlan { planId: string; incomingPriority: Priority; bytesNeeded: number; reclaimableBytes: number; sufficient: boolean;
-  steps: { step: "throttle_p4" | "unreferenced_blobs" | "surplus_versions" | "p4" | "p3" | "p2"; versions: number; exclusiveBytes: number }[];
-  items: { versionId: string; pageUrl: string; priority: Priority; reason: string; exclusiveBytes: number }[];   // capped list
-  skipped: { versionId: string; reason: "p1" | "retained" | "source_auto_eviction_off" | "p2_not_permitted" | "priority_gate" | "in_use" }[] }
-interface StorageForecast { estimate: true; horizonDays: number; projectedUsedBytes: { low: number; high: number }; projectedFullAt?: { earliest: Iso; latest: Iso };
-  assumptions: string[] }
+type Priority = "P1" | "P2" | "P3" | "P4";   // Protected, Important, Standard, Opportunistic
+
+interface Volume {
+  id: string; name: string; rootPath: string;
+  state: "online" | "offline" | "readonly" | "draining" | "disabled"; isDefault: boolean;
+  capacityBytes: number;            // the drive
+  quotaBytes?: number;              // optional limit below the drive; percentages use it when set
+  usedBytes: number;                // stored bytes of the blobs on this volume
+  availableBytes: number;           // free above the reserve, within the quota (reservations are not subtracted here)
+  reservedBytes: number;            // promised to running downloads
+  reserveFreeBytes: number;         // the hard floor of free space
+  thresholds: { softPct: number; evictStartPct: number; evictTargetPct: number };   // defaults 85, 90, 80
+  usageByPriority: Record<Priority, number>;   // bytes by the blob's effective priority; unreferenced bytes count under P4
+}
+// GET /api/storage/volumes/{id} adds:
+//   reservations: { downloadJobId: string; reservedBytes: number; writtenBytes: number; expiresAt: Iso }[]; blobCount: number
 ```
+
+The threshold percentages are shares of the room NoConBrain has on the volume: its quota when one is set, otherwise its own stored bytes plus the free space (other data on the same disk does not make the volume "full"; the free-space reserve guards that). `state: "offline"` means the volume's marker file is missing or does not match (a drive was unplugged). Its rows are kept, its files cannot be read (the archive answers "unavailable" for those copies), nothing on it is evicted, and it comes back by itself when the marker returns. A new file goes to the source's preferred volume (`Source.preferredVolumeId`) when that has room, otherwise to the writable volume with the most room.
+
+### 10.1 Overview
+
+`GET /api/storage` returns:
+
+```ts
+interface StorageOverview {
+  volumes: Volume[];
+  totals: { capacityBytes: number; usedBytes: number; availableBytes: number; reservedBytes: number; unreferencedBytes: number };
+  usageByPriority: UsageRow[];      // keys "P1".."P4" and "unreferenced"
+  usageBySource: UsageRow[];        // up to 20
+  forecast: StorageForecast;
+  policy: StoragePolicy;
+  eviction: {
+    autoEviction: boolean; throttling: boolean;           // throttling: P4 downloads are slowed now
+    overThreshold: string[];                              // ids of volumes above their eviction-start threshold
+    lastRun?: { id: string; trigger: EvictionTrigger; state: "running" | "done" | "failed" | "interrupted"; versionsEvicted: number; bytesFreed: number; startedAt: Iso };
+  };
+  maintenance: { lastRun?: { id: string; kind: "verify" | "repair"; dryRun: boolean; startedAt: Iso } };
+  computedAt: Iso;
+}
+```
+
+### 10.2 Usage
+
+`GET /api/storage/usage?by=priority|source|kind|volume[&volumeId=vol_...]`
+
+```ts
+interface UsageReport {
+  by: "priority" | "source" | "kind" | "volume"; volumeId?: string;
+  totalBytes: number;          // every blob counted once: compare this with the disk
+  blobCount: number;
+  unreferencedBytes: number;   // part of totalBytes: files nothing uses, waiting for garbage collection
+  items: UsageRow[]; computedAt: Iso;
+}
+interface UsageRow {
+  key: string;                 // "P1".."P4" and "unreferenced"; a source id (or "unassigned"); a blob kind; a volume id
+  label?: string;              // source or volume name
+  exclusiveBytes: number;      // used only by this group: removing the group frees them
+  sharedBytes: number;         // also used by another group (counted under each group that uses them)
+  blobCount: number;
+}
+```
+
+For `by=priority` a blob has one class, its effective priority (the lowest number among the copies that use it); `sharedBytes` there means the blob is used by content of more than one class. For `by=source` a blob used by pages of two sources is shared under both. `by=kind` and `by=volume` have no sharing. The per-volume, per-dimension totals are also kept in `storage_usage_cache` (refreshed by the storage pass).
+
+### 10.3 Policy and the P2 permit
+
+`GET /api/storage/policy` and `PUT /api/storage/policy` (any subset of the fields):
+
+```ts
+interface StoragePolicy {
+  permitImportantEviction: boolean;    // default false. Lets automatic eviction reclaim Important (P2) content, last.
+  permitAcknowledgedAt: Iso | null;    // when the Human confirmed the warning; cleared when the permit is turned off
+  throttleOpportunistic: boolean;      // default true. Slow P4 background downloads above a volume's soft threshold.
+  pruneSurplusVersions: boolean;       // default true. The maintenance pass removes copies nothing keeps any more.
+  orphanGraceSeconds: number;          // default 86400 (0 to 31536000). How long an unused file is kept before deletion.
+  autoEviction: boolean;               // default true. The storage pass evicts when a volume passes its eviction-start threshold.
+  maxEvictionBatchBytes: number | null;// default null. Most bytes one tidy-up (prune) run removes; does not limit space-pressure runs.
+  forecastHorizonDays: number;         // default 30 (7 to 365)
+  scrubMegabytesPerRun: number;        // default 64 (0 to 4096; 0 turns the checksum scrub off)
+  protectedNeverEvicted: true;         // always true. A reminder for the UI: no setting changes it.
+  warnings: { permitImportantEviction: string };   // the text to show before the permit is turned on
+  volumeThresholds: { volumeId: string; name: string; softPct: number; evictStartPct: number; evictTargetPct: number }[];
+}
+```
+
+PUT body: the eight writable fields above (`permitImportantEviction` to `scrubMegabytesPerRun`; not `permitAcknowledgedAt`, `protectedNeverEvicted`, `warnings` or `volumeThresholds`), plus `acknowledged?: boolean`. **Turning `permitImportantEviction` on needs `acknowledged: true` in the same request**; without it the answer is 400 with `details.fields[0].path = "storage.acknowledged"`. The permit does not make Protected (P1) content evictable and does not touch pages that a source or pin forbids evicting. Thresholds belong to volumes: change them with `PATCH /api/storage/volumes/{id}` (`softPct <= evictStartPct`, `evictTargetPct < evictStartPct`). The same keys are the settings group `storage` (see 10.9).
+
+### 10.4 Eviction: dry run, plan explanations, run
+
+`POST /api/storage/eviction/plan` body (all optional): `{ bytesNeeded?: number; incomingPriority?: Priority; volumeId?: string; mode?: "pressure" | "prune" }`.
+
+- `mode: "pressure"` (default) plans the removal of enough content to free `bytesNeeded` for an incoming download of `incomingPriority` (default `P1`, which lets every eligible class through). With no `bytesNeeded` it plans what the volume (default: the default volume) needs to fall to its eviction-target percentage.
+- `mode: "prune"` plans only surplus copies and unused files (what the maintenance pass does).
+- **A plan changes nothing.** It is kept for 30 minutes (`expiresAt`) so it can be run.
+
+```ts
+interface EvictionPlan {
+  planId: string; createdAt: Iso; expiresAt: Iso;
+  mode: "pressure" | "prune"; incomingPriority: Priority; bytesNeeded: number; volumeId?: string;
+  reclaimableBytes: number;          // exclusive bytes the plan frees (shared files are counted once, or not at all if content stays)
+  sufficient: boolean; insufficient: boolean;   // insufficient === !sufficient. An insufficient plan cannot be run: nothing would be removed.
+  throttleOpportunistic: boolean;    // step 0: P4 downloads are being slowed (nothing is deleted for it)
+  steps: { step: "throttle_p4" | "unreferenced_blobs" | "surplus_versions" | "p4" | "p3" | "p2"; versions: number; exclusiveBytes: number }[];
+  itemsTotal: number;
+  items: {                            // in the order they would go; the first 200
+    versionId: string; pageId: string; pageUrl: string; versionNo: number;
+    priority: Priority; surplus: boolean;      // surplus copies are listed as P4
+    step: "surplus_versions" | "p4" | "p3" | "p2";
+    reason: string;                   // a sentence for the Human
+    exclusiveBytes: number; lastAccessedAt?: Iso;
+  }[];
+  unreferencedBlobs: { count: number; bytes: number };   // unused files past the grace period; removed first, no content is lost
+  skipped: { versionId: string; pageId: string; pageUrl: string; reason: SkipReason }[];   // the first 200
+  skippedCounts: Partial<Record<SkipReason, number>>;
+  summary: string;
+}
+type SkipReason =
+  | "p1"                        // Protected: never
+  | "source_auto_eviction_off"  // a source (or pin) that references the page forbids automatic eviction; this vetoes the whole page
+  | "p2_not_permitted"          // Important content and the permit is off
+  | "priority_gate"             // an incoming download may only reclaim content less important than itself (P4 reclaims P4, P3 reclaims P3 and P4, P2 and P1 reclaim P3 and P4, and P2 when permitted, P1 only for P1)
+  | "in_use"                    // a download is writing to the page, or the copy is not complete
+  | "retained"                  // prune mode: the copy is still kept by something
+  | "no_reclaim"                // all of its bytes are shared with content that stays
+  | "not_on_volume";            // nothing it holds is on the volume being freed
+```
+
+Order of removal: unused files, then surplus copies (older first), then P4, then P3, then P2 only if permitted; within a class older copies before the current one, never-opened before opened, larger first. Execution stops when the need is covered.
+
+`POST /api/storage/eviction/run`:
+- `{ planId }` runs a stored plan. 404 when it has expired or was already run; 409 `conflict` with `details.kind = "plan_insufficient"` when the plan is insufficient (nothing is removed). **The executor re-derives every decision from the references at the moment it removes each copy**, so a plan that went stale removes less, never more: copies that became Protected, pinned, retained or busy are reported in `skipped`.
+- `{ maintenance: true }` runs the storage pass's eviction: each volume above its eviction-start threshold is brought to its target, then surplus copies are pruned (if `pruneSurplusVersions`).
+
+```ts
+// planId run:
+interface EvictionResult {
+  runId: string; planned: number; evicted: number; bytesFreed: number; blobsDeleted: number;
+  evictedVersionIds: string[];
+  skipped: { versionId: string; reason: SkipReason | "changed" }[];     // "changed": no longer a live copy
+}
+// maintenance run: { runs: EvictionResult[]; notes: string[] }   // notes say, for example, that a volume is over its threshold but nothing eligible would free enough
+```
+
+`GET /api/storage/eviction/runs` returns `{ items: { id, trigger: "admission" | "threshold" | "prune" | "manual" | "recovery", state: "running" | "done" | "failed" | "interrupted", incomingPriority: Priority, bytesNeeded, versionsPlanned, versionsEvicted, versionsSkipped, bytesFreed, blobsDeleted, error?, startedAt: Iso, finishedAt?: Iso }[] }`. A run left `running` by a crash becomes `interrupted` at the next start, after recovery finishes its clean-up.
+
+### 10.5 Why was this kept, why was this evicted
+
+`GET /api/storage/pages/{pageId}`:
+
+```ts
+interface PageStorageExplanation {
+  page: { id: string; url: string; availability: string; effectivePriority: Priority; cachedPriority: Priority | null };   // effective: from the references now; cached: the column the library shows
+  pin: { priority: Priority; reason: string | null } | null;
+  references: ReferenceSummary[];                 // of the current copy
+  versions: (VersionExplanation & { versionNo: number; fetchedAt: Iso; evictedAt?: Iso; audit?: AuditRecord })[];   // newest first
+  history: AuditRecord[];                         // every eviction and deletion recorded for the page (up to 100)
+}
+interface VersionExplanation {
+  versionId: string; status: string; isLatest: boolean;
+  priority: Priority; surplus: boolean;
+  decision: "kept" | "evictable";                 // kept: automatic eviction cannot remove it now; evictable: it can be reclaimed when space is needed
+  skipReason?: SkipReason;                        // why it is kept
+  references: ReferenceSummary[];
+  reasons: string[];                              // sentences, most important first. For an evicted copy: when and why it was removed.
+}
+interface ReferenceSummary { kind: "source" | "collection" | "pin" | "bookmark"; id: string; label?: string; priority: Priority; autoEvict: boolean; retains: boolean }
+```
+
+**As built:** `versions[].priority` and `references[].priority` in this response are the numbers 1 to 4, not `"P1"` to `"P4"` (the other priority fields here are codes). The web app reads both.
+
+`PUT /api/storage/pages/{pageId}/pin` body `{ priority?: Priority (default "P1"), reason?: string (300) }` keeps the page (its current copy) at that priority; a P1 pin forbids automatic eviction of every copy of the page. `DELETE` removes the pin. Both answer with the explanation. Bookmarks (priority from `browser.bookmarkPriority` when made, default P2) and collection floors are references too and appear in `references`.
+
+`GET /api/storage/audit?pageId=&kind=evicted|deleted&limit=&cursor=` returns `{ items: AuditRecord[]; nextCursor? }`, newest first. The audit trail is not subject to the activity-log retention window.
+
+```ts
+interface AuditRecord {
+  id: number; kind: "evicted" | "deleted"; at: Iso;
+  pageId: string | null;            // null when the page has since been deleted
+  pageUrl: string; versionId: string | null; versionNo: number | null;
+  priority: Priority | null;        // the class the copy was in when it went
+  surplus: boolean; step: string | null; reason: string;
+  trigger: "admission" | "threshold" | "prune" | "manual" | "recovery" | "explicit" | null;
+  exclusiveBytes: number; references: ReferenceSummary[];
+  confirmedProtected: boolean;      // deleted kind only: the Human confirmed deleting protected content
+  runId?: string;
+}
+```
+
+Every eviction also writes an `activity_log` entry (area `storage`, with `versionId`) and queues the search index update through the index outbox. Explicit deletion (`DELETE /api/archive/pages/{id}`) writes `kind: "deleted"` records and never an `evicted` one.
+
+### 10.6 Forecast
+
+`GET /api/storage/forecast[?sourceId=src_...][&horizonDays=7..365]`. **Always an estimate**: `estimate` is `true`, every figure is a low and high band, and `assumptions` says what it rests on. The UI must label it as an estimate and must not show a single-point figure.
+
+```ts
+interface StorageForecast {
+  estimate: true; horizonDays: number; sourceId?: string;
+  projectedUsedBytes: { low: number; high: number };          // used bytes at the end of the period
+  growthBytesPerDay: { low: number; high: number };
+  projectedFullAt?: { earliest: Iso; latest?: Iso };          // absent when it would not fill within ten years; latest absent when the low growth is zero
+  perSource: { sourceId: string; name: string; observedPages: number; bytesPerPage: { low: number; high: number }; plannedPages: number; plannedBytes: { low: number; high: number } }[];
+  confidence: "low" | "medium";                               // low with fewer than three whole days of history
+  assumptions: string[];
+}
+```
+
+Method: the average of recent whole days of new bytes plus or minus one standard deviation, plus planned pages (the remainder of each source's page limit) priced at the source's observed bytes per page (70% to 150%), spread evenly. Eviction and deletion in the meantime are not subtracted.
+
+### 10.7 Admission control
+
+Before a download writes anything it reserves room (task T-07). Reservations are listed in the volume detail and counted in `reservedBytes`; a download that ends gives its reservation back, and a restart clears them all.
+
+1. A source over `storageBudgetBytes` is refused: a crawl stops with `stopReason: "source_budget"`, a single save fails with `failure.code: "limit_reached"`.
+2. A background Opportunistic (P4) download waits (retrying every 30 seconds, using no attempt) while every volume is above its soft threshold and `throttleOpportunistic` is on. Downloads started by the Human are never throttled. While it waits, the download carries `wait: { reason: "throttled", message }` in `GET /api/downloads`, `GET /api/downloads/{id}` and the `download.update` event, and `GET /api/downloads/queue` (and the `download.queue` event) counts such downloads in `storageThrottle.downloads`. The reason is cleared when the job is admitted, ends, or has not been re-checked for 90 seconds.
+3. When there is not enough room, the planner is asked what can go for a download of this priority (rule: a P1 download may reclaim P2 if permitted, P3 and P4; P2 and P3 downloads reclaim lower classes; P4 reclaims only P4). If that covers the need it is removed first; otherwise the download fails with `failure.code: "disk_full"` (a crawl stops with `volume_full`) and **nothing is deleted**.
+4. Below a volume's free-space reserve, background downloads are paused by the disk guard (`pause.reason: "volume_full"`) and resume by themselves.
+
+### 10.8 Maintenance: verify and repair
+
+`POST /api/system/maintenance/verify` (also `POST /api/storage/maintenance/verify`), body `{ repair?: boolean (default false), checks?: string[] }`. **The default is a dry run: it reports and changes nothing in the archive.** With `repair: true` each finding is fixed. `checks` limits the run to some of `I-1` to `I-13` and `REF`. `GET /api/system/maintenance/runs` lists runs (`?limit=`) and `GET /api/system/maintenance/runs/{id}` returns one report. `POST /api/system/maintenance/backup` writes a `VACUUM INTO` copy of `main.db` to the data volume (`{ file, sizeBytes }`).
+
+```ts
+interface MaintenanceRun {
+  id: string; kind: "verify" | "repair" | "integrity_check" | "scrub"; dryRun: boolean;
+  state: "running" | "done" | "failed"; startedAt: Iso; finishedAt?: Iso;
+  findings: { invariant: "I-1" | ... | "I-13" | "REF"; title: string; count: number; examples: string[]; repaired?: number; note?: string }[];   // no finding means nothing was wrong
+  checked: Record<string, number>;     // how much was looked at: blobs, files, blobCounts, scrubbed
+  skipped: { invariant: string; reason: string }[];   // for example an offline volume
+}
+```
+
+| Id | What is checked | Repair |
+|---|---|---|
+| I-1 | every ready blob has a file of the expected size | mark `missing`; copies that use it become `partial` |
+| I-2 | every file on a volume has a row | move to the volume's `quarantine/` folder (never deleted) |
+| I-3 | `refcount` equals the references and `zero_since` is set exactly at 0 | recount |
+| I-4 | no reference points at a missing parent | delete the dangling rows |
+| I-5 | a `capturing` copy has a job or is younger than 10 minutes | mark `failed`, release its references |
+| I-6 | `pages.latest_version_id` is a ready or partial copy of that page | point at the newest usable copy, else mark the page evicted |
+| I-7 | `host_state.in_flight` equals running jobs | reset |
+| I-8 | no reservation for a finished download | delete |
+| I-9 | no temporary file older than 24 hours | delete |
+| I-10 | the search index matches the archive | rebuild or repair the index |
+| I-11 | a sample of stored files matches their SHA-256 | move aside to `quarantine/`, mark `missing` |
+| I-12 | `PRAGMA quick_check` | report only (restore from a backup) |
+| I-13 | no Protected copy was evicted, and every eviction has a record | report only, logged at error level |
+| REF | pages that nothing references (counted as P4) | report only |
+
+The storage pass (every five minutes) also runs `quick_check` once a day (kind `integrity_check`) and a hash scrub of up to `scrubMegabytesPerRun` per pass; a mismatch is logged at error level and left alone until a repair is run.
+
+### 10.9 Settings keys (group `storage`)
+
+Read and written with `GET/PATCH /api/settings` as well as the policy endpoint.
+
+| Key | Type, default | Meaning |
+|---|---|---|
+| `permitImportantEviction` | boolean, `false` | The P2 permit. Turning it on through `PATCH /api/settings` also needs `storage.acknowledged: true` in the same patch, and the response then carries `warning`. |
+| `permitAcknowledgedAt` | ISO string or null | Set by the server when the permit is confirmed. |
+| `throttleOpportunistic` | boolean, `true` | Slow P4 background downloads above the soft threshold. |
+| `pruneSurplusVersions` | boolean, `true` | The maintenance pass removes surplus copies. |
+| `orphanGraceSeconds` | integer, `86400` | Grace before an unused file is deleted. |
+| `autoEviction` | boolean, `true` | Evict when a volume passes its eviction-start threshold. |
+| `maxEvictionBatchBytes` | integer or null, `null` | Cap on one prune run. |
+| `forecastHorizonDays` | integer 7 to 365, `30` | Forecast period. |
+| `scrubMegabytesPerRun` | integer 0 to 4096, `64` | Checksum scrub budget per pass. |
+
+Per-source storage fields are on `Source` (section 7): `priority`, `retention`, `automaticEviction`, `storageBudgetBytes`, `preferredVolumeId`. Changing a source's priority, retention or `automaticEviction` refreshes the cached priority of its pages at once.
+
+### 10.10 Dashboard
+
+`GET /api/system/dashboard` now fills `pages`, `sources`, `collections` and `storage.byPriority` from the archive (bytes by effective priority, unreferenced bytes under P4).
 
 ## 11. Index
 
@@ -752,9 +1023,9 @@ Groups: `general` (app name, locale `en-GB`), `resources` (profile and limits), 
 | GET | `/api/system/logs` | Activity log: `level` and `area` (comma-separated lists, exact match), `downloadJobId` (`dl_...`), `from`, `to`, `q` (substring), `limit` (default 50, max 200), `cursor`. Returns `{ items: { id, at, level, area, message, details?, downloadJobId?, jobId?, versionId? }[], nextCursor? }`, newest first | S |
 | GET | `/api/system/connectivity` | `{ state: "unknown" \| "online" \| "offline", since, source: "passive" \| "probe" \| "forced" }`. The same object is the data of the SSE `connectivity` event | S/G |
 | POST | `/api/system/connectivity` | `{ forceOffline: boolean }` ("work offline") | S+C |
-| POST | `/api/system/maintenance/verify` | Verify-and-repair. `{ repair: false (default), checks?: string[] }` returns a `MaintenanceRun` | S+C |
-| GET | `/api/system/maintenance/runs`, `/{id}` | History and reports | S |
-| POST | `/api/system/maintenance/backup` | `VACUUM INTO` backup of `main.db` into the data volume | S+C |
+| POST | `/api/system/maintenance/verify` | Verify-and-repair, dry run by default. `{ repair?: false, checks?: string[] }` returns a `MaintenanceRun` (section 10.8) | S+C |
+| GET | `/api/system/maintenance/runs`, `/api/system/maintenance/runs/{id}` | History and reports | S |
+| POST | `/api/system/maintenance/backup` | `VACUUM INTO` backup of `main.db` into `backups/` in the data volume; `{ file, sizeBytes }` | S+C |
 | GET | `/api/system/metrics` | In-process counters for benchmarking | S |
 
 ```ts
@@ -766,8 +1037,7 @@ interface Dashboard {
   workers: WorkerStatus[]; connectivity: "online" | "offline" | "unknown";
 }
 interface WorkerStatus { name: "runner" | "extract" | "index" | "search" | "zim" | "renderer"; state: "idle" | "busy" | "down" | "disabled"; lastHeartbeatAt?: Iso; currentJobId?: string; memoryMb?: number }
-interface MaintenanceRun { id: string; kind: string; dryRun: boolean; state: "running" | "done" | "failed";
-  findings: { invariant: string; count: number; examples: string[]; repaired?: number }[] }
+// MaintenanceRun: see section 10.8.
 ```
 
 ## 14. Bookmarks and history

@@ -115,7 +115,9 @@ describe("C-01 caps and stop reasons", () => {
     const run = t.svc.crawl.startCrawl(testConfig({ startUrls: [g.root], mode: "explore", profile: "comprehensive", overrides: { limits: { maxBytes: 3000 } } }));
     const s = await waitFinished(t, run.downloadId);
     expect(s.stopReason).toBe("max_bytes");
-    expect(s.bytesFetched).toBeGreaterThanOrEqual(3000);
+    // HB-06: the per-page share of the budget is reserved before fetching, so the crawl no longer overshoots by a page.
+    expect(s.bytesFetched).toBeLessThanOrEqual(3000);
+    expect(s.bytesFetched).toBeGreaterThan(0);
     expect(s.pagesFetched).toBeLessThan(15);
   });
 

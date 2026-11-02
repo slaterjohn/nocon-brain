@@ -504,6 +504,8 @@ export interface DownloadJob {
   progress: { pagesDone: number; pagesFailed: number; pagesDiscovered?: number; bytesDone: number; percent?: number; label?: string; etaSeconds?: number };
   estimate?: DownloadEstimate;
   pause?: { reason: "user" | "window_closed" | "volume_full" | "offline"; automatic: boolean; message: string };
+  /** Queued or running but held back. "throttled": a background Opportunistic download waiting above the soft storage threshold. */
+  wait?: { reason: "throttled"; message: string };
   failure?: { code: FailureCode | string; message: string; retryable: boolean; hint: string };
   stop?: { reason: string; message: string };
   summary?: { checked: number; unchanged: number; changed: number; gone: number; failed: number };
@@ -524,6 +526,8 @@ export interface QueueSummary {
   window: { open: boolean; opensAt?: string; closesAt?: string };
   limits: Record<string, unknown> & { fetchConcurrency?: number; effectiveFetchConcurrency?: number; profile?: string };
   throttle: { active: boolean; level: string; reason?: string };
+  /** How many downloads wait with `wait.reason` "throttled". Absent from older servers. */
+  storageThrottle?: { downloads: number };
   disk: { paused: boolean; pausedDownloads: number; volumes: { id: string; name: string; freeBytes: number; reserveFreeBytes: number; low: boolean }[] };
   connectivity: ConnectivityState;
   nextScheduled?: { scheduleId: string; sourceId: string; sourceName: string; at: string };

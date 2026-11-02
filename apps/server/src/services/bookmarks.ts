@@ -31,7 +31,14 @@ interface BmRow {
  * `browser.bookmarkPriority` at creation: Phase 6 turns it into the page's effective priority.
  */
 export class BookmarksService {
-  constructor(private readonly o: { db: Db; clock: Clock; settings: SettingsService; pipeline: PipelineService }) {}
+  constructor(private readonly o: { db: Db; clock: Clock; settings: SettingsService; pipeline: PipelineService; onReferencesChanged?: (pageIds: number[]) => void }) {}
+
+  /** A bookmark is a reference to its page (Phase 6): refresh the page's cached priority. */
+  private touch(urlKey: string): void {
+    if (!this.o.onReferencesChanged) return;
+    const p = this.o.db.get<{ id: number }>("SELECT id FROM pages WHERE url_key = ?", [urlKey]);
+    if (p) this.o.onReferencesChanged([p.id]);
+  }
 
   private key(url: string): string {
     try {
@@ -107,6 +114,7 @@ export class BookmarksService {
       },
       { durable: true },
     );
+    this.touch(key);
     return { bookmark: this.dto(row), created: true };
   }
 
@@ -118,9 +126,11 @@ export class BookmarksService {
   }
 
   remove(userId: number, id: string): void {
+    const key = this.o.db.get<{ url_key: string }>("SELECT url_key FROM bookmarks WHERE public_id = ? AND user_id = ?", [id, userId])?.url_key;
     const res = this.o.db.run(
       "UPDATE bookmarks SET deleted_at = ? WHERE public_id = ? AND user_id = ? AND deleted_at IS NULL", [this.o.clock.now(), id, userId]);
     if (res.changes === 0) throw new AppError("not_found", "That bookmark no longer exists.");
+    if (key) this.touch(key);
   }
 }
 

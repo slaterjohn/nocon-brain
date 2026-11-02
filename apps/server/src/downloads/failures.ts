@@ -97,3 +97,7 @@ export const PAUSE_MESSAGES = {
   offline: "Waiting for the connection to return.",
 } as const;
 export type PauseReason = keyof typeof PAUSE_MESSAGES;
+
+export const WAIT_MESSAGES = {
+  throttled: "Waiting: Opportunistic (P4) downloads are paused while storage is above its soft threshold. This one continues when space is freed or the threshold is raised.",
+} as const;

@@ -95,6 +95,8 @@ export interface SourceServiceOptions {
   crawlControl?: { pause(id: string): unknown; resume(id: string): unknown; cancel(id: string): unknown };
   /** Called after a source's collection list changed, to add its existing pages to the new collections. */
   onCollectionsChanged?: (sourceRowId: number) => void;
+  /** Called with the pages whose references changed (a source's priority, retention or flag changed, or the source was deleted), so cached priorities are refreshed. */
+  onReferencesChanged?: (pageIds: number[]) => void;
   /** Checks a source's saved pages for changes. Scheduled runs of a source that has pages use it (task C-11). */
   refresh?: { refreshSource(sourceRowId: number, o: { requestedBy: "user" | "schedule" | "system" }): Promise<{ downloadId: string; pages: number }>; pageCount(sourceRowId: number): number };
   /** robots.txt for the preview's sample (`robots.check`); without it the preview does not look at robots.txt. */
@@ -331,6 +333,9 @@ export class SourceService {
       }
     }, { durable: true });
     if (cols) this.o.onCollectionsChanged?.(cur.id);
+    if (this.o.onReferencesChanged && (patch.priority !== undefined || patch.retention !== undefined || patch.automaticEviction !== undefined || patch.storageBudgetBytes !== undefined)) {
+      this.o.onReferencesChanged(this.db.all<{ page_id: number }>("SELECT page_id FROM page_sources WHERE source_id = ?", [cur.id]).map((r) => r.page_id));
+    }
     return this.get(publicId);
   }
 
@@ -390,6 +395,7 @@ export class SourceService {
       return refs;
     }, { durable: true });
 
+    this.o.onReferencesChanged?.(pageIds);
     let pagesDeleted = 0;
     let unreferenced = 0;
     for (const pid of pageIds) {

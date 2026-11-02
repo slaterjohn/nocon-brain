@@ -203,6 +203,16 @@ Phase 5 exit: criteria 10, 11, 12 pass against fake providers; a manual run agai
 
 Phase 6 exit: criteria 16, 17, 18 pass through T-12.
 
+**Phase 6 as built (server side; the UI task T-09 follows).** T-01 to T-08, T-10, T-11 (endpoint answers 501, design note in [data-model.md 5.7](data-model.md#56-phase-6-as-built-migration-0012_intelligent_storage-tasks-t-01-to-t-12)) and T-12 are built. The contract is [api.md section 10](api.md#10-storage-phase-6-as-built); the schema notes are data-model.md 5.6.
+
+- **T-01 to T-04, T-08** are the pure package `packages/storage-planner` (the `storage-planner` of the CI trigger list): unit, truth-table and fast-check property tests (`packages/storage-planner/test`, run by `pnpm test` and by `pnpm test:storage-safety`). `fast-check` (MIT) was added as a root dev dependency.
+- **T-05** `apps/server/src/storage/executor.ts`: two-phase and crash safe, with fault hooks (`ServerOptions.storageFault`); `tests/storage-safety/interrupted-eviction.test.ts` kills a child process (SIGKILL) at every step and restarts.
+- **T-06, T-07** `VolumeService` placement and `apps/server/src/storage/{usage,admission}.ts`; the pipeline and the crawl engine ask for room before fetching. HB-04 and HB-06 were fixed on the way (`docs/hardening-backlog.md`).
+- **T-10** `apps/server/src/storage/maintenance.ts`; corrupt-fixture tests in `tests/integration/storage/maintenance.test.ts`.
+- **T-12** `tests/storage-safety` with `pnpm test:storage-safety` (also a blocking CI step on both architectures).
+
+Deviations from the task table: (1) the incoming gate follows the formula of data-model 5.2 rule 7, so a P2 download does not evict P2; (2) blobs un-referenced by an eviction run are deleted at once instead of after the grace period, unused files that were already orphaned still wait for it; (3) policy is stored in the `storage` settings group with the `storage_policies` row mirrored from it; (4) admission is checked in the pipeline's fetch step and the crawl's page step, and a throttled P4 download waits in the queue instead of pausing (T-09 added `wait.reason = "throttled"` to the downloads API so the UI can say why); (5) a `storage_audit` table was added so the reason for an eviction or deletion outlives the activity-log retention window.
+
 ## 8. Phase 7: Discovery
 
 | ID | Task | Depends | Acceptance check and tests | Scope |

@@ -24,7 +24,8 @@
     "licence-audit": "node scripts/licence-audit.mjs",
     "bench:queue": "tsx scripts/bench-queue.ts",
     "db:generate": "pnpm --filter @ncb/db generate",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:storage-safety": "vitest run --project storage-safety"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
@@ -36,8 +37,10 @@
     "@ncb/search": "workspace:*",
     "@ncb/server": "workspace:*",
     "@ncb/shared": "workspace:*",
+    "@ncb/storage-planner": "workspace:*",
     "@playwright/test": "^1.64.1",
     "@types/node": "^24.0.0",
+    "fast-check": "^4.10.2",
     "tsx": "^4.23.15",
     "typescript": "5.9.3",
     "vitest": "^5.0.5"
