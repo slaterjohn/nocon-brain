@@ -95,6 +95,9 @@ export interface FrameStateDto {
   state: LinkStateName | "zim";
   pageId?: string;
   versionId?: string;
+  /** `state: "zim"`: the knowledge package and the entry shown. */
+  zimId?: string;
+  zimPath?: string;
   reader?: boolean;
   interstitial?: boolean;
   at: string;
@@ -252,18 +255,24 @@ export class BrowserService {
   // ---- frame grants --------------------------------------------------------------------------
 
   /** Mints an archive capability for one page or version and returns the iframe address. */
-  mintFrame(input: { userId: number; pageId?: string; versionId?: string; mode?: "original" | "reader"; forwardedHost?: string }): FrameInfo {
+  mintFrame(input: { userId: number; pageId?: string; versionId?: string; zimId?: string; zimPath?: string; mode?: "original" | "reader"; forwardedHost?: string }): FrameInfo {
     const tokens = this.o.archive?.tokens();
     if (!tokens) throw new AppError("internal", "The archive is not ready yet. Try again in a few seconds.");
     const frameId = `fr_${ulid()}`;
     const token = tokens.mint({ userId: String(input.userId), frameId, appOrigin: this.o.config.NCB_APP_URL });
-    const target = input.versionId ? `v/${encodeURIComponent(input.versionId)}` : `p/${encodeURIComponent(input.pageId ?? "")}`;
+    const target = input.zimId
+      ? `z/${encodeURIComponent(input.zimId)}/${(input.zimPath ?? "").split("/").map(encodeURIComponent).join("/")}`
+      : input.versionId ? `v/${encodeURIComponent(input.versionId)}` : `p/${encodeURIComponent(input.pageId ?? "")}`;
     const url = `${this.archiveBase(input.forwardedHost)}/a/${token}/${target}${input.mode === "reader" ? "/reader" : ""}`;
     return { url, frameId, expiresAt: new Date(this.o.clock.now() + TOKEN_LIFETIME_SECONDS * 1000).toISOString(), sandbox: FRAME_SANDBOX };
   }
 
-  frameGrant(input: { userId: number; pageId?: string; versionId?: string; mode?: "original" | "reader"; forwardedHost?: string }): FrameInfo {
-    if (input.versionId) {
+  frameGrant(input: { userId: number; pageId?: string; versionId?: string; zimId?: string; zimPath?: string; mode?: "original" | "reader"; forwardedHost?: string }): FrameInfo {
+    if (input.zimId) {
+      const z = this.o.db.get<{ state: string }>("SELECT state FROM zim_packages WHERE public_id = ? AND state <> 'removing'", [input.zimId]);
+      if (!z) throw new AppError("not_found", "That knowledge package does not exist.");
+      if (z.state === "missing" || z.state === "importing") throw new AppError("unavailable", "That knowledge package is not available right now. Its file may be missing.", { zimCode: z.state });
+    } else if (input.versionId) {
       const v = this.o.pipeline.getVersion(input.versionId);
       if (!v || (v.status !== "ready" && v.status !== "partial")) throw new AppError("not_found", "That saved copy does not exist.");
     } else if (input.pageId) {
@@ -412,13 +421,14 @@ export class BrowserService {
     if (!fs || !fs.url) return undefined;
     const raw = fs.state;
     const state: FrameStateDto["state"] =
-      raw === "ready" ? "cached" : raw === "partial" ? "partial" : raw === "live-only" ? "live_only" : raw === "queued" ? "queued" : "unavailable";
+      raw === "zim" ? "zim" : raw === "ready" ? "cached" : raw === "partial" ? "partial" : raw === "live-only" ? "live_only" : raw === "queued" ? "queued" : "unavailable";
     if (userId > 0 && !fs.interstitial && fs.pageId) {
       this.o.history.recordFromFrame(userId, frameId, fs.seq ?? fs.at, { url: fs.url, title: fs.title ?? "", pageId: fs.pageId });
     }
     return {
       frameId, url: fs.url, ...(fs.title ? { title: fs.title } : {}), state,
       ...(fs.pageId ? { pageId: fs.pageId } : {}), ...(fs.versionId ? { versionId: fs.versionId } : {}),
+      ...(fs.zimId ? { zimId: fs.zimId, zimPath: fs.zimPath } : {}),
       ...(fs.reader ? { reader: true } : {}), ...(fs.interstitial ? { interstitial: true } : {}),
       at: new Date(fs.at).toISOString(), seq: fs.seq ?? 0,
     };

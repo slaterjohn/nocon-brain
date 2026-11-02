@@ -31,7 +31,7 @@ export interface OnlineSession {
   terms: string[];
   userId?: number;
   plan: OnlinePlan["state"];
-  local: { total: number; partial: number; keys: string[]; byCanon: Map<string, string>; results: Json[] };
+  local: { total: number; partial: number; keys: string[]; byCanon: Map<string, string>; results: Json[]; zimLists: { id: string; name: string; weight: number; keys: string[] }[] };
   items: Map<string, Json>;            // canonical key -> online-only SearchResult (arrival order)
   overlays: Map<string, { alsoOnline: boolean }>;
   seen: Set<string>;                   // canonical keys any provider returned
@@ -61,6 +61,9 @@ export interface OnlineDeps {
   /** Discovery's search collector: addresses a provider returned that are not in the archive. Never receives titles, snippets or the query. */
   onOnlineUrls?: (r: { urls: string[]; storage: StorageKind; ttlSeconds: number }) => void;
 }
+
+/** Canonical key of a result in the fusion: the normalised URL, or the package address for a knowledge-package hit. */
+const resultCanon = (r: Json): string => (r.origin === "zim" ? `zim:${String(r.url)}` : canonicalKey(String(r.url)));
 
 const MAX_EVENTS = 5000;
 const TTL_MS = 30 * 60_000;
@@ -93,17 +96,18 @@ export class OnlineSearch {
   }
 
   /** Registers the session and, when planned, starts the providers. Never throws. */
-  register(searchId: string, plan: OnlinePlan, ctx: { query: string; terms: string[]; response: Json; userId?: number }): void {
+  register(searchId: string, plan: OnlinePlan, ctx: { query: string; terms: string[]; response: Json; userId?: number; zimLists?: { id: string; name: string; weight: number; keys: string[] }[] }): void {
     try {
       this.sweep();
       const results = (ctx.response.results as Json[]) ?? [];
       const byCanon = new Map<string, string>();
-      for (const r of results) byCanon.set(canonicalKey(String(r.url)), String(r.key));
+      for (const r of results) byCanon.set(resultCanon(r), String(r.key));
       const s: OnlineSession = {
         id: searchId, at: Date.now(), query: ctx.query, terms: ctx.terms, userId: ctx.userId, plan: plan.state,
         local: {
           total: Number(ctx.response.total ?? 0), partial: Number((ctx.response.coverage as Json | undefined)?.partial ?? 0),
-          keys: results.map((r) => canonicalKey(String(r.url))), byCanon, results,
+          // A package hit is in the list but is not an archive result: it has its own fusion list (Phase 8).
+          keys: results.filter((r) => r.origin !== "zim").map((r) => canonicalKey(String(r.url))), byCanon, results, zimLists: ctx.zimLists ?? [],
         },
         items: new Map(), overlays: new Map(), seen: new Set(), providers: new Map(), events: [], seq: 0, listeners: new Set(), running: 0, done: false, deadlineHit: false,
         lastReorder: "", saved: new Map(),
@@ -287,6 +291,7 @@ export class OnlineSearch {
     const weights = providerWeights(provs.map((p) => ({ id: p.id, weight: p.weight, keys: p.keys.slice(0, this.setting("onlineTopN")) })), this.setting("rrfSecondaryProviderWeight"));
     const fused = fuse([
       { kind: "local", id: "archive", name: "Archive", weight: this.setting("rrfLocalWeight"), keys: s.local.keys },
+      ...s.local.zimLists.map((l) => ({ kind: "zim" as const, id: l.id, name: l.name, weight: l.weight, keys: l.keys })),
       ...provs.map((p) => ({ kind: "provider" as const, id: p.id, name: p.name, weight: weights.get(p.id) ?? p.weight, keys: p.keys })),
     ], { k: this.setting("rrfK"), topN: this.setting("onlineTopN") });
     const byKey = new Map(fused.map((f) => [f.key, f]));
@@ -391,7 +396,7 @@ export class OnlineSearch {
     const fusedNums = this.refuse(s);
     const byCanon = new Map(fusedNums.map((f) => [f.key, f]));
     for (const r of local) {
-      const f = byCanon.get(canonicalKey(String(r.url)));
+      const f = byCanon.get(resultCanon(r));
       if (f && s.providers.size) { r.fusedRank = f.rank; r.fusedScore = Number(f.score.toFixed(6)); r.attribution = f.sources.map((x) => ({ kind: x.kind, id: x.id, name: x.name, rank: x.rank })); }
     }
     const online: Json[] = this.onlineResults(s).map((i): Json => ({ ...i }));

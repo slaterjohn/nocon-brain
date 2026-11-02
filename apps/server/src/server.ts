@@ -54,6 +54,10 @@ import { ConnectivityGuardedFetcher, isNetworkError, NotImplementedFetcher, type
 import { SettingsService } from "./services/settings.js";
 import { GIB, VolumeService, type VolumeProbes } from "./services/volumes.js";
 import { StorageService } from "./storage/service.js";
+import { WorkerZimSource } from "./zim/source.js";
+import { ZimService } from "./zim/service.js";
+import { ZimContent } from "./zim/content.js";
+import { ZimSearch } from "./zim/search.js";
 import { DiscoveryService } from "./discovery/service.js";
 
 export { buildApp } from "./app.js";
@@ -80,6 +84,7 @@ export { ScheduleService } from "./schedule/service.js";
 export { Scheduler } from "./schedule/scheduler.js";
 export * from "./sources/crawl-port.js";
 export { StorageService } from "./storage/service.js";
+export * from "./zim/index.js";
 export { DiscoveryService } from "./discovery/service.js";
 export * as discoveryPlanner from "./discovery/planner.js";
 export * from "./discovery/settings.js";
@@ -134,6 +139,8 @@ export interface ServerOptions extends BuildOptions {
   archive?: boolean;
   /** Where the archive listener reads captures from. Defaults to an empty in-memory store until the pipeline supplies one. */
   archiveStore?: CaptureStore;
+  /** Knowledge-package (ZIM) readers (Phase 8). Tests shorten the hang watchdog and enable the crash and hang hooks. */
+  zim?: { workerFile?: string | URL; workerExecArgv?: string[]; hangGraceMs?: number; callTimeoutMs?: number; testHooks?: boolean };
   /** Search workers and test flags (task S-01). */
   search?: Partial<Pick<SearchServiceOptions, "searchWorkerFile" | "indexWorkerFile" | "workerExecArgv" | "pollMs" | "batch" | "testFlags" | "autoRebuild">>;
   /** Online search providers (Phase 5). Tests shorten the retry pause. */
@@ -187,6 +194,8 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
   let maintenanceTimer: NodeJS.Timeout | undefined;
   let renderProxy: GuardedProxy | undefined;
   let onlineCloser: (() => Promise<void>) | undefined;
+  let zimSourceRef: WorkerZimSource | undefined;
+  let zimServiceRef: ZimService | undefined;
   let discoveryRef: DiscoveryService | undefined;
 
   const server: NcbServer = {
@@ -373,8 +382,27 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         admission: storage.admission,
       });
 
+      // Knowledge packages (Phase 8): one reader thread per open package, the registry, the listener's content provider and federated search.
+      let zimRef: ZimService | undefined;
+      let sourcesRef: SourceService | undefined;
+      const zimSource = new WorkerZimSource({
+        workerFile: opts.zim?.workerFile, workerExecArgv: opts.zim?.workerExecArgv, cacheMb: config.NCB_ZIM_CACHE_MB, hangGraceMs: opts.zim?.hangGraceMs,
+        callTimeoutMs: opts.zim?.callTimeoutMs, testHooks: opts.zim?.testHooks, log: app.log, onHealth: (id, h, d) => zimRef?.onHealth(id, h, d),
+      });
+      zimSourceRef = zimSource;
+      const zim = new ZimService({
+        db, clock, source: zimSource, volumes, activity, allowedRoots: config.NCB_VOLUMES_ALLOWED_ROOTS, log: app.log,
+        createSource: (z) => sourcesRef?.createKnowledgePackageSource(z) ?? null,
+        onChanged: () => storage.usage.invalidate(),
+      });
+      zimRef = zim;
+      zimServiceRef = zim;
+      volumes.extraUsedBytes = (volumeId) => zim.usage(volumeId).copiedBytes;
+      storage.usage.zim = zim;
+      const zimSearch = new ZimSearch({ db, zim, source: zimSource });
+      const zimContent = new ZimContent({ zim, source: zimSource });
       const store: CaptureStore = opts.archiveStore ?? new SqliteCaptureStore({
-        db, blobs, urlKey: deps.urlKey, connectivity: () => (connectivity.snapshot().state === "offline" ? "offline" : "online"),
+        db, blobs, urlKey: deps.urlKey, connectivity: () => (connectivity.snapshot().state === "offline" ? "offline" : "online"), zim: zimContent,
       });
       archive?.attach({ store });
 
@@ -409,13 +437,13 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       const schedules = new ScheduleService({ db, clock });
       let libraryRef: LibraryService | undefined;
       let crawlRef: CrawlService | undefined;
-      const sources = new SourceService({
+      const sources: SourceService = new SourceService({
         db, clock, settings, schedules, pipeline, crawl: opts.crawlPort ?? new EngineCrawlPort(() => crawlRef!, () => settings.internal("resources").profile), fetcher: discoveryFetcher, queue, activity, events,
         volumeId: (pid) => db.get<{ id: number }>("SELECT id FROM volumes WHERE public_id = ?", [pid])?.id,
         deletePage: (pid) => { libraryRef?.deletePage(pid, { confirmProtected: true, exclude: true }); },
         onCollectionsChanged: (id) => collections.backfillSource(id),
         onReferencesChanged: (ids) => { storage.priority.recomputePages(ids); storage.usage.invalidate(); },
-        refresh, previewRobots: robots,
+        refresh, previewRobots: robots, zim: { service: zim, source: zimSource },
         freeBytes: () => {
           const room = volumes.list().filter((v) => v.state === "online").map((v) => Math.max(0, (v.statFree ?? 0) - v.reserveFreeBytes));
           return room.length ? Math.max(...room) : undefined;
@@ -429,6 +457,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       const bookmarks = new BookmarksService({ db, clock, settings, pipeline, onReferencesChanged: (ids) => { storage.priority.recomputePages(ids); storage.usage.invalidate(); } });
       const library = new LibraryService({ db, clock, pipeline, browser, store, blobs, activity, collections });
       libraryRef = library;
+      sourcesRef = sources;
       // Captures queued while offline wait, held, until the server is no longer known to be offline (the connection is seen
       // again, or "work offline" is switched off).
       events.subscribe((e) => {
@@ -473,6 +502,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         onOnlineUrls: (r) => discoveryRef?.onSearchResults(r),
       });
       search.online = online;
+      search.zim = zimSearch;
       onlineCloser = () => providerHttp.close();
       const coverage = new CoverageService({
         db, clock, online, sources, collections, pipeline, activity, startCrawl: (cfg) => crawl.startCrawl(cfg), profile: () => settings.internal("resources").profile, isOffline: netOffline,
@@ -530,12 +560,13 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
 
       svc = {
         config, clock, main, db, activity, auth, settings, volumes, blobs, storage, connectivity, fetcher, events, queue, runner, pipeline, imports, render, crawl,
-        archive, browser, bookmarks, history, library, sources, collections, schedules, scheduler, downloads, refresh, limits, search, providers, providerRunner, coverage, savedSources, discovery, throttle: new LoginThrottle(clock), guestMatcher,
+        archive, browser, bookmarks, history, library, sources, zim, zimSearch, zimSource, collections, schedules, scheduler, downloads, refresh, limits, search, providers, providerRunner, coverage, savedSources, discovery, throttle: new LoginThrottle(clock), guestMatcher,
       };
       state.attach(svc);
 
       // Startup housekeeping: every volume's leftovers from a crash are removed before any writer runs.
       await volumes.refreshAll();
+      await zim.recover(); // finishes a removal or import a crash interrupted, marks packages whose file has gone
       const cleaned = await blobs.cleanTmpAll(0);
       // Finish any eviction a crash interrupted before anything can write: versions left `evicting`, files marked for deletion.
       await storage.executor.recover();
@@ -589,6 +620,8 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         if (archiveServer?.listening) await new Promise<void>((r) => archiveServer.close(() => r()));
         archiveServer?.closeAllConnections();
         await app.close();
+        await svc?.zim.idle().catch(() => undefined);
+        await zimSourceRef?.shutdown().catch(() => undefined);
         await svc?.search.stop();
         await onlineCloser?.().catch(() => undefined);
         main?.close(); // wal_checkpoint(TRUNCATE), close, release the writer lock

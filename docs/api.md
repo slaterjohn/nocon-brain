@@ -15,8 +15,10 @@ interface Page<T> { items: T[]; nextCursor?: string; total?: number }   // ?limi
 interface ApiError { error: ErrorCode; message: string; details?: unknown; requestId: string }
 type ErrorCode = "bad_request" | "unauthorized" | "forbidden" | "csrf" | "not_found" | "conflict"
   | "rate_limited" | "setup_required" | "offline" | "blocked" | "insufficient_storage"
-  | "provider_error" | "not_implemented" | "internal";
+  | "provider_error" | "not_implemented" | "internal" | "unavailable";
 ```
+
+`unavailable` (HTTP 503) is used when a part of the server that normally works cannot answer right now, for example a knowledge package whose reader has crashed and is restarting (Phase 8). The body carries `details.zimCode`.
 
 - **Auth.** Cookie `ncb_session` (`HttpOnly`, `SameSite=Lax`). Legend used in the tables:
   - **S** session required; **S+C** session and CSRF; **P** public (no session).
@@ -133,7 +135,7 @@ interface FrameState { frameId: string; url: string; title?: string; state: Link
 | GET | `/api/archive/import/limits` | `{ maxBytes, accepted, extensions, description }` for the upload form | S/G |
 | GET | `/api/archive/versions/{id}/import` | For an imported version: `{ versionId, kind, filename, detectedMime, sizeBytes, pageCount, info, importedAt, downloadUrl }`; 404 for a captured web page | S/G |
 | GET | `/api/archive/versions/{id}/original` | The uploaded bytes as a download (`Content-Disposition: attachment`, `nosniff`). HTML is served as `application/octet-stream`, never as a page; PDF as `application/pdf`; Markdown and text as `text/plain`. 404 for a captured web page | S/G |
-| POST | `/api/archive/frame-grants` | Mint a token for a page or version without resolving: `{ pageId \| versionId, mode }` | S+C |
+| POST | `/api/archive/frame-grants` | Mint a token for a page, a version or a knowledge-package entry without resolving: `{ pageId \| versionId, mode }` or `{ zimId, zimPath? }` (Phase 8) | S+C |
 
 **`PATCH /api/archive/pages/{id}` is not part of v1.** The earlier draft listed `{ pin, collections: { add, remove } }`. Adding a page to or removing it from a collection is `POST /api/collections/{id}/items` (`{ add: [{ pageId }], remove: [{ pageId }] }`, section 7). "Pinning" a page is putting it in a collection with a `priorityFloor` (for example Favourites or a collection set to P1); the page's `effectivePriority` follows. The page detail's `collections` shows where a page is. A call to `PATCH /api/archive/pages/{id}` answers 404.
 
@@ -245,7 +247,9 @@ The listener injects one `<style>` block that styles `a[data-ncb-link="partial"|
 ```ts
 interface SearchRequest {
   query: string;
-  scope?: "all" | "offline" | "online" | "images" | "documents";   // "offline" = local + ZIM; "online" = providers only
+  scope?: "all" | "offline" | "online" | "images" | "documents" | "zim";   // "offline" = local + ZIM; "online" = providers only; "zim" = knowledge packages only (Phase 8)
+  zim?: "unified" | "federated" | "off";                            // Phase 8: how package hits join the results; default "unified" (see "Knowledge packages in search")
+  zimIds?: string[];                                                 // Phase 8: search only these packages
   filters?: SearchFilters;
   online?: "auto" | "off" | "on";                                   // auto = per settings and connectivity
   providers?: string[];                                              // subset of enabled provider IDs
@@ -461,7 +465,7 @@ Event order for one run: per provider `provider_started` then `provider_results`
 
 **Result shape for online hits** (`SearchResult` of 6.1 with these values): `origin: "online"`; `availability: "online_only"` (or `"cached"`/`"partial"` when the page is already archived: `pageId` is then set and `actions.open` is the library route); `storage: "transient"` when the provider's storage policy is `none` (Brave), else `"persist"` (meaning storing is allowed, nothing is stored by the search itself); `title` is plain text and `titleHtml`/`snippet` are escaped with `<mark>` as the only markup, so provider HTML never reaches the client as markup; `url` is always http or https with no credentials; `faviconUrl` is always `null` (icons are never fetched from the web); `actions.saveForOffline` is true while the page is not archived. `attribution` lists `{ kind: "provider", id, name, rank }` per provider that returned it and `{ kind: "local", ... }` when the archive has it too.
 
-**Merging.** Weighted reciprocal rank fusion, `score(d) = Σ w_i / (k + rank_i(d))` over the top `search.onlineTopN` (default 30) of each list, `k = search.rrfK` (60). Weights: local list `search.rrfLocalWeight` (1.5); ZIM `search.rrfZimWeight` (1.0, no ZIM lists yet); each provider list `provider.weight` (default 1.0), multiplied by `search.rrfSecondaryProviderWeight` (0.7) for a provider that overlaps an earlier one (order: `priority`, then id) in at least half of the smaller list. Dedup key: the canonical URL (`normaliseUrl` key with tracking parameters stripped; `*.wikipedia.org/wiki/<Title>` becomes `wikipedia:<lang>:<Title>`, so a ZIM or archived copy merges with the live hit and the offline copy wins). Ties: has a local source first, higher fused score, smaller best provider rank, then the canonical URL string. `fusedRank` and `fusedScore` on every result and `attribution[].rank` carry the numbers. Local results keep their position in the response; the fused order is only offered through `reorder_available` and the snapshot (`?order=fused`).
+**Merging.** Weighted reciprocal rank fusion, `score(d) = Σ w_i / (k + rank_i(d))` over the top `search.onlineTopN` (default 30) of each list, `k = search.rrfK` (60). Weights: local list `search.rrfLocalWeight` (1.5); ZIM `search.rrfZimWeight` (1.0 per package; Phase 8 supplies the lists, see "Knowledge packages in search"); each provider list `provider.weight` (default 1.0), multiplied by `search.rrfSecondaryProviderWeight` (0.7) for a provider that overlaps an earlier one (order: `priority`, then id) in at least half of the smaller list. Dedup key: the canonical URL (`normaliseUrl` key with tracking parameters stripped; `*.wikipedia.org/wiki/<Title>` becomes `wikipedia:<lang>:<Title>`, so a ZIM or archived copy merges with the live hit and the offline copy wins). Ties: has a local source first, higher fused score, smaller best provider rank, then the canonical URL string. `fusedRank` and `fusedScore` on every result and `attribution[].rank` carry the numbers. Local results keep their position in the response; the fused order is only offered through `reorder_available` and the snapshot (`?order=fused`).
 
 **`GET /api/search/{searchId}`: snapshot and polling fallback.** Without parameters: the stored `SearchResponse` with `results` = local results followed by the online results appended so far (with updates applied, `availability` re-read from the archive so a page saved meanwhile shows as cached), a recomputed `coverage`, `online` (with `providers`) and `lastSeq`. `?order=fused` returns the same list in fused order. With `?after=<seq>` it returns `{ searchId, lastSeq, done: boolean, online, events: SearchEvent[] }` (events after `seq`, at most 200; call again with the new `lastSeq` until `done`). Kept 30 minutes; 404 after.
 
@@ -514,6 +518,37 @@ interface Provider {
 **Privacy guarantees (tested).** With online search off, no enabled provider, forced offline, or connectivity offline, no socket is opened to any provider. No telemetry. Remote favicons are never fetched. The search log (`activity_log`) never contains result URLs, titles or snippets; provider errors are logged by provider id and code. Provider credentials are AES-256-GCM encrypted at rest and never returned.
 
 
+### 6.3 Knowledge packages in search (Phase 8, as built, task Z-05)
+
+`POST /api/search` also asks the enabled knowledge packages (ZIM files, section 15) when `scope` is `all`, `offline` or `zim`, the query has words in it, and `page` is 1 and `zim` is not `"off"`. The local index and the packages are queried at the same time; the package half never delays the rest by more than its budget.
+
+- **Per package.** Each package is queried in its own reader with a time budget (`search.zimSearchBudgetMs`, default 800 ms, env `NCB_ZIM_SEARCH_BUDGET_MS`). A package with a full-text index is searched with it (`mode: "fulltext"`); one without falls back to title suggestions (`mode: "titles"`, with a message saying so). Only the bare words and quoted phrases of the query are sent; operators such as `site:` or `-word` do not apply. A package that is slow, stuck or broken is reported (`state: "timeout"` or `"error"`) and the others answer as normal; a package that runs out of time part way reports what it found (`state: "partial"`).
+- **Which packages.** Only those with `enabledForSearch`, not `missing` or `importing`. `filters.languages` keeps those whose language matches (a two-letter code matches the three-letter code a ZIM states: `en` matches `eng`). `zimIds` restricts to named packages. At most `search.zimMaxPackagesPerSearch` (5) are asked, higher priority first, then oldest; the rest are listed in `zim.skipped` with the reason `cap`, `language`, `disabled` or `unavailable`. Each package contributes its top `search.zimHitsPerPackage` (20).
+- **Fusion by rank.** Each package gives a list in its own order. Xapian scores are normalised per query (the best hit is always 100) and cannot be compared between packages or with the local index, so scores are never used: the lists go through the weighted reciprocal rank fusion of 6.2 (`k = search.rrfK`, local list 1.5, each package list `search.rrfZimWeight` = 1.0). In `unified` mode the fused order is `results`: all local results of the page, with at most `ceil(pageSize / 2)` (at least 3) package hits among them. `fusedRank`, `fusedScore` and `attribution` (`kind: "zim"`, the package's rank) are set. A later provider fusion (6.2) includes the package lists. Package hits have no canonical web address yet (Z-06 will merge Wikipedia addresses), so they are not de-duplicated against online results.
+- **Modes.** `zim: "unified"` (default) is above. `"federated"` leaves `results` exactly as the local index returned them and reports every package apart in `zim.groups`. `"off"` skips packages (no `zim` block, `tookMs.zim: 0`). `scope: "zim"` searches the packages only: `results` is the fusion of the package lists (up to `pageSize`), `total` is its length, no local search runs (`tookMs.local: 0`) and no provider is called.
+- **Result shape.** `origin: "zim"`, `availability: "zim"`, `zimId`, `zimPath`, `url` and `actions.open` are `zim://{zimId}/{path}` (open it with `POST /api/archive/frame-grants { zimId, zimPath }`), `domain` is the package title, `sourceName` the package title, `faviconUrl` its icon route, `language` the package language. `title` is plain text; `titleHtml` is escaped with the query's words in `<b>`; `snippet` is HTML in which **only `<b>` and `</b>`** survive (no attributes; every other tag is dropped, `<script>` and `<style>` content with it; stray `<`, `>` and `&` are escaped; unbalanced `<b>` is balanced; at most 400 characters of text). Package hits use `<b>` where archive hits use `<mark>`: the markup is whatever the package produced.
+
+```ts
+interface ZimSearchBlock {                 // `zim` on the response; absent with zim: "off" or when the search did not ask packages
+  state: "ok" | "none";                    // none: no package could be asked (none enabled, language filter, only operators)
+  mode: "unified" | "federated";
+  scope: "mixed" | "zim";
+  budgetMs: number; tookMs: number;
+  shown: number;                           // package hits among `results`
+  groups: {
+    zimId: string; title: string; language: string | null; flavour: string | null;
+    mode: "fulltext" | "titles";
+    state: "ok" | "partial" | "timeout" | "error";
+    message?: string;                      // plain words: why the list is short, or that only titles were searched
+    estimatedMatches: number; tookMs: number;
+    hits: SearchResult[];                  // the package's own order; fusedRank and fusedScore set in unified mode
+  }[];
+  skipped: { zimId: string; title: string; reason: "cap" | "language" | "disabled" | "unavailable" }[];
+}
+```
+
+The settings are in the `search` group: `zimSearchBudgetMs` (100 to 10000), `zimMaxPackagesPerSearch` (1 to 20), `zimHitsPerPackage` (1 to 50), `rrfZimWeight` (0 to 10). `GET /api/search/{searchId}` returns the stored response with the `zim` block.
+
 ## 7. Sources and collections
 
 | Method | Path | Purpose | Auth |
@@ -559,7 +594,7 @@ type ItemRef = { pageId: string } | { zimId: string; path: string };
 
 Implementation notes (server, Phase 3: C-06, C-07, C-09, C-13). Differences from the contract above:
 
-- **Source types.** `single_page`, `website`, `section`, `linked_collection`, `sitemap`, `feed` and `imported_documents` work. `saved_search` (the source type, scheduled searches) and `knowledge_package` are refused at create with a 400 field error on `type` that names the phase that brings them. `adapter: "http"` is accepted (and `"import"` for `imported_documents`). For the web types `startUrl` is required, must be `http(s)` and may not carry a username or password. An `imported_documents` source takes no `startUrl` (400 if one is sent); it holds uploaded files (`POST /api/archive/import?sourceId=`), and `POST /api/sources/{id}/run` on it answers 409 (nothing to run).
+- **Source types.** `single_page`, `website`, `section`, `linked_collection`, `sitemap`, `feed` and `imported_documents` work. `saved_search` (the source type, scheduled searches) is refused at create with a 400 field error on `type` that names the phase that brings it. `knowledge_package` is created with `zimId` (Phase 8, section 15.1) and not through the web-source rules. `adapter: "http"` is accepted (and `"import"` for `imported_documents`). For the web types `startUrl` is required, must be `http(s)` and may not carry a username or password. An `imported_documents` source takes no `startUrl` (400 if one is sent); it holds uploaded files (`POST /api/archive/import?sourceId=`), and `POST /api/sources/{id}/run` on it answers 409 (nothing to run).
 - **Config.** `SourceInput.config` is partial; omitted limits come from the named `profile` (`focused`, `balanced`, `comprehensive`), clamped to the ceilings of the resource profile; `custom` starts from `balanced`. A single page is forced to depth 0 and one page; sitemaps and feeds to depth 0; a section gets `allowedPaths` under the start folder; a linked collection allows one external hop. `linkWeights` keys are `main|heading|related|nav|footer`. Extra fields: `maxLinksPerPage`, `userAgentSuffix`, `sitemapMaxDepth` (default 3). The response carries `config` (the resolved, stored config) and `configVersion`; a `PATCH` that changes the resolved config stores a new `source_configs` version, other fields are updated in place.
 - **Ceilings** (400, one field message each, e.g. `config.maxPages`; they never exceed the crawl engine's own): pi-lite depth 5, pages 5,000, bytes 2 GiB, duration 6 h, concurrency 2, retries 3, external depth 1, request delay at least 1,500 ms. standard depth 10, pages 100,000, bytes 20 GiB, duration 72 h, concurrency 8, retries 5, external depth 2, delay at least 1,000 ms.
 - **Built-in sources.** Quick saves (`quick_saves`, P3), Browsing cache (`browsing_cache`, P4) and Imports (`imports`, P3, no automatic eviction) exist from the first start (`GET /api/sources?system=true`). They cannot be deleted; only `priority`, `retention`, `automaticEviction` and `enabled` can be changed (409 otherwise). `POST /api/browser/save` and `POST /api/archive/capture` link the page to Quick saves (`page_sources`); `sourceId` on `/api/archive/capture` names another source instead (404 if unknown).
@@ -1195,17 +1230,79 @@ History recording is a user setting (`privacy.history.enabled`, default on, loca
 
 ## 15. ZIM packages and Wikipedia
 
+Knowledge packages (ZIM files) are built in Phase 8, tasks Z-01 to Z-05 and Z-09 (Z-06 to Z-08 follow). **Phase 8 as built** is below; the Wikipedia client and crawl (Z-07, Z-08) and `resolve` for Wikipedia addresses (Z-06) are not built yet, so `POST /api/wikipedia/preview` answers 404 for now.
+
 | Method | Path | Purpose | Auth |
 |---|---|---|---|
-| GET | `/api/zim/packages` | List with metadata and state | S/G |
-| POST | `/api/zim/packages/import` | `{ path, volumeId?, copy: boolean }` registers a file already under an allowed root (`copy:false` reads it where it is); validates header, UUID, metadata; creates a `zim_import` download job | S+C |
+| GET | `/api/zim/packages` | List with metadata and state. `?language=en` (639-1 or 639-3), `?enabledForSearch=`, `?state=` | S/G |
+| POST | `/api/zim/packages/import` | Registers a `.zim` file already under an allowed root (see below). 201, or 202 for `copy` with `async: true` | S+C |
 | GET | `/api/zim/packages/{id}` | Detail incl. attribution and licence | S/G |
-| PATCH | `/api/zim/packages/{id}` | `{ enabledForSearch?, priority? }` | S+C |
-| DELETE | `/api/zim/packages/{id}` | Safe removal: `?dryRun=true` lists bookmarks, collection items and sources that reference it; `confirm=true` removes them and the file | S+C |
-| GET | `/api/zim/packages/{id}/search` | `?q=&limit=` search inside one package | S/G |
-| GET | `/api/zim/packages/{id}/suggest` | `?q=` title suggestions | S/G |
-| GET | `/api/zim/packages/{id}/entry` | `?path=` entry metadata (exists, redirect target, mime) | S/G |
+| PATCH | `/api/zim/packages/{id}` | `{ enabledForSearch?, priority?, licenseName?, licenseUrl?, attribution? }` | S+C |
+| DELETE | `/api/zim/packages/{id}` | Safe removal: `?dryRun=true` lists what refers to the package and changes nothing; without `confirm=true` it answers 409 with the same list when anything refers to it; `?confirm=true` removes the references and the package | S+C |
+| GET | `/api/zim/packages/{id}/references` | The dry-run list as a plain GET | S+C |
+| POST | `/api/zim/packages/{id}/verify` | `{ deep?: boolean }` checks the file is there with its size, then the structure (`deep` also the embedded checksum). `{ ok, checks[], package }` | S+C |
+| GET | `/api/zim/packages/{id}/search` | `?q=&limit=` search inside one package (full text, or titles when it has no full-text index) | S/G |
+| GET | `/api/zim/packages/{id}/suggest` | `?q=&limit=` title suggestions | S/G |
+| GET | `/api/zim/packages/{id}/entries` | `?limit=&cursor=` the articles by title (the cursor is the last title shown) | S/G |
+| GET | `/api/zim/packages/{id}/entry` | `?path=` entry metadata (exists, redirect target, mime type, size) | S/G |
+| GET | `/api/zim/packages/{id}/illustration` | The package's 48 px icon, when it has one | S/G |
+| GET | `/api/zim/status` | Reader processes, restarts, crashes, hangs, package counts by state, usage | S/G |
 | GET | `/api/zim/catalogue` | **Later (task Z-11)**: browse the Kiwix library when online | S |
-| POST | `/api/wikipedia/preview` | `{ title, language, depth, images, preferZim, maxPages }` returns candidate counts per level, estimated requests, time (at 1 request/s), bytes (estimates) and ZIM coverage | S+C |
+| POST | `/api/wikipedia/preview` | **Later (task Z-08)**: `{ title, language, depth, images, preferZim, maxPages }` returns candidate counts per level, estimated requests, time (at 1 request/s), bytes (estimates) and ZIM coverage | S+C |
 
-Browsing a ZIM entry is through the listener (`/a/{token}/z/{zimId}/{path}`); `resolve` returns it when a URL maps to an enabled package. Creating a Wikipedia crawl is `POST /api/sources` with `adapter: "wikipedia"`. Searching across archive, ZIM and online is `POST /api/search` (unified); `GET /api/zim/packages/{id}/search` is the federated component and the "ZIM only" view. **Unified vs federated:** the Search area offers a toggle: unified (one fused list, default) or federated (separate result groups per source with their own order); both use the same endpoints with `view` set in the UI only.
+Browsing a ZIM entry is through the listener (`/a/{token}/z/{zimId}/{path}`), with a token from `POST /api/archive/frame-grants` (below). Searching across archive, ZIM and online is `POST /api/search` (section 6.1, "Knowledge packages in search"); `GET /api/zim/packages/{id}/search` is the single-package form.
+
+### 15.1 Phase 8 as built
+
+**Package object (`ZimPackage`).**
+
+```ts
+interface ZimPackage {
+  id: string;                      // zim_...
+  name: string; title: string; description: string | null;
+  language: string | null;         // ISO 639-3 as the file states it ("eng"), possibly several ("eng,fra")
+  creator: string | null; publisher: string | null; date: string | null; flavour: string | null; tags: string[];
+  uuid: string;                    // the file's identity; one package per UUID
+  state: "importing" | "ready" | "degraded" | "missing" | "removing";
+  stateDetail: string | null;      // plain-words reason for degraded or missing
+  storageMode: "in_place" | "copied";
+  path: string;                    // absolute path of the file that is read
+  volumeId: string | null;         // the volume the file sits on or was copied to
+  sizeBytes: number;
+  checksum: { sha256: string | null; state: "pending" | "done" | "failed" };
+  counts: { articles: number; media: number; entries: number };
+  hasFulltextIndex: boolean; hasTitleIndex: boolean; newNamespaceScheme: boolean;
+  mainPath: string | null; illustrationUrl: string | null;
+  license: { name: string | null; url: string | null; known: boolean };
+  attribution: string | null;      // credit line to show with the content
+  sourceUrl: string | null;
+  priority: "P1" | "P2" | "P3" | "P4";   // default P1
+  neverAutoEvicted: true;
+  enabledForSearch: boolean;
+  sourceId: string | null;         // the knowledge_package source bound to it
+  importedAt: string; lastVerifiedAt: string | null;
+}
+```
+
+**Import.** `POST /api/zim/packages/import` takes `{ path, copy?, volumeId?, priority?, enabledForSearch?, licenseName?, licenseUrl?, attribution?, createSource?, async? }`.
+
+- `path` must be absolute, end in `.zim`, be a regular file and, after symbolic links are followed, sit under one of `NCB_VOLUMES_ALLOWED_ROOTS`. Anything else is 400 with a field error on `path`. Split files (`.zimaa`) are not supported.
+- `copy: false` (default) reads the file where it is. Registering writes nothing but database rows; the SHA-256 is computed afterwards by reading the file once (`checksum.state` goes `pending` to `done`). `copy: true` copies the file to `<volume>/zim/` (streamed, hashed, `fsync`ed, then renamed; the volume must be writable and have room, otherwise 507 `insufficient_storage`) and reads the copy. A copy counts in the volume's used bytes and in the usage figures; the original is left alone. `async: true` answers 202 with `state: "importing"` and finishes in the background.
+- The file is opened in a reader process before anything is stored, so a damaged file is a 400 ("not a valid ZIM package") and never harms the server. A package whose UUID is already registered is 409 `conflict` with `details.existing`. The same path twice is 409.
+- Licence and attribution come from the file's `License`, `Creator`, `Publisher` and `Source` metadata; a Wikipedia/Wikimedia package without a `License` key is recorded as CC BY-SA 4.0. `license.known: false` means the file did not say; the Human can set it with `PATCH`.
+- `createSource` (default true) creates the package's `knowledge_package` source (below).
+- Deviation from the table above: no `zim_import` download job is created; the call itself does the work and the activity log (area `zim`) records it.
+
+**Removal.** `DELETE ?dryRun=true` returns `{ removed: false, plan }` with `plan = { package, deletesFile, fileBytes, references: { bookmarks, collections, sources, history }, needsConfirmation }`. Each reference group has `count` and up to 50 `items`. With references and no `confirm=true` the call is 409 `conflict` and `details` is the same plan. Confirmed removal deletes ZIM-only bookmarks and collection memberships, clears the ZIM reference from bookmarks that also point at an archived page and from history rows, retires the bound source, and deletes the package. The file is deleted only when NoConBrain made it (`storageMode: "copied"`); a file the Human placed is left in place. A removal a crash interrupted is finished at the next start.
+
+**Never evicted.** Packages have a priority (default P1) and count in the storage figures, but no part of the storage system removes one: the eviction planner works on page versions and blobs only, and a package's source cannot have automatic eviction. `GET /api/storage/usage` gains `knowledgePackages: { count, copiedBytes, inPlaceBytes, neverAutoEvicted: true }`. Copied packages are included in `totalBytes`, in the `P1` to `P4` rows (by the package's priority), in the `volume` rows, under kind `zim`, and in a volume's `usedBytes`; files left in place sit outside the volumes and are only counted in `inPlaceBytes`. A volume that holds a package cannot be removed (409).
+
+**Knowledge-package sources.** `POST /api/sources` with `{ type: "knowledge_package", zimId, name?, description?, priority? }` creates the source of an existing package (409 if it already has one; a package imported with `createSource: true` has one already). The source has `adapter: "zim"`, retention `all`, `automaticEviction: false`, and a `knowledgePackage: { id, title, state, sizeBytes }` object. `GET /api/sources/{id}/pages` lists the package's articles by title (items `{ kind: "zim", zimId, path, title, open }`, `total` is the article count, `cursor` the last title); `GET /api/sources/{id}/stats` reports articles and bytes. `PATCH` accepts `name`, `description`, `priority` (shared with the package) and `enabled` (the package's `enabledForSearch`); `automaticEviction: true` is 400. `run` and `refresh` are 409: nothing is downloaded. Deleting the source leaves the package in place.
+
+**Reader processes.** Each open package is read by its own forked child process (`apps/server/src/zim/zim-worker.ts`), started on first use and stopped after five idle minutes. A child process rather than a `worker_threads` thread, because libzim reports a damaged file as an uncaught C++ exception, which aborts the whole process it runs in; the integration suite shows an invalid file killing a thread-based reader's host. A reader that crashes or stops answering (the call's time budget plus a 2 s grace) is killed and restarted; the package is `degraded` meanwhile (activity log entry, `stateDetail`) and returns to `ready` after the next good answer. Searches have a soft time budget (`search.zimSearchBudgetMs`, default 800 ms): the reader checks it between small chunks and returns what it has with `partial: true`. `GET /api/system/status` lists the `zim` worker as `idle`, `down` (a package is degraded) or `disabled` (no packages).
+
+**Listener.** `POST /api/archive/frame-grants` also takes `{ zimId, zimPath? }` and answers the same `FrameInfo` for `/a/{token}/z/{zimId}/{path}` (404 for an unknown package, 503 `unavailable` for a missing or still-importing one). `GET /api/browser/frame-state` reports a package entry as `state: "zim"` with `zimId` and `zimPath`.
+
+### 15.2 Wikipedia (not built yet)
+
+`POST /api/wikipedia/preview`, the Wikipedia crawl and `resolve` of Wikipedia addresses to package entries are tasks Z-06 to Z-08.

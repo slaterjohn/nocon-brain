@@ -2,7 +2,7 @@
 export const ERROR_CODES = [
   "bad_request", "unauthorized", "forbidden", "csrf", "not_found", "conflict", "rate_limited",
   "setup_required", "offline", "blocked", "insufficient_storage", "provider_error",
-  "not_implemented", "internal",
+  "not_implemented", "internal", "unavailable",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -21,6 +21,7 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   provider_error: 502,
   not_implemented: 501,
   internal: 500,
+  unavailable: 503,
 };
 
 export interface ApiError {

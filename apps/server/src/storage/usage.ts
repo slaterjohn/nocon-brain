@@ -2,6 +2,7 @@ import type { Db } from "@ncb/db";
 import type { Clock } from "@ncb/shared";
 import { versionPriorities, type Priority } from "@ncb/storage-planner";
 import type { VolumeService } from "../services/volumes.js";
+import type { ZimService } from "../zim/service.js";
 import type { StorageInventory } from "./inventory.js";
 
 export interface UsageRow {
@@ -24,6 +25,11 @@ export interface UsageReport {
   unreferencedBytes: number;
   items: UsageRow[];
   computedAt: string;
+  /**
+   * Knowledge packages (ZIM files, Phase 8). A copy made into a volume's `zim/` folder is counted in `totalBytes` and in the rows above;
+   * a file left in place is outside the volumes, so it is only listed here. Packages are never evicted: removal is always explicit.
+   */
+  knowledgePackages: { count: number; copiedBytes: number; inPlaceBytes: number; neverAutoEvicted: true };
 }
 
 interface BlobAgg {
@@ -41,6 +47,8 @@ const PRIO_KEYS = ["P1", "P2", "P3", "P4"] as const;
 /** Usage by priority, source, kind and volume (task T-06): exclusive and shared bytes, deduplicated totals, and the `storage_usage_cache`. */
 export class UsageService {
   private dirty = true;
+  /** Set by the server once the knowledge-package registry exists. */
+  zim?: ZimService;
 
   constructor(private readonly o: { db: Db; clock: Clock; inventory: StorageInventory; volumes: VolumeService }) {}
 
@@ -126,13 +134,31 @@ export class UsageService {
         }
       }
     }
+    // Knowledge packages copied onto a volume use its disk: they count under the package's priority, its bound source, kind "zim" and the volume.
+    const pkgs = this.zim?.accounting(volumeInternalId) ?? [];
+    let copiedBytes = 0;
+    let inPlaceBytes = 0;
+    let zimTotal = 0;
+    for (const p of pkgs) {
+      if (p.mode === "in_place") { inPlaceBytes += p.bytes; continue; }
+      copiedBytes += p.bytes;
+      zimTotal += p.bytes;
+      if (by === "priority") row(`P${p.priority}`).exclusiveBytes += p.bytes;
+      else if (by === "source") row(p.sourceId ?? `zim:${p.id}`, p.title).exclusiveBytes += p.bytes;
+      else if (by === "kind") row("zim").exclusiveBytes += p.bytes;
+      else if (by === "volume") {
+        const v = p.volumeRowId == null ? undefined : this.o.volumes.byId(p.volumeRowId);
+        row(v?.publicId ?? String(p.volumeRowId), v?.name).exclusiveBytes += p.bytes;
+      }
+    }
     if (by === "priority") for (const k of PRIO_KEYS) row(k);
     if (by === "volume") for (const v of this.o.volumes.list()) row(v.publicId, v.name);
     const order = by === "priority" ? [...PRIO_KEYS, "unreferenced"] : [...rows.keys()].sort();
     const items = order.filter((k) => rows.has(k)).map((k) => rows.get(k)!);
     return {
-      by, ...(volumePublicId ? { volumeId: volumePublicId } : {}), totalBytes: inScope.reduce((n, b) => n + b.bytes, 0), blobCount: inScope.length,
+      by, ...(volumePublicId ? { volumeId: volumePublicId } : {}), totalBytes: inScope.reduce((n, b) => n + b.bytes, 0) + zimTotal, blobCount: inScope.length,
       unreferencedBytes: unreferenced, items, computedAt: new Date(this.o.clock.now()).toISOString(),
+      knowledgePackages: { count: pkgs.length, copiedBytes, inPlaceBytes, neverAutoEvicted: true },
     };
   }
 

@@ -43,7 +43,10 @@ export function workerStatuses(svc: Services): WorkerStatus[] {
   }
   const off = (name: WorkerStatus["name"]): WorkerStatus => ({ name, state: "disabled" });
   const live = (name: WorkerStatus["name"]): WorkerStatus => (svc.search ? { name, state: svc.search.state === "building" || svc.search.state === "rebuilding" ? (name === "index" ? "busy" : "idle") : "idle" } : off(name));
-  return [runner, extract, live("index"), live("search"), off("zim"), off("renderer")];
+  const zimWorkers = svc.zimSource.workerCount();
+  const zimDegraded = svc.zim.rows().some((x) => x.state === "degraded");
+  const zim: WorkerStatus = zimWorkers === 0 && !zimDegraded ? { name: "zim", state: svc.zim.rows().length ? "idle" : "disabled" } : { name: "zim", state: zimDegraded ? "down" : "idle" };
+  return [runner, extract, live("index"), live("search"), zim, off("renderer")];
 }
 
 type Health = "ok" | "degraded" | "starting";

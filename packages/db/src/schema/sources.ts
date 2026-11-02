@@ -34,6 +34,7 @@ export const sources = sqliteTable(
     enabled: integer("enabled").notNull().default(1),
     systemKind: text("system_kind", { enum: SYSTEM_SOURCE_KINDS }),
     savedSearchId: integer("saved_search_id"),
+    zimPackageId: integer("zim_package_id"),
     pausedAt: integer("paused_at"),
     lastRunAt: integer("last_run_at"),
     nextRunAt: integer("next_run_at"),

@@ -54,6 +54,21 @@ export interface ZimEntry {
   body: Buffer;
   /** Path to redirect to (relative to the same ZIM), when the entry is a redirect. */
   redirectTo?: string;
+  /** The package's UUID: part of the `ETag`, because a ZIM never changes. */
+  uuid?: string;
+}
+
+/** What the listener needs to know about a package to serve and link its entries. */
+export interface ZimPackageRef {
+  zimId: string;
+  title: string;
+  uuid: string;
+  /** False for ZIMs written before libzim 7: their article paths hide an `A/` prefix and other namespaces show as `I/`, `-/`. */
+  newNamespaceScheme: boolean;
+  mainPath: string | null;
+  language?: string | null;
+  licenseName?: string | null;
+  attribution?: string | null;
 }
 
 export interface CaptureStore {
@@ -72,6 +87,10 @@ export interface CaptureStore {
   /** Called in batches with the version ids served since the last flush (`last_accessed_at`). */
   touchVersions(versionIds: string[], atMs: number): Promise<void> | void;
   getZimEntry?(zimId: string, path: string): Promise<ZimEntry | null>;
+  /** The package behind a `z/{zimId}` URL, or null when it is unknown, not ready or not open. */
+  zimPackage?(zimId: string): Promise<ZimPackageRef | null>;
+  /** Which of these paths exist in the package (one batch per page, for link states). */
+  zimExists?(zimId: string, paths: string[]): Promise<Set<string>>;
 }
 
 export class BufferAsset implements AssetHandle {
@@ -102,6 +121,7 @@ export class MemoryCaptureStore implements CaptureStore {
   private readonly latest = new Map<string, string>();
   private readonly links = new Map<string, LinkTarget>();
   private readonly zims = new Map<string, ZimEntry>();
+  private readonly zimPackages = new Map<string, ZimPackageRef>();
   online: "online" | "offline" = "online";
   readonly touched: { ids: string[]; at: number }[] = [];
 
@@ -135,6 +155,11 @@ export class MemoryCaptureStore implements CaptureStore {
 
   setZimEntry(zimId: string, path: string, entry: ZimEntry): this {
     this.zims.set(`${zimId}/${path}`, entry);
+    return this;
+  }
+
+  setZimPackage(ref: ZimPackageRef): this {
+    this.zimPackages.set(ref.zimId, ref);
     return this;
   }
 
@@ -176,5 +201,15 @@ export class MemoryCaptureStore implements CaptureStore {
   }
   async getZimEntry(zimId: string, path: string) {
     return this.zims.get(`${zimId}/${path}`) ?? null;
+  }
+  async zimPackage(zimId: string): Promise<ZimPackageRef | null> {
+    const set = this.zimPackages.get(zimId);
+    if (set) return set;
+    // A package with entries but no explicit registration behaves as a current-scheme package.
+    for (const k of this.zims.keys()) if (k.startsWith(`${zimId}/`)) return { zimId, title: zimId, uuid: zimId, newNamespaceScheme: true, mainPath: null };
+    return null;
+  }
+  async zimExists(zimId: string, paths: string[]) {
+    return new Set(paths.filter((p) => this.zims.has(`${zimId}/${p}`)));
   }
 }

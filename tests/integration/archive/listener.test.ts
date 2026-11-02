@@ -38,6 +38,7 @@ function buildStore(): MemoryCaptureStore {
     .setLink("https://site.example/gone", { kind: "unavailable" })
     .setLink("https://en.wikipedia.org/wiki/Cat", { kind: "zim", zimId: "wiki", path: "Cat" })
     .setZimEntry("wiki", "Cat", { contentType: "text/html", body: Buffer.from(`<html><body><script>alert(1)</script><p>Cat</p><a href="Dog">dog</a><a href="https://x.example/">x</a><img src="I/cat.jpg"></body></html>`) })
+    .setZimEntry("wiki", "Dog", { contentType: "text/html", body: Buffer.from("<p>Dog</p>") })
     .setZimEntry("wiki", "I/cat.jpg", { contentType: "image/jpeg", body: Buffer.from("jpeg") })
     .setZimEntry("wiki", "Old", { contentType: "text/html", body: Buffer.alloc(0), redirectTo: "Cat" });
   return store;
@@ -230,6 +231,7 @@ describe("archive listener routes", () => {
     expect(html).toMatch(/<a href="\/a\/[^"]+\/z\/wiki\/Dog" data-ncb-link="cached">/);
     expect(html).toMatch(/<img src="\/a\/[^"]+\/z\/wiki\/I\/cat\.jpg">/);
     expect(html).toContain("/m?u=https%3A%2F%2Fx.example%2F");
+    expect(html).toContain("From the offline package");
     const red = await h.get(h.url("/z/wiki/Old").replace(h.origin, ""));
     expect(red.status).toBe(302);
     expect(red.headers.get("location")).toMatch(/\/z\/wiki\/Cat$/);
@@ -237,6 +239,42 @@ describe("archive listener routes", () => {
     const img = await h.get(h.url("/z/wiki/I/cat.jpg").replace(h.origin, ""));
     expect(img.headers.get("content-type")).toBe("image/jpeg");
     expect((await h.get(h.url("/z/wiki/Missing").replace(h.origin, ""))).status).toBe(404);
+  });
+
+  it("resolves links in both namespace schemes (old packages hide an A/ prefix on articles)", async () => {
+    const store = new MemoryCaptureStore();
+    const page = `<html><head><link rel="stylesheet" href="../-/style.css"></head><body><a id=a href="../A/Dog">dog</a><a id=b href="/A/Dog#x">dog2</a><a id=c href="Dog">dog3</a><a id=d href="../A/Gone">gone</a><img src="../I/cat.jpg"></body></html>`;
+    // old scheme: libzim shows articles without the prefix and the others as I/ and -/
+    store.setZimPackage({ zimId: "old", title: "Old package", uuid: "u-old", newNamespaceScheme: false, mainPath: "Cat" })
+      .setZimEntry("old", "Cat", { contentType: "text/html", body: Buffer.from(page) })
+      .setZimEntry("old", "Dog", { contentType: "text/html", body: Buffer.from("<p>dog</p>") })
+      .setZimEntry("old", "I/cat.jpg", { contentType: "image/jpeg", body: Buffer.from("jpeg") })
+      .setZimEntry("old", "-/style.css", { contentType: "text/css", body: Buffer.from("body{background:url(../I/cat.jpg)}") });
+    // new scheme: the same document, everything under the root
+    store.setZimPackage({ zimId: "new", title: "New package", uuid: "u-new", newNamespaceScheme: true, mainPath: "Cat" })
+      .setZimEntry("new", "Cat", { contentType: "text/html", body: Buffer.from(page.replace(/\.\.\/A\//g, "").replace("/A/Dog", "/Dog")) })
+      .setZimEntry("new", "Dog", { contentType: "text/html", body: Buffer.from("<p>dog</p>") })
+      .setZimEntry("new", "I/cat.jpg", { contentType: "image/jpeg", body: Buffer.from("jpeg") })
+      .setZimEntry("new", "-/style.css", { contentType: "text/css", body: Buffer.from("body{background:url(../I/cat.jpg)}") });
+    h = await startListener({ store });
+    for (const id of ["old", "new"]) {
+      const html = await (await h.get(h.url(`/z/${id}/Cat`).replace(h.origin, ""))).text();
+      expect(html, id).toMatch(new RegExp(`<a id="a" href="/a/[^"]+/z/${id}/Dog" data-ncb-link="cached">`));
+      expect(html, id).toMatch(new RegExp(`<a id="b" href="/a/[^"]+/z/${id}/Dog#x" data-ncb-link="cached">`));
+      expect(html, id).toMatch(new RegExp(`<a id="c" href="/a/[^"]+/z/${id}/Dog" data-ncb-link="cached">`));
+      expect(html, id).toMatch(new RegExp(`<a id="d"[^>]*href="/a/[^"]+/m\\?u=zim%3A%2F%2F${id}%2FGone"|href="/a/[^"]+/m\\?u=zim%3A%2F%2F${id}%2FGone"[^>]*id="d"`));
+      expect(html, id).toMatch(new RegExp(`<img src="/a/[^"]+/z/${id}/I/cat\\.jpg">`));
+      expect(html, id).toMatch(new RegExp(`href="/a/[^"]+/z/${id}/-/style\\.css"`));
+      // CSS references resolve too
+      const css = await h.get(h.url(`/z/${id}/-/style.css`).replace(h.origin, ""));
+      expect(css.headers.get("content-type")).toMatch(/^text\/css/);
+      expect(await css.text()).toMatch(new RegExp(`/z/${id}/I/cat\\.jpg`));
+    }
+    // an empty path opens the package's main entry
+    const main = await h.get(h.url("/z/old").replace(h.origin, ""));
+    expect(main.status).toBe(302);
+    expect(main.headers.get("location")).toMatch(/\/z\/old\/Cat$/);
+    expectStandardHeaders(main);
   });
 
   it("serves listener static assets under _", async () => {

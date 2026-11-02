@@ -15,6 +15,9 @@ import { toCrawlConfig } from "./crawl-port.js";
 import { previewCrawl, type PreviewEstimate } from "./preview.js";
 import { ceilingsFor, type ResourceProfile } from "./limits.js";
 import { linkPageSource } from "./references.js";
+import { z } from "zod";
+import type { ZimService } from "../zim/service.js";
+import type { ZimSource } from "../zim/source.js";
 import {
   defaultRetention, defaultStrategy, resolveConfig, retentionSpecSchema, sourceInputSchema, sourcePatchSchema, WEB_TYPES,
   type RetentionSpec, type SourceConfig, type SourceInput, type SourceType,
@@ -57,13 +60,15 @@ export interface SourceOut {
   lastStatus: string | null;
   createdAt: string;
   updatedAt: string;
+  /** `knowledge_package` sources only: the package this source reads (Phase 8). */
+  knowledgePackage?: { id: string; title: string; state: string; sizeBytes: number };
 }
 
 interface Row {
   id: number; public_id: string; name: string; description: string | null; type: SourceType; adapter: string; start_url: string | null; strategy: string; profile: string;
   current_config_id: number | null; priority: number; retention_mode: string; retention_json: string; automatic_eviction: number; storage_budget_bytes: number | null;
   preferred_volume_id: number | null; discovery_enabled: number; enabled: number; system_kind: SystemKind | null; paused_at: number | null; last_run_at: number | null;
-  next_run_at: number | null; last_status: string | null; created_at: number; updated_at: number; deleted_at: number | null;
+  next_run_at: number | null; last_status: string | null; created_at: number; updated_at: number; deleted_at: number | null; zim_package_id: number | null;
 }
 
 export interface RunResult {
@@ -104,6 +109,8 @@ export interface SourceServiceOptions {
   /** Free bytes on the best writable volume, for the preview's size warning. */
   freeBytes?: () => number | undefined;
   /** Runs a saved-search source (Phase 5, task O-11): the search, then candidates or downloads. */
+  /** Knowledge packages (Phase 8), for `knowledge_package` sources: browse, statistics and priority. */
+  zim?: { service: ZimService; source: ZimSource };
   runSavedSearch?: (source: { id: number; publicId: string; priority: PriorityNumber }, o: { requestedBy: "user" | "schedule" | "system"; signal?: AbortSignal }) => Promise<RunResult>;
 }
 
@@ -190,7 +197,95 @@ export class SourceService {
       collections: this.db.all<{ public_id: string }>("SELECT c.public_id FROM source_collections sc JOIN collections c ON c.id = sc.collection_id WHERE sc.source_id = ? AND c.deleted_at IS NULL", [r.id]).map((x) => x.public_id),
       schedule, pageCount: this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM page_sources WHERE source_id = ?", [r.id])!.n,
       lastRunAt: iso(r.last_run_at), nextRunAt: iso(r.next_run_at), lastStatus: r.last_status, createdAt: iso(r.created_at)!, updatedAt: iso(r.updated_at)!,
+      ...(r.zim_package_id != null ? this.knowledgeOf(r) : {}),
     };
+  }
+
+  private knowledgeOf(r: Row): { knowledgePackage?: NonNullable<SourceOut["knowledgePackage"]> } {
+    const z = this.db.get<{ public_id: string; title: string; state: string; size_bytes: number }>("SELECT public_id, title, state, size_bytes FROM zim_packages WHERE id = ?", [r.zim_package_id]);
+    return z ? { knowledgePackage: { id: z.public_id, title: z.title, state: z.state, sizeBytes: z.size_bytes } } : {};
+  }
+
+  // ---- knowledge-package sources (Phase 8, task Z-09) ----------------------------------------
+
+  /**
+   * Creates the source that stands for a ZIM package. It lists the package, counts its bytes in storage figures and carries its priority.
+   * Retention is "all" and automatic eviction is off for good: a package leaves only when the Human removes it.
+   */
+  createKnowledgePackageSource(z: { rowId: number; title: string; priority: PriorityNumber; description?: string | null; name?: string }): string {
+    if (this.db.get("SELECT 1 FROM sources WHERE zim_package_id = ? AND deleted_at IS NULL", [z.rowId])) {
+      throw new AppError("conflict", "That knowledge package already has a source.", { fields: [{ in: "body", path: "zimId", message: "Already has a source" }] });
+    }
+    const now = this.o.clock.now();
+    const config = resolveConfig({}, "single_page", "focused", this.resourceProfile);
+    const id = this.db.transaction(() => {
+      const res = this.db.run(
+        `INSERT INTO sources (public_id, name, description, type, adapter, strategy, profile, priority, retention_mode, retention_json, automatic_eviction, zim_package_id, enabled, last_status, created_at, updated_at)
+         VALUES (?, ?, ?, 'knowledge_package', 'zim', 'capture', 'focused', ?, 'all', '{}', 0, ?, 1, 'ok', ?, ?)`,
+        [newId("src"), z.name ?? z.title, z.description ?? null, z.priority, z.rowId, now, now]);
+      const sid = Number(res.lastInsertRowid);
+      const cfg = this.db.run("INSERT INTO source_configs (source_id, version, config_json, created_at) VALUES (?, 1, ?, ?)", [sid, JSON.stringify(config), now]);
+      this.db.run("UPDATE sources SET current_config_id = ? WHERE id = ?", [Number(cfg.lastInsertRowid), sid]);
+      return sid;
+    }, { durable: true });
+    this.o.activity.write({ level: "info", area: "zim", message: `Source created for knowledge package: ${z.title}`, details: { type: "knowledge_package" } });
+    return this.db.get<{ public_id: string }>("SELECT public_id FROM sources WHERE id = ?", [id])!.public_id;
+  }
+
+  private createFromBody(body: unknown): SourceOut {
+    const schema = z.object({
+      name: z.string().trim().min(1, "Enter a name").max(120, "Use at most 120 characters").optional(),
+      description: z.string().trim().max(1000).optional(),
+      type: z.literal("knowledge_package"),
+      adapter: z.literal("zim").optional(),
+      zimId: z.string({ error: "Choose the knowledge package this source reads" }).min(1, "Choose the knowledge package this source reads").max(64),
+      priority: z.union([z.enum(["P1", "P2", "P3", "P4"]), z.number().int().min(1).max(4)]).optional(),
+    }).strict();
+    const v = parseOrThrow(schema, body);
+    const z0 = this.db.get<{ id: number; title: string; priority: number; description: string | null }>("SELECT id, title, priority, description FROM zim_packages WHERE public_id = ? AND state <> 'removing'", [v.zimId]);
+    if (!z0) throw new RequestValidationError([{ in: "body", path: "zimId", message: "Choose a knowledge package that has been added" }]);
+    const priority = (v.priority === undefined ? z0.priority : parsePriority(v.priority)) as PriorityNumber;
+    const pid = this.createKnowledgePackageSource({ rowId: z0.id, title: z0.title, priority, description: v.description ?? z0.description, name: v.name });
+    if (v.priority !== undefined) this.db.run("UPDATE zim_packages SET priority = ?, updated_at = ? WHERE id = ?", [priority, this.o.clock.now(), z0.id]);
+    return this.get(pid);
+  }
+
+  /** Entries of the package behind a `knowledge_package` source, by title (docs/api.md, sources `pages`). */
+  async knowledgePages(publicId: string, o: { limit: number; after?: string }): Promise<{ items: unknown[]; nextCursor?: string; total: number }> {
+    const s = this.rowByPublic(publicId);
+    if (s.zim_package_id == null || !this.o.zim) throw new AppError("conflict", "This source does not read a knowledge package.");
+    const pkg = this.db.get<{ public_id: string; article_count: number }>("SELECT public_id, article_count FROM zim_packages WHERE id = ?", [s.zim_package_id]);
+    if (!pkg) throw new AppError("not_found", "The knowledge package for this source has been removed.");
+    const row = this.o.zim.service.rowByPublic(pkg.public_id);
+    if (!(await this.o.zim.service.ensureOpen(row))) throw new AppError("unavailable", "This knowledge package is not available right now.", { zimCode: "unavailable" });
+    const r = await this.o.zim.source.browse(pkg.public_id, { after: o.after, limit: o.limit });
+    return {
+      items: r.items.map((e) => ({ kind: "zim", zimId: pkg.public_id, path: e.path, title: e.title, open: `/z/${pkg.public_id}/${e.path}` })),
+      total: pkg.article_count, ...(r.next ? { nextCursor: r.next } : {}),
+    };
+  }
+
+  private updateKnowledge(cur: Row, body: unknown): SourceOut {
+    const schema = z.object({
+      name: z.string().trim().min(1, "Enter a name").max(120, "Use at most 120 characters").optional(),
+      description: z.string().trim().max(1000).nullable().optional(),
+      priority: z.union([z.enum(["P1", "P2", "P3", "P4"]), z.number().int().min(1).max(4)]).optional(),
+      enabled: z.boolean().optional(),
+      automaticEviction: z.literal(false, { error: "Knowledge packages are never removed automatically" }).optional(),
+    }).strict();
+    const v = parseOrThrow(schema, body);
+    const now = this.o.clock.now();
+    this.db.transaction(() => {
+      const priority = v.priority === undefined ? cur.priority : (parsePriority(v.priority) as PriorityNumber);
+      this.db.run("UPDATE sources SET name = ?, description = ?, priority = ?, enabled = ?, updated_at = ? WHERE id = ?",
+        [v.name ?? cur.name, v.description === undefined ? cur.description : v.description, priority, (v.enabled ?? cur.enabled === 1) ? 1 : 0, now, cur.id]);
+      // The package is what carries the priority; the source mirrors it, and searches follow `enabled`.
+      if (cur.zim_package_id != null) {
+        this.db.run("UPDATE zim_packages SET priority = ?, enabled_for_search = ?, updated_at = ? WHERE id = ?", [priority, (v.enabled ?? cur.enabled === 1) ? 1 : 0, now, cur.zim_package_id]);
+      }
+    }, { durable: true });
+    this.o.onReferencesChanged?.([]);
+    return this.get(cur.public_id);
   }
 
   get(publicId: string): SourceOut {
@@ -251,6 +346,7 @@ export class SourceService {
   }
 
   create(body: unknown): SourceOut {
+    if ((body as { type?: unknown } | null)?.type === "knowledge_package") return this.createFromBody(body);
     const v = parseOrThrow(sourceInputSchema(this.resourceProfile), body) as unknown as SourceInput;
     const now = this.o.clock.now();
     const strategy = v.strategy ?? defaultStrategy(v.type);
@@ -285,6 +381,7 @@ export class SourceService {
    */
   update(publicId: string, body: unknown): SourceOut {
     const cur = this.rowByPublic(publicId);
+    if (cur.type === "knowledge_package") return this.updateKnowledge(cur, body);
     const patch = parseOrThrow(sourcePatchSchema(this.resourceProfile), body);
     if (cur.system_kind) {
       const forbidden = (["name", "description", "startUrl", "strategy", "profile", "config", "collections"] as const).filter((k) => (patch as Record<string, unknown>)[k] !== undefined);
@@ -391,7 +488,8 @@ export class SourceService {
       this.db.run("DELETE FROM source_discovered_urls WHERE source_id = ?", [cur.id]);
       this.db.run("DELETE FROM schedules WHERE source_id = ?", [cur.id]);
       this.db.run("DELETE FROM download_windows WHERE source_id = ?", [cur.id]);
-      this.db.run("UPDATE sources SET deleted_at = ?, enabled = 0, paused_at = NULL, next_run_at = NULL, updated_at = ? WHERE id = ?", [now, now, cur.id]);
+      // Deleting the source of a knowledge package never touches the package: it stays searchable and can get a new source.
+      this.db.run("UPDATE sources SET deleted_at = ?, enabled = 0, paused_at = NULL, next_run_at = NULL, zim_package_id = NULL, updated_at = ? WHERE id = ?", [now, now, cur.id]);
       return refs;
     }, { durable: true });
 
@@ -442,6 +540,15 @@ export class SourceService {
 
   stats(publicId: string) {
     const s = this.rowByPublic(publicId);
+    if (s.type === "knowledge_package") {
+      const z = s.zim_package_id == null ? undefined : this.db.get<{ article_count: number; size_bytes: number; priority: number; public_id: string }>("SELECT article_count, size_bytes, priority, public_id FROM zim_packages WHERE id = ?", [s.zim_package_id]);
+      return {
+        pages: z?.article_count ?? 0, versions: 0, latestBytes: z?.size_bytes ?? 0,
+        byPriority: z ? [{ priority: priorityToCode(z.priority as PriorityNumber), pages: z.article_count }] : [],
+        lastRuns: [], failedRuns: 0, lastRunAt: iso(s.last_run_at), lastStatus: s.last_status,
+        knowledgePackage: z ? { id: z.public_id, bytes: z.size_bytes, articles: z.article_count } : null,
+      };
+    }
     const byPriority = this.db.all<{ p: number; n: number }>(
       `SELECT COALESCE(ps.priority_override, ?) AS p, COUNT(*) AS n FROM page_sources ps WHERE ps.source_id = ? GROUP BY p ORDER BY p`, [s.priority, s.id]);
     const totals = this.db.get<{ pages: number; versions: number; bytes: number }>(
@@ -488,6 +595,7 @@ export class SourceService {
 
   private async runRow(r: Row, opts: { requestedBy?: "user" | "schedule" | "system"; signal?: AbortSignal; mode?: "refresh" }): Promise<RunResult> {
     if (r.enabled !== 1) throw new AppError("conflict", "This source is switched off. Turn it on before running it.");
+    if (r.type === "knowledge_package") throw new AppError("conflict", "A knowledge package is read from its file, so there is nothing to download or run.");
     if (r.type === "imported_documents") throw new AppError("conflict", "This source holds files you upload. There is nothing to run; add documents with an import instead.");
     const requestedBy = opts.requestedBy ?? "user";
     if (r.type === "saved_search") {

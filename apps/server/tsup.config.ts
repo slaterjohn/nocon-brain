@@ -24,18 +24,18 @@ const cssTreeJson = {
 };
 
 // One bundle for the server process (dist/index.js) and one for worker threads (dist/worker.js).
-// better-sqlite3 is native, so it stays external and is a direct dependency of this package.
+// better-sqlite3 and @openzim/libzim are native, so they stay external and are direct dependencies of this package.
 export default defineConfig({
-  entry: { index: "src/index.ts", worker: "src/worker.ts", "index-worker": "src/search/index-worker.ts", "search-worker": "src/search/search-worker.ts" },
+  entry: { index: "src/index.ts", worker: "src/worker.ts", "index-worker": "src/search/index-worker.ts", "search-worker": "src/search/search-worker.ts", "zim-worker": "src/zim/zim-worker.ts" },
   format: ["esm"],
   target: "node24",
   platform: "node",
   clean: true,
   splitting: false,
   sourcemap: false,
-  noExternal: [/^(?!better-sqlite3)/],
+  noExternal: [/^(?!better-sqlite3|@openzim\/libzim)/],
   esbuildPlugins: [cssTreeJson],
-  external: ["better-sqlite3"],
+  external: ["better-sqlite3", "@openzim/libzim"],
   banner: {
     js: "import { createRequire as __nocon_createRequire } from 'module'; const require = __nocon_createRequire(import.meta.url);",
   },

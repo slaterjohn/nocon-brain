@@ -14,6 +14,9 @@ import { parseOrThrow, RequestValidationError } from "../lib/zod.js";
 import type { SettingsService } from "../services/settings.js";
 import type { ActivityLog } from "../services/activity.js";
 import type { OnlineSearch } from "../online/session.js";
+import { fuse, type RankedList } from "../online/rrf.js";
+import type { ZimSearch, ZimGroup, ZimHit, ZimSearchOutput } from "../zim/search.js";
+import { zimUrl } from "../zim/search.js";
 import type { CheckReport, FromIndexWorker, FromSearchWorker, IndexCommand, IndexStatusReply, IndexWorkerData, SearchReply, SearchRequest, SearchWorkerData } from "./protocol.js";
 
 const iso = (n: number | null | undefined): string | undefined => (n == null ? undefined : new Date(n).toISOString());
@@ -29,9 +32,15 @@ const filtersSchema = z.object({
   languages: z.array(z.string().max(12)).max(20).optional(),
 });
 const scopeSchema = z.enum(["all", "offline", "online", "images", "documents"]);
+/** The search body also accepts `zim`: only the knowledge packages (Phase 8). Saved searches keep the five scopes above. */
+const bodyScopeSchema = z.enum(["all", "offline", "online", "images", "documents", "zim"]);
 export const searchBodySchema = z.object({
   query: z.string().max(MAX_QUERY_LENGTH, `Use at most ${MAX_QUERY_LENGTH} characters`).default(""),
-  scope: scopeSchema.default("all"),
+  scope: bodyScopeSchema.default("all"),
+  /** `unified`: package hits are fused into `results`. `federated`: `results` stay local and the package hits sit in `zim.groups`. `off`: no packages. */
+  zim: z.enum(["unified", "federated", "off"]).default("unified"),
+  /** Search only these packages (`zim_` ids). */
+  zimIds: z.array(z.string().max(64)).max(20).optional(),
   filters: filtersSchema.default({}),
   online: z.enum(["auto", "off", "on"]).default("auto"),
   providers: z.array(z.string().max(64)).max(20).optional(),
@@ -125,6 +134,8 @@ export class SearchService {
   collectionRefresh?: () => Promise<void>;
   /** Set by the server: the online half of combined search (Phase 5). */
   online?: OnlineSearch;
+  /** Set by the server: federated search over knowledge packages (Phase 8). */
+  zim?: ZimSearch;
 
   constructor(private readonly o: SearchServiceOptions) {}
 
@@ -396,18 +407,24 @@ export class SearchService {
     if (!b.query.trim() && !hasAnyCriteria(parsed) && !Object.keys(filters).length) {
       throw new RequestValidationError([{ in: "body", path: "query", message: "Enter something to search for" }]);
     }
-    let out: SearchOutput | undefined;
-    if (b.scope !== "online" && !none) {
+    const localRun = async (): Promise<SearchOutput | undefined> => {
+      if (b.scope === "online" || b.scope === "zim" || none) return undefined;
       try {
         const r = await this.callSearch({
           op: "search",
           params: { query: b.query, page: b.page, pageSize: b.pageSize, filters, typo: b.typo, synonyms: b.synonyms, group: b.group, facets: b.facets, debug: b.debug },
         });
-        if (r.kind === "search") out = r.out;
+        return r.kind === "search" ? r.out : undefined;
       } catch (e) {
         if ((e as { code?: string }).code !== "index_unavailable") throw e;
+        return undefined;
       }
-    }
+    };
+    // Packages and the local index are asked at the same time; the package half never waits longer than its own budget.
+    const wantZim = !!this.zim && b.zim !== "off" && (b.scope === "all" || b.scope === "offline" || b.scope === "zim") && b.page === 1 && b.query.trim() !== "";
+    const tz = performance.now();
+    const [out, zimOut] = await Promise.all([localRun(), wantZim ? this.zimPart(b) : Promise.resolve(undefined)]);
+    const zimMs = wantZim ? Math.round(performance.now() - tz) : 0;
     const empty = !out;
     const hits = out?.hits ?? [];
     const pageIds = hits.flatMap((h) => [h.pageId, ...(h.alsoAt ?? []).map((a) => a.pageId)]);
@@ -430,24 +447,26 @@ export class SearchService {
     const facets = out?.facets ? this.labelFacets(out.facets) : undefined;
     const searchId = ctx.searchIdFor ?? newId("sch");
     const total = out?.total ?? 0;
+    const zimBlock = zimOut ? this.zimBlock(zimOut, b, results as unknown as Record<string, unknown>[]) : undefined;
     let plan: ReturnType<OnlineSearch["plan"]> | undefined;
     try { plan = this.online?.plan({ scope: b.scope, online: b.online, providers: b.providers, page: b.page }); } catch { plan = undefined; }
     const response: Record<string, unknown> = {
       searchId,
       parsed: out?.parsed ?? { terms: parsed.terms.map((t) => t.text), phrases: [], excluded: [], operators: {}, warnings: parsed.warnings },
-      results,
+      results: zimBlock ? zimBlock.results : results,
       ...(out?.didYouMean ? { didYouMean: out.didYouMean as DidYouMean } : {}),
       coverage: { cachedMatches: total, onlineMatches: 0, onlineNotArchived: 0, queued: 0, partial: facets?.availability.find((f) => f.value === "partial")?.count ?? 0, basis: "local_exact" },
       ...(facets ? { facets } : {}),
-      total, totalCapped: out?.totalCapped ?? false, page: b.page, pageSize: b.pageSize,
+      total: b.scope === "zim" && zimBlock ? zimBlock.results.length : total, totalCapped: out?.totalCapped ?? false, page: b.page, pageSize: b.pageSize,
       online: plan ? this.online!.initialBlock(plan) : { state: this.o.isOffline() ? "offline" : "disabled", pending: [], disclosure: "" },
       lastSeq: 0,
-      tookMs: { local: out?.tookMs ?? 0, zim: 0 },
+      tookMs: { local: out?.tookMs ?? 0, zim: zimMs },
+      ...(zimBlock ? { zim: zimBlock.block } : {}),
       index: { state: this.state },
       ...(out?.hasMore ? { nextCursor: String(b.page + 1) } : {}),
       ...(b.debug && out?.plan ? { plan: out.plan } : {}),
     };
-    if (empty && this.state !== "ok") response.warnings = ["The search index is being rebuilt. Results will appear when it is ready."];
+    if (empty && b.scope !== "zim" && this.state !== "ok") response.warnings = ["The search index is being rebuilt. Results will appear when it is ready."];
     this.sessions.set(searchId, { at: Date.now(), body: response });
     this.sweepSessions();
     if (b.record && b.page === 1 && ctx.recordHistory !== false && ctx.userId !== undefined && b.query.trim()) {
@@ -457,9 +476,86 @@ export class SearchService {
     // The local response is complete here. The online half starts afterwards and can never throw into it.
     if (plan && this.online) {
       const p = response.parsed as { terms: string[]; phrases: string[] };
-      this.online.register(searchId, plan, { query: b.query, terms: [...(p.terms ?? []), ...(p.phrases ?? [])], response, userId: ctx.userId });
+      this.online.register(searchId, plan, { query: b.query, terms: [...(p.terms ?? []), ...(p.phrases ?? [])], response, userId: ctx.userId, zimLists: zimBlock?.lists });
     }
     return response;
+  }
+
+  // ---- knowledge packages (Phase 8, task Z-05) ----------------------------------------------
+
+  private async zimPart(b: SearchBody): Promise<ZimSearchOutput | undefined> {
+    if (!this.zim) return undefined;
+    const set = this.o.settings.internal("search") as unknown as Record<string, number>;
+    try {
+      return await this.zim.search(
+        { query: b.query, languages: b.filters.languages, packages: b.zimIds, budgetMs: set.zimSearchBudgetMs!, maxPackages: set.zimMaxPackagesPerSearch!, hitsPerPackage: set.zimHitsPerPackage! },
+        b.zim === "federated" ? "federated" : "unified",
+      );
+    } catch (e) {
+      this.o.log.warn({ err: String(e) }, "package search failed");
+      return undefined;
+    }
+  }
+
+  private zimItem(h: ZimHit, g: ZimGroup, fused?: { rank: number; score: number; sources: { kind: string; id: string; name: string; rank: number }[] }): Record<string, unknown> {
+    const url = zimUrl(h.zimId, h.path);
+    return {
+      key: h.key, url, canonicalUrl: url, title: h.title, titleHtml: h.titleHtml, snippet: h.snippet, origin: "zim" as const, availability: "zim" as const,
+      zimId: h.zimId, zimPath: h.path, domain: g.title, type: "html", ...(g.language ? { language: g.language } : {}),
+      attribution: fused ? fused.sources.map((x) => ({ kind: x.kind, id: x.id, name: x.name, rank: x.rank })) : [{ kind: "zim" as const, id: g.zimId, name: g.title, rank: h.rank }],
+      fusedRank: fused?.rank ?? h.rank, fusedScore: fused ? Number(fused.score.toFixed(6)) : 0, storage: "persist" as const,
+      actions: { open: url, saveForOffline: false },
+      faviconUrl: this.zimIllustration(h.zimId), sourceName: g.title, collections: [],
+    };
+  }
+
+  private zimIllustration(zimId: string): string | null {
+    return this.db.get<{ h: number }>("SELECT has_illustration AS h FROM zim_packages WHERE public_id = ?", [zimId])?.h === 1 ? `/api/zim/packages/${zimId}/illustration` : null;
+  }
+
+  /**
+   * Fuses package lists into the result list by rank (never by score: Xapian scores of different indexes cannot be compared), docs/api.md 6.1.
+   * `unified`: the local page and the package lists go through weighted reciprocal rank fusion into one list. `federated`: `results` stay as
+   * the local index returned them and each package's list is only reported in `zim.groups`. A `zim` scope has no local list at all.
+   */
+  private zimBlock(zo: ZimSearchOutput, b: SearchBody, local: Record<string, unknown>[]): { results: Record<string, unknown>[]; block: Record<string, unknown>; lists: { id: string; name: string; weight: number; keys: string[] }[] } {
+    const set = this.o.settings.internal("search") as unknown as Record<string, number>;
+    const wZim = set.rrfZimWeight!;
+    const lists: RankedList[] = [];
+    if (b.scope !== "zim") lists.push({ kind: "local", id: "archive", name: "Archive", weight: set.rrfLocalWeight!, keys: local.map((r) => String(r.key)) });
+    for (const g of zo.groups) if (g.hits.length) lists.push({ kind: "zim", id: g.zimId, name: g.title, weight: wZim, keys: g.hits.map((h) => h.key) });
+    const fused = fuse(lists, { k: set.rrfK!, topN: Math.max(set.onlineTopN!, set.zimHitsPerPackage!) });
+    const byKey = new Map(fused.map((f) => [f.key, f]));
+    const hitOf = new Map<string, { h: ZimHit; g: ZimGroup }>();
+    for (const g of zo.groups) for (const h of g.hits) hitOf.set(h.key, { h, g });
+    const groups = zo.groups.map((g) => ({
+      zimId: g.zimId, title: g.title, language: g.language, flavour: g.flavour, mode: g.mode, state: g.state, ...(g.message ? { message: g.message } : {}),
+      estimatedMatches: g.estimatedMatches, tookMs: g.tookMs,
+      hits: g.hits.map((h) => this.zimItem(h, g, byKey.get(h.key))),
+    }));
+    let results: Record<string, unknown>[] = local;
+    let shown = 0;
+    if (b.zim !== "federated" || b.scope === "zim") {
+      const cap = b.scope === "zim" ? b.pageSize : Math.max(3, Math.ceil(b.pageSize / 2));
+      const order = fused.map((f) => f.key);
+      const picked: Record<string, unknown>[] = [];
+      const localByKey = new Map(local.map((r) => [String(r.key), r]));
+      for (const key of order) {
+        const l = localByKey.get(key);
+        if (l) {
+          const f = byKey.get(key)!;
+          picked.push({ ...l, fusedRank: f.rank, fusedScore: Number(f.score.toFixed(6)), attribution: f.sources.map((x) => ({ kind: x.kind, id: x.id, name: x.name, rank: x.rank })) });
+          continue;
+        }
+        const zh = hitOf.get(key);
+        if (zh && shown < cap) { picked.push(this.zimItem(zh.h, zh.g, byKey.get(key))); shown++; }
+      }
+      // Local results beyond the fusion's top N keep their order after the fused ones.
+      for (const l of local) if (!picked.includes(l) && !picked.some((p) => p.key === l.key)) picked.push(l);
+      results = picked;
+    }
+    const block = { state: zo.state, mode: b.zim === "federated" && b.scope !== "zim" ? "federated" : "unified", scope: b.scope === "zim" ? "zim" : "mixed", budgetMs: zo.budgetMs, tookMs: zo.tookMs, shown, groups, skipped: zo.skipped };
+    return { results, block, lists: (b.zim === "federated" && b.scope !== "zim" ? [] : zo.groups.filter((g) => g.hits.length).map((g) => ({ kind: "zim" as const, id: g.zimId, name: g.title, weight: wZim, keys: g.hits.map((h) => `zim:${zimUrl(h.zimId, h.path)}`) }))).map((l) => ({ id: l.id, name: l.name, weight: l.weight, keys: l.keys })) };
   }
 
   private docsHint = 0;

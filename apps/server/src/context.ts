@@ -33,6 +33,9 @@ import type { SavedSearchSources } from "./online/saved-source.js";
 import type { ProviderRunner } from "./online/runner.js";
 import type { StorageService } from "./storage/service.js";
 import type { DiscoveryService } from "./discovery/service.js";
+import type { ZimService } from "./zim/service.js";
+import type { ZimSearch } from "./zim/search.js";
+import type { WorkerZimSource } from "./zim/source.js";
 
 /** Everything that exists once the database is open and migrated. */
 export interface Services {
@@ -63,6 +66,10 @@ export interface Services {
   history: HistoryService;
   library: LibraryService;
   sources: SourceService;
+  /** Knowledge packages (Phase 8): the registry, federated search and the per-package reader threads. */
+  zim: ZimService;
+  zimSearch: ZimSearch;
+  zimSource: WorkerZimSource;
   collections: CollectionService;
   schedules: ScheduleService;
   scheduler: Scheduler;

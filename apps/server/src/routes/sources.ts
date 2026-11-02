@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { AppError } from "@ncb/shared";
 import type { ServerState } from "../context.js";
 import { admin } from "../lib/http.js";
 import type { ZodTypeProvider } from "../lib/zod.js";
@@ -69,9 +70,14 @@ export function sourceRoutes(app: FastifyInstance, state: ServerState): void {
     return state.svc.sources.setPaused(req.params.id, false);
   });
 
-  r.get("/api/sources/:id/pages", { config: { auth: "guest" }, schema: { params: idParam, querystring: paging } }, async (req) =>
-    state.svc.sources.pages(req.params.id, { limit: req.query.limit, offset: req.query.cursor ? Number(req.query.cursor) : 0 }),
-  );
+  r.get("/api/sources/:id/pages", { config: { auth: "guest" }, schema: { params: idParam, querystring: paging.extend({ cursor: z.string().max(500).optional() }) } }, async (req) => {
+    // A knowledge-package source lists the package's entries by title; its cursor is the last title shown.
+    if (state.svc.sources.rowByPublic(req.params.id).type === "knowledge_package") {
+      return state.svc.sources.knowledgePages(req.params.id, { limit: req.query.limit, after: req.query.cursor });
+    }
+    if (req.query.cursor !== undefined && !/^\d+$/.test(req.query.cursor)) throw new AppError("bad_request", "That cursor is not valid.", { fields: [{ in: "query", path: "cursor", message: "Use the cursor from the previous page" }] });
+    return state.svc.sources.pages(req.params.id, { limit: req.query.limit, offset: req.query.cursor ? Number(req.query.cursor) : 0 });
+  });
 
   r.get("/api/sources/:id/stats", { config: { auth: "guest" }, schema: { params: idParam } }, async (req) => state.svc.sources.stats(req.params.id));
 }

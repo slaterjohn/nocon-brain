@@ -4,7 +4,10 @@ export interface FrameState {
   url?: string;
   title?: string;
   /** `ready` and `partial` for archived documents; the interstitial records the link state of the address it shows. */
-  state?: "ready" | "partial" | "live-only" | "queued" | "unavailable" | "unsupported";
+  state?: "ready" | "partial" | "live-only" | "queued" | "unavailable" | "unsupported" | "zim";
+  /** A knowledge-package entry (state `zim`): the package's `zim_` id and the entry path. */
+  zimId?: string;
+  zimPath?: string;
   /** The document was the reader view. */
   reader?: boolean;
   /** The listener served its interstitial (an address that is not in the archive) rather than an archived page. */

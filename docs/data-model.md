@@ -400,7 +400,7 @@ RETURNING *;
 
 ### 3.8 ZIM packages
 
-**`zim_packages`**: `id`, `public_id` (`zim_`), `name` (ZIM `Name`), `title`, `description`, `language`, `creator`, `publisher`, `date`, `flavour`, `tags`, `uuid UNIQUE`, `volume_id` FK, `relative_path` (under the volume's `zim/` directory), `size_bytes`, `checksum_sha256`, `article_count`, `media_count`, `has_fulltext_index`, `has_title_index`, `new_namespace_scheme`, `license_name`, `license_url`, `attribution_text`, `priority` (1 to 4; storage accounting and removal safety), `enabled_for_search`, `state` (`importing`, `ready`, `missing`, `removing`), `imported_at`, `last_verified_at`. A ZIM is read directly from its file; it is never extracted. Safe removal refuses (or requires confirmation) when bookmarks or collection memberships reference it, then removes memberships, history references and the file.
+**`zim_packages`**: `id`, `public_id` (`zim_`), `name` (ZIM `Name`), `title`, `description`, `language`, `creator`, `publisher`, `date`, `flavour`, `tags`, `uuid UNIQUE`, `volume_id` FK, `relative_path` (under the volume's `zim/` directory), `size_bytes`, `checksum_sha256`, `article_count`, `media_count`, `has_fulltext_index`, `has_title_index`, `new_namespace_scheme`, `license_name`, `license_url`, `attribution_text`, `priority` (1 to 4; storage accounting and removal safety), `enabled_for_search`, `state` (`importing`, `ready`, `missing`, `removing`), `imported_at`, `last_verified_at`. A ZIM is read directly from its file; it is never extracted. Safe removal refuses (or requires confirmation) when bookmarks or collection memberships reference it, then removes memberships and history references, and the file only when NoConBrain made the copy. Columns added when it was built: section 5.9.
 
 ### 3.9 Index bookkeeping and maintenance
 
@@ -618,6 +618,17 @@ Code: `apps/server/src/discovery` (settings, pure scoring and planner, store, sc
 - **Settings** live in the `discovery` group of `settings` (JSON, defaults all off). The old keys `enabled` and `passiveCandidates` of the Phase 1 stub are replaced (`enabled` stays as the master switch; unknown stored keys are dropped on read). `browser.autoCacheOpened` of Phase 4 is superseded by `discovery.searchDriven.autoCacheOpenedOnlinePages` and is no longer read.
 - **Download jobs** started by discovery have `requested_by = 'discovery'`, `kind = 'capture'` and priority 4; their pages are linked to the source they were filed under (`page_sources.discovered_via` is `link` or `search`, `depth` is the candidate's depth).
 - **Activity log**: discovery writes under area `crawl` (adding an area would need a rebuild of `activity_log` for its `CHECK`).
+
+### 5.9 Phase 8 as built (migration `0014_zim`, tasks Z-01 to Z-05 and Z-09)
+
+Code: `apps/server/src/zim` (reader protocol and process, `ZimSource`, registry service, federated search, snippet sanitiser, listener content provider) and `apps/server/src/routes/zim.ts`. The contract is [api.md section 15](api.md#15-zim-packages-and-wikipedia). Differences from 3.8:
+
+- **`zim_packages`** keeps the columns of 3.8 and adds `storage_mode` (`in_place` or `copied`), `file_path` (the absolute real path that is read; unique), `relative_path` (under the volume root, for copies), `entry_count`, `main_path`, `has_illustration`, `source_url`, `checksum_state` (`pending`, `done`, `failed`), `state_detail`, `updated_at`. `volume_id` is nullable (`ON DELETE RESTRICT`): it is set when the file sits on a registered volume, whether copied there or already inside it. `state` adds `degraded` (reader crashed, hung or failed; clears after the next good answer). `priority` defaults to 1. `uuid` is unique across all packages. `license_name` and `attribution_text` are derived from the file's metadata unless the Human sets them.
+- **`sources.zim_package_id`** (new, `ON DELETE SET NULL`, unique among live sources) binds a `knowledge_package` source (`adapter = 'zim'`, retention `all`, `automatic_eviction = 0`) to its package.
+- **References.** `bookmarks.zim_package_id` and `zim_path`, `history_entries.zim_package_id` and `collection_memberships.zim_package_id` and `zim_path` already existed as plain integers. They are not foreign keys; removal of a package cleans them in one transaction (ZIM-only bookmarks and memberships are deleted, mixed bookmarks and history rows lose the ZIM reference).
+- **Storage.** `volumes` used bytes include copied packages (`zim_packages.size_bytes` where `volume_id` is set and `storage_mode = 'copied'`). The eviction planner and executor read page versions and blobs only, so packages are structurally outside them; the suite `tests/storage-safety/zim-never-evicted.test.ts` asserts it.
+- **Search.** Packages are not in `index.db`; their lists are fetched per search and fused in memory (api.md 6.3).
+- **Activity log.** Area `zim`.
 
 ## 6. Search index database (`index.db`)
 

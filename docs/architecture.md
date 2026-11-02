@@ -41,6 +41,8 @@ Licence: AGPL-3.0, public repository `slaterjohn/nocon-brain`. Why AGPL is compa
  |   - search   x1     read-only index.db connection                  |
  |   - zim      x1     @openzim/libzim reads (crash-isolated by      |
  |                     restart policy, see risk R-17)                 |
+ |     (built as one forked child process per open package: libzim     |
+ |      aborts its whole process on a damaged file, see api.md 15.1)   |
  +-------+--------------------+----------------------+----------------+
          |                    |                      |
    /data (named volume)   /volumes/* (storage     optional containers
@@ -404,7 +406,7 @@ Graceful shutdown (`SIGTERM`): stop claiming jobs, stop accepting new requests, 
 | | `NCB_PRIVATE_NETWORK_ALLOWLIST` | empty | Operator allowlist for intentional LAN crawling; off by default |
 | Providers | `NCB_SEARXNG_URL`, `NCB_BRAVE_API_KEY`, `NCB_MOJEEK_API_KEY` | empty | Seed provider rows on first start only; the app works with none |
 | Search | `NCB_INDEX_CACHE_MB`, `NCB_SEARCH_WORKERS`, `NCB_RRF_K`, `NCB_RRF_LOCAL_WEIGHT` | profile, 1, 60, 1.5 | |
-| ZIM | `NCB_ZIM_CACHE_MB`, `NCB_ZIM_SEARCH_BUDGET_MS` | 16, 800 | libzim cache sizes, per-search time budget |
+| ZIM | `NCB_ZIM_CACHE_MB`, `NCB_ZIM_SEARCH_BUDGET_MS` | 16, 800 | libzim cluster cache per open package (MiB), per-search time budget (default of `search.zimSearchBudgetMs`) |
 | Offline | `NCB_CONNECTIVITY_PROBE_URL` | empty | Optional active probe |
 | Logging | `NCB_LOG_LEVEL`, `NCB_LOG_FORMAT`, `NCB_ACTIVITY_LOG_RETENTION_DAYS` | `info`, `json`, 30 | |
 | Schedules | `NCB_TZ`, `NCB_SCHEDULER_ENABLED`, `NCB_DOWNLOAD_WINDOW`, `NCB_MAINTENANCE_CRON`, `NCB_BACKUP_CRON` | `UTC`, `true`, empty, `0 3 * * *`, empty | |

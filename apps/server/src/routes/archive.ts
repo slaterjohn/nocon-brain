@@ -150,7 +150,7 @@ export function archiveRoutes(app: FastifyInstance, state: ServerState, o: { pro
     {
       config: { auth: "session" },
       schema: {
-        body: z.object({ pageId: z.string().max(64).optional(), versionId: z.string().max(64).optional(), mode: z.enum(["original", "reader"]).default("original") }),
+        body: z.object({ pageId: z.string().max(64).optional(), versionId: z.string().max(64).optional(), zimId: z.string().max(64).optional(), zimPath: z.string().max(2000).optional(), mode: z.enum(["original", "reader"]).default("original") }),
       },
     },
     async (req) => {

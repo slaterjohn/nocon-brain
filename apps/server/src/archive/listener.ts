@@ -6,9 +6,10 @@ import {
   rewriteCss, sanitizeHtml, sanitizeSvgDocument, BASE_CSS, LINK_STATE_CSS, linkStateStyleBlock, normaliseTerm,
   type LinkResolution, type LinkState, type SanitizeOptions,
 } from "@ncb/render";
+import { createHash } from "node:crypto";
 import { archiveHeaders, originOf } from "./headers.js";
 import { AccessBatcher, FrameStateStore } from "./frames.js";
-import { BufferAsset, MemoryCaptureStore, type AssetHandle, type CaptureStore, type LinkTarget, type VersionRef } from "./store.js";
+import { BufferAsset, MemoryCaptureStore, type AssetHandle, type CaptureStore, type LinkTarget, type VersionRef, type ZimPackageRef } from "./store.js";
 import { ArchiveTokenService, type TokenPayload } from "./tokens.js";
 
 /**
@@ -168,8 +169,8 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
       case "m":
         return s.length === 1 ? serveInterstitial(c) : notFound();
       case "z": {
-        if (!a || !ID.test(a) || s.length < 3) return notFound();
-        return serveZim(c, a, [b, ...rest].join("/"));
+        if (!a || !ID.test(a)) return notFound();
+        return serveZim(c, a, s.length < 3 ? "" : [b, ...rest].join("/"));
       }
       case "_":
         return s.length === 2 && a ? serveStatic(c, a) : notFound();
@@ -180,9 +181,9 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
 
   // --- documents ------------------------------------------------------------------------------------------------------
 
-  const linkTools = async (c: Ctx, version: VersionRef | undefined, baseUrl: string, html: string, extraResource?: SanitizeOptions["resource"]) => {
+  const linkTools = async (c: Ctx, version: VersionRef | undefined, baseUrl: string, html: string, extraResource?: SanitizeOptions["resource"], skip?: (abs: string) => boolean) => {
     const found = collectUrls(html, baseUrl);
-    const urls = [...new Set(found.links.map((u) => u.replace(/#.*$/, "")))];
+    const urls = [...new Set(found.links.filter((u) => !skip?.(u)).map((u) => u.replace(/#.*$/, "")))];
     const targets = urls.length ? await store.lookupLinks(urls) : new Map<string, LinkTarget>();
     const offline = store.connectivity() === "offline";
     const table = new ResourceTable();
@@ -244,6 +245,15 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
     const u = c.url.searchParams.get("u") ?? "";
     const from = c.url.searchParams.get("from") ?? "";
     if (!u || u.length > MAX_QUERY_URL) return page(400, "Missing address", "This link has no address to show.", { popups: true });
+    const zimTarget = /^zim:\/\/([A-Za-z0-9_-]{1,64})\/(.*)$/.exec(u);
+    if (zimTarget) {
+      // A link inside a knowledge package whose target the package does not hold (task Z-04).
+      const pkg = store.zimPackage ? await store.zimPackage(zimTarget[1]!) : null;
+      let where = zimTarget[2]!;
+      try { where = decodeURIComponent(where); } catch { /* shown as given */ }
+      const name = pkg ? `“${pkg.title}”` : "this package";
+      return page(200, "Not in this package", `This link leads to “${where}”, which is not in ${name}. Packages are often cut-down copies, so some links lead nowhere.`, { popups: true });
+    }
     const offline = store.connectivity() === "offline";
     let isHttp = false;
     try {
@@ -292,9 +302,9 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
     return { start, end };
   };
 
-  const serveBytes = (c: Ctx, handle: AssetHandle, contentType: string): Out => {
+  const serveBytes = (c: Ctx, handle: AssetHandle, contentType: string, etagOverride?: string): Out => {
     const type = contentType.split(";")[0]!.trim().toLowerCase();
-    const etag = `"${handle.sha256.slice(0, 32)}-${REWRITER_VERSION}"`;
+    const etag = etagOverride ?? `"${handle.sha256.slice(0, 32)}-${REWRITER_VERSION}"`;
     const headers: Record<string, string> = {
       "cache-control": "private, max-age=31536000, immutable",
       etag,
@@ -340,30 +350,92 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
 
   // --- ZIM entries ------------------------------------------------------------------------------------------------------------
 
-  const serveZim = async (c: Ctx, zimId: string, path: string): Promise<Out> => {
-    const entry = store.getZimEntry ? await store.getZimEntry(zimId, path) : null;
-    if (!entry) return page(404, "Not in this knowledge package", "That entry is not in the package.");
-    const zimPath = (p: string, hash = "") => `${c.base}/z/${encodeURIComponent(zimId)}/${p.split("/").map(encodeURIComponent).join("/")}${hash}`;
-    if (entry.redirectTo !== undefined) return { status: 302, headers: { location: zimPath(entry.redirectTo) }, body: "", type: "text/plain; charset=utf-8" };
+  /**
+   * ZIM entries (docs/api.md section 5, task Z-04). Every in-package reference is resolved against a virtual origin `https://zim.invalid/`
+   * whose path is the entry path, which is what a ZIM's own relative links assume (a `..` stops at the root, as in a real ZIM). Packages
+   * written before libzim 7 hide an `A/` prefix on articles, so those resolve against `/A/<path>` and the prefix is removed again.
+   */
+  const ZIM_ORIGIN = "https://zim.invalid";
+  const encPath = (p: string) => p.split("/").map(encodeURIComponent).join("/");
+  const zimHref = (c: Ctx, zimId: string, p: string, hash = "") => `${c.base}/z/${encodeURIComponent(zimId)}/${encPath(p)}${hash}`;
+  const zimPseudoUrl = (zimId: string, p: string) => `zim://${zimId}/${encPath(p)}`;
+
+  const serveZim = async (c: Ctx, zimId: string, rawPath: string): Promise<Out> => {
+    const pkg = store.zimPackage ? await store.zimPackage(zimId) : null;
+    if (!pkg || !store.getZimEntry) return page(404, "Not in this knowledge package", "That package is not available. It may have been removed, or its file may be missing.");
+    if (rawPath === "") {
+      return pkg.mainPath ? { status: 302, headers: { location: zimHref(c, zimId, pkg.mainPath) }, body: "", type: "text/plain; charset=utf-8" } : page(404, "No main page", `“${pkg.title}” has no main page. Search it or browse its entries instead.`);
+    }
+    const entry = await store.getZimEntry(zimId, rawPath);
+    if (!entry) return page(404, "Not in this knowledge package", `That entry is not in “${pkg.title}”. Packages are cut-down copies, so some links lead nowhere.`);
+    if (entry.redirectTo !== undefined) return { status: 302, headers: { location: zimHref(c, zimId, entry.redirectTo) }, body: "", type: "text/plain; charset=utf-8" };
     const type = entry.contentType.split(";")[0]!.trim().toLowerCase();
+    const uuid = entry.uuid ?? pkg.uuid;
+    const etagBase = `"zim-${createHash("sha1").update(`${uuid}\0${rawPath}`).digest("hex").slice(0, 24)}-${REWRITER_VERSION}`;
+    const oldScheme = !pkg.newNamespaceScheme;
+    const baseUrl = `${ZIM_ORIGIN}/${oldScheme ? "A/" : ""}${encPath(rawPath)}`;
+    const inZim = (abs: string) => abs.startsWith(`${ZIM_ORIGIN}/`);
+    /** The package path an absolute virtual URL stands for (no query or fragment), in the form libzim wants. */
+    const toPath = (abs: string): string => {
+      let p = decodeURIComponent(abs.slice(ZIM_ORIGIN.length + 1).replace(/[?#].*$/, ""));
+      if (oldScheme && p.startsWith("A/")) p = p.slice(2);
+      return p;
+    };
+    const safePath = (abs: string): string | null => {
+      try { return toPath(abs); } catch { return null; }
+    };
+    const resource: SanitizeOptions["resource"] = (abs) => (inZim(abs) && safePath(abs) !== null ? zimHref(c, zimId, safePath(abs)!) : null);
+
     if (type === "text/html" || type === "application/xhtml+xml") {
-      const baseUrl = `https://zim.invalid/${encodeURIComponent(zimId)}/${path.split("/").map(encodeURIComponent).join("/")}`;
-      const prefix = `https://zim.invalid/${encodeURIComponent(zimId)}/`;
-      const { link: outside } = await linkTools(c, undefined, baseUrl, entry.body.toString("utf8"));
-      const inZim = (abs: string) => abs.startsWith(prefix);
-      const r = sanitizeHtml(entry.body.toString("utf8"), {
+      const html = entry.body.toString("utf8");
+      const found = collectUrls(html, baseUrl);
+      const wanted = [...new Set([...found.links, ...found.resources].filter(inZim).map(safePath).filter((p): p is string => !!p))].slice(0, 3000);
+      const exists = store.zimExists ? await store.zimExists(zimId, wanted) : new Set(wanted);
+      const { link: outside } = await linkTools(c, undefined, baseUrl, html, undefined, inZim);
+      const missingHref = (p: string) => `${c.base}/m?u=${encodeURIComponent(zimPseudoUrl(zimId, p))}`;
+      const r = sanitizeHtml(html, {
         baseUrl,
-        resource: (abs) => (inZim(abs) ? zimPath(decodeURIComponent(abs.slice(prefix.length).replace(/[?#].*$/, ""))) : null),
+        resource: (abs) => {
+          const p = inZim(abs) ? safePath(abs) : null;
+          return p !== null && exists.has(p) ? zimHref(c, zimId, p) : null;
+        },
         link: (abs) => {
           if (!inZim(abs)) return outside(abs);
+          const p = safePath(abs);
           const hash = abs.includes("#") ? abs.slice(abs.indexOf("#")) : "";
-          return { href: zimPath(decodeURIComponent(abs.slice(prefix.length).replace(/[?#].*$/, "")), hash), state: "cached" };
+          if (p === null || p === "") return { href: missingHref(rawPath), state: "unavailable" };
+          return exists.has(p) ? { href: zimHref(c, zimId, p, hash), state: "cached" } : { href: missingHref(p), state: "unavailable" };
         },
-        inject: { head: showStates() ? linkStateStyleBlock() : "" },
+        inject: { head: showStates() ? linkStateStyleBlock() : "", bodyStart: zimBar(pkg) },
       });
-      return { status: 200, type: "text/html; charset=utf-8", body: r.html, headers: { etag: `"zim-${zimId}-${path.length}-${REWRITER_VERSION}"` } };
+      const etag = `${etagBase}-${createHash("sha1").update(r.html).digest("hex").slice(0, 16)}"`;
+      // Link states depend on what is archived right now, so the document is revalidated each time rather than cached.
+      const headers = { etag, "cache-control": "private, no-cache" };
+      if (c.req.headers["if-none-match"] === etag) return { status: 304, headers };
+      if (framed(c)) frames.record(c.payload.f, { url: zimPseudoUrl(zimId, rawPath), title: r.title || rawPath, state: "zim", zimId, zimPath: rawPath, at: clock.now(), userId: Number(c.payload.u) || 0 });
+      return { status: 200, type: "text/html; charset=utf-8", body: r.html, headers };
     }
-    return serveBytes(c, new BufferAsset(entry.contentType, entry.body), entry.contentType);
+
+    const etag = `${etagBase}"`;
+    const immutable = { etag, "cache-control": "private, max-age=31536000, immutable" };
+    if (c.req.headers["if-none-match"] === etag) return { status: 304, headers: immutable };
+    if (type === "text/css") {
+      if (entry.body.length > MAX_REWRITE_BYTES) return text(413, "Too large.");
+      return { status: 200, type: "text/css; charset=utf-8", headers: immutable, body: rewriteCss(entry.body.toString("utf8"), { baseUrl, resource }) };
+    }
+    if (type === "image/svg+xml") {
+      if (entry.body.length > MAX_REWRITE_BYTES) return text(413, "Too large.");
+      const svg = sanitizeSvgDocument(entry.body.toString("utf8"), { baseUrl, resource });
+      return svg === null ? notFound() : { status: 200, type: "image/svg+xml; charset=utf-8", headers: immutable, body: svg };
+    }
+    return serveBytes(c, new BufferAsset(entry.contentType, entry.body), entry.contentType, etag);
+  };
+
+  /** A thin bar above a package's pages: where the text comes from and under which licence (CC BY-SA asks for it). */
+  const zimBar = (pkg: ZimPackageRef): string => {
+    const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const lic = pkg.licenseName ? ` Licence: ${esc(pkg.licenseName)}.` : "";
+    return `<div data-ncb-zim-bar style="font:12px/1.4 system-ui,sans-serif;padding:4px 10px;background:#f4f4f4;color:#333;border-bottom:1px solid #ddd">From the offline package <b>${esc(pkg.title)}</b>.${lic}</div>`;
   };
 
   // --- static listener assets ------------------------------------------------------------------------------------------------------------

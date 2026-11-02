@@ -495,6 +495,10 @@ export class VolumeService {
   /** Removes a volume row. Refused while any blob lives on it. The files on disk are left alone. */
   remove(publicId: string): void {
     const v = this.require(publicId);
+    const packages = this.o.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM zim_packages WHERE volume_id = ?", [v.id])!.n;
+    if (packages > 0) {
+      throw new AppError("conflict", `This volume still holds ${packages} knowledge package${packages === 1 ? "" : "s"}. Remove ${packages === 1 ? "it" : "them"} first.`, { packages });
+    }
     const blobs = this.o.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM blobs WHERE volume_id = ?", [v.id])!.n;
     if (blobs > 0) {
       throw new AppError("conflict", `This volume still holds ${blobs} stored file${blobs === 1 ? "" : "s"}. Set it to draining and wait for it to empty before removing it.`, { blobs });
@@ -507,8 +511,11 @@ export class VolumeService {
 
   // ---- reporting -----------------------------------------------------------------------------
 
+  /** Bytes on a volume that are not blobs: knowledge packages copied into its `zim/` folder (set by the server). */
+  extraUsedBytes?: (volumeId: number) => number;
+
   usedBytes(volumeId: number): number {
-    return this.o.db.get<{ n: number }>("SELECT COALESCE(SUM(stored_bytes), 0) AS n FROM blobs WHERE volume_id = ?", [volumeId])!.n;
+    return this.o.db.get<{ n: number }>("SELECT COALESCE(SUM(stored_bytes), 0) AS n FROM blobs WHERE volume_id = ?", [volumeId])!.n + (this.extraUsedBytes?.(volumeId) ?? 0);
   }
 
   reservedBytes(volumeId: number): number {

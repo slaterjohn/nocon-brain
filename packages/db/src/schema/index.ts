@@ -9,3 +9,4 @@ export * from "./imports.js";
 export * from "./search.js";
 export * from "./phase6.js";
 export * from "./phase7.js";
+export * from "./phase8.js";

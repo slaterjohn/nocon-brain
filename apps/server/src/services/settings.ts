@@ -80,7 +80,11 @@ export function buildGroupSchemas(config: ResolvedConfig) {
       onlineTopN: intIn(30, 5, 100),
       /** Hard stop for one round of provider requests in a search session. */
       onlineDeadlineMs: intIn(10_000, 1000, 60_000),
-      zimSearchBudgetMs: intIn(800, 100, 10_000),
+      zimSearchBudgetMs: intIn(config.NCB_ZIM_SEARCH_BUDGET_MS, 100, 10_000),
+      /** Most knowledge packages queried for one search (task Z-05). */
+      zimMaxPackagesPerSearch: intIn(5, 1, 20),
+      /** Hits taken from each package for fusion. */
+      zimHitsPerPackage: intIn(20, 1, 50),
     }),
     /** Phase 7 (docs/api.md "Discovery (Phase 7, as built)"). Everything is off by default. */
     discovery: buildDiscoverySchema(),

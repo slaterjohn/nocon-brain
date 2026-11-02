@@ -1,7 +1,8 @@
 import { Readable } from "node:stream";
 import { decodeHtml } from "@ncb/content";
 import type { Db } from "@ncb/db";
-import type { AssetHandle, CaptureStore, DocumentBody, LinkTarget, ReaderBody, ResourceRef, VersionRef } from "../archive/store.js";
+import type { AssetHandle, CaptureStore, DocumentBody, LinkTarget, ReaderBody, ResourceRef, VersionRef, ZimEntry, ZimPackageRef } from "../archive/store.js";
+import type { ZimContent } from "../zim/content.js";
 import type { BlobStore } from "../services/blobs.js";
 
 export interface SqliteCaptureStoreOptions {
@@ -10,6 +11,8 @@ export interface SqliteCaptureStoreOptions {
   /** Normalised dedup key for a URL (the pipeline's `urlKey`). */
   urlKey(url: string): string;
   connectivity(): "online" | "offline";
+  /** Knowledge packages (Phase 8). Without it the listener answers every `z/` URL with its "not available" page. */
+  zim?: ZimContent;
 }
 
 interface VRow {
@@ -127,6 +130,18 @@ export class SqliteCaptureStore implements CaptureStore {
 
   connectivity(): "online" | "offline" {
     return this.o.connectivity();
+  }
+
+  getZimEntry(zimId: string, path: string): Promise<ZimEntry | null> {
+    return this.o.zim ? this.o.zim.entry(zimId, path) : Promise.resolve(null);
+  }
+
+  zimPackage(zimId: string): Promise<ZimPackageRef | null> {
+    return this.o.zim ? this.o.zim.package(zimId) : Promise.resolve(null);
+  }
+
+  zimExists(zimId: string, paths: string[]): Promise<Set<string>> {
+    return this.o.zim ? this.o.zim.exists(zimId, paths) : Promise.resolve(new Set());
   }
 
   touchVersions(versionIds: string[], atMs: number): void {

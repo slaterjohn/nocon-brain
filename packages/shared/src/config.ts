@@ -50,6 +50,10 @@ export const envSchema = z.object({
   NCB_MAX_FETCH_CONCURRENCY: int(2, 1, 64),
   NCB_EXTRACT_WORKERS: int(1, 0, 16),
   NCB_WORKER_MEMORY_MB: int(256, 16, 16384),
+  /** libzim cluster cache per open knowledge package, in MiB (task Z-02). */
+  NCB_ZIM_CACHE_MB: int(16, 1, 4096),
+  /** Time budget for one knowledge package in a combined search, in milliseconds (task Z-05). Default of the `search.zimSearchBudgetMs` setting. */
+  NCB_ZIM_SEARCH_BUDGET_MS: int(800, 100, 10_000),
   NCB_CONTACT: z.string().optional(),
   NCB_CONNECTIVITY_PROBE_URL: z.union([z.literal(""), z.url({ error: "must be empty or an absolute URL" })]).default(""),
   NCB_LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
