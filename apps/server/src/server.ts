@@ -18,8 +18,15 @@ import { SqliteCaptureStore } from "./pipeline/capture-store.js";
 import { BrowserService } from "./services/browser.js";
 import { BookmarksService, HistoryService } from "./services/bookmarks.js";
 import { LibraryService } from "./services/library.js";
+import { CollectionService } from "./collections/service.js";
+import { ScheduleService } from "./schedule/service.js";
+import { Scheduler } from "./schedule/scheduler.js";
+import { EngineCrawlPort, type CrawlPort } from "./sources/crawl-port.js";
+import type { DiscoveryFetcher } from "./sources/discovery/fetch.js";
+import { SourceService } from "./sources/service.js";
 import { ExtractClient } from "./pipeline/extract-client.js";
 import { createPipelineDeps, PipelineService } from "./pipeline/service.js";
+import { CrawlService } from "./crawl/service.js";
 import type { PipelineFaults, PipelineFetcher } from "./pipeline/types.js";
 import { VERSION } from "./version.js";
 import { JobRunner } from "./runtime/runner.js";
@@ -46,6 +53,14 @@ export * from "./services/volumes.js";
 export { handlerFor, JobRunner } from "./runtime/runner.js";
 export { WorkerPool } from "./runtime/pool.js";
 export * from "./pipeline/index.js";
+export * from "./crawl/index.js";
+export { SourceService } from "./sources/service.js";
+export { CollectionService } from "./collections/service.js";
+export { ScheduleService } from "./schedule/service.js";
+export { Scheduler } from "./schedule/scheduler.js";
+export * from "./sources/crawl-port.js";
+export { linkPageSource, sourceReferences } from "./sources/references.js";
+export { collectionReferences } from "./collections/references.js";
 
 export interface ServerOptions extends BuildOptions {
   config: ResolvedConfig;
@@ -69,6 +84,10 @@ export interface ServerOptions extends BuildOptions {
   pipelineFaults?: PipelineFaults;
   /** Stage implementations that replace the built-in ones (the rendering code registers `render_prep`). */
   stageOverrides?: import("./pipeline/types.js").PipelineDeps["stageOverrides"];
+  /** Runs crawl-type source runs (website, section, linked collection). Defaults to the crawl engine (`startCrawl`); tests may replace it. */
+  crawlPort?: CrawlPort;
+  /** Scheduler tick settings (tests use a short `tickMs`). */
+  scheduler?: { tickMs?: number; graceMs?: number };
   /** Start the archive listener on `listen()`. Default true. */
   archive?: boolean;
   /** Where the archive listener reads captures from. Defaults to an empty in-memory store until the pipeline supplies one. */
@@ -228,9 +247,10 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       };
       const robots = new RobotsService({ fetcher: realFetcher, userAgentToken: "NoConBrain", now: () => Date.now() });
       const extractClient = new ExtractClient(pool);
+      const collections = new CollectionService({ db, clock, activity });
       const deps = createPipelineDeps({
         db, clock, blobs, fetcher: captureFetcher, extract: extractClient, activity, events, queue, log: app.log,
-        faults: opts.pipelineFaults, stageOverrides: opts.stageOverrides,
+        faults: opts.pipelineFaults, stageOverrides: opts.stageOverrides, onPageChanged: (id) => collections.onPageChanged(id),
       });
       const pipeline = new PipelineService({
         fetcher: captureFetcher,
@@ -256,9 +276,36 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         }
       };
       const history = new HistoryService({ db, clock, settings, pipeline });
-      const browser = new BrowserService({ db, clock, config, settings, connectivity, pipeline, archive, history, head });
+      // Sitemaps and feeds are read through the same guarded fetcher as captures.
+      const discoveryFetcher: DiscoveryFetcher = {
+        fetch: async (url, o) => {
+          connectivity.assertCanReachInternet({ background: true });
+          try {
+            const r = await realFetcher.fetch(url, { maxBytes: o.maxBytes, accept: o.accept, signal: o.signal });
+            connectivity.recordOutcome({ ok: true });
+            return r;
+          } catch (e) {
+            if (isNetworkError(e) || (e as { code?: string }).code === "network") connectivity.recordOutcome({ ok: false, network: true });
+            throw e;
+          }
+        },
+      };
+      const schedules = new ScheduleService({ db, clock });
+      let libraryRef: LibraryService | undefined;
+      let crawlRef: CrawlService | undefined;
+      const sources = new SourceService({
+        db, clock, settings, schedules, pipeline, crawl: opts.crawlPort ?? new EngineCrawlPort(() => crawlRef!, () => settings.internal("resources").profile), fetcher: discoveryFetcher, queue, activity, events,
+        volumeId: (pid) => db.get<{ id: number }>("SELECT id FROM volumes WHERE public_id = ?", [pid])?.id,
+        deletePage: (pid) => { libraryRef?.deletePage(pid, { confirmProtected: true, exclude: true }); },
+        onCollectionsChanged: (id) => collections.backfillSource(id),
+        crawlControl: { pause: (id) => crawlRef?.pause(id), resume: (id) => crawlRef?.resume(id), cancel: (id) => crawlRef?.cancel(id) },
+      });
+      sources.ensureSystemSources();
+      collections.ensureFavourites();
+      const browser = new BrowserService({ db, clock, config, settings, connectivity, pipeline, archive, history, head, quickSavesSourceId: () => sources.systemId("quick_saves") });
       const bookmarks = new BookmarksService({ db, clock, settings, pipeline });
       const library = new LibraryService({ db, clock, pipeline, browser, store, blobs, activity });
+      libraryRef = library;
       // Captures queued while offline wait, held, until the server is no longer known to be offline (the connection is seen
       // again, or "work offline" is switched off).
       events.subscribe((e) => {
@@ -271,14 +318,21 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         }
       });
 
+      const scheduler = new Scheduler({
+        db, clock, service: schedules, queue, activity, events, tickMs: opts.scheduler?.tickMs, graceMs: opts.scheduler?.graceMs,
+        run: (rowId) => sources.runById(rowId, { requestedBy: "schedule" }).then(() => undefined),
+      });
+      schedules.recomputeAll(clock.now());
+      const crawl = new CrawlService({ db, clock, queue, activity, events, pipeline, robots, log: app.log });
+      crawlRef = crawl;
       const runner = new JobRunner({
         queue, pool, activity, events, clock, log: app.log, pollMs: opts.runnerPollMs, leaseMs: opts.leaseMs,
-        mainHandlers: pipeline.handlers,
+        mainHandlers: crawl.mainHandlers(pipeline.handlers), periodic: () => { scheduler.tick(); },
       });
 
       svc = {
-        config, clock, main, db, activity, auth, settings, volumes, blobs, connectivity, fetcher, events, queue, runner, pipeline,
-        archive, browser, bookmarks, history, library, throttle: new LoginThrottle(clock), guestMatcher,
+        config, clock, main, db, activity, auth, settings, volumes, blobs, connectivity, fetcher, events, queue, runner, pipeline, crawl,
+        archive, browser, bookmarks, history, library, sources, collections, schedules, scheduler, throttle: new LoginThrottle(clock), guestMatcher,
       };
       state.attach(svc);
 
@@ -291,6 +345,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
 
       connectivity.start();
       runner.start(); // recoverOnStartup runs first, then the workers start
+      crawl.start(); // finishes crawls whose last job ended before a crash; watches deadlines
       jumpTimer = setInterval(() => svc?.auth.jumps.check(), 1000);
       jumpTimer.unref();
       maintenanceTimer = setInterval(() => {
@@ -317,6 +372,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         if (maintenanceTimer) clearInterval(maintenanceTimer);
         for (const s of state.streams) s.end();
         svc?.connectivity.stop();
+        svc?.crawl.stop();
         // Stop claiming, let running stages reach a checkpoint, put the rest back on the queue.
         const drain = svc ? await svc.runner.stop(graceMs) : undefined;
         if (svc && drain) svc.activity.write({ level: "info", area: "system", message: "Server stopping", details: drain });

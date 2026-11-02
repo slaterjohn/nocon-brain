@@ -118,11 +118,13 @@ export const status: StageFn = (ctx) => {
     const total = db.get<{ n: number }>("SELECT COALESCE(SUM(a.size_bytes), 0) AS n FROM asset_references r JOIN assets a ON a.id = r.asset_id WHERE r.version_id = ?", [v.id])!.n;
     db.run("UPDATE page_versions SET total_bytes = ? WHERE id = ?", [total, v.id]);
 
-    if (v.downloadJobId) {
+    // A crawl owns its download job (it finishes when the frontier is empty), so a page of a crawl never completes it.
+    if (v.downloadJobId && !db.get("SELECT 1 AS x FROM crawl_jobs WHERE download_job_id = ?", [v.downloadJobId])) {
       db.run(
         `UPDATE download_jobs SET state = 'completed', pages_done = 1, bytes_done = ?, finished_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?`, [total, now, v.downloadJobId]);
     }
     return { superseded: doomed.length, total };
   });
+  ctx.deps.onPageChanged?.(v.pageId);
   return { detail: { status: nextStatus, partialReason: partial, ...result } };
 };

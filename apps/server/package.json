@@ -17,11 +17,13 @@
     "@fastify/cookie": "^11.0.2",
     "@fastify/rate-limit": "^10.3.0",
     "@ncb/content": "workspace:*",
+    "@ncb/crawl": "workspace:*",
     "@ncb/db": "workspace:*",
     "@ncb/fetch": "workspace:*",
     "@ncb/render": "workspace:*",
     "@ncb/shared": "workspace:*",
     "better-sqlite3": "^13.0.3",
+    "cron-parser": "^5.10.3",
     "fastify": "^5.6.0",
     "zod": "^4.6.7"
   },

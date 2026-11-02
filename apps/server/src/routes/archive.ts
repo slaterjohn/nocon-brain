@@ -58,7 +58,7 @@ export function archiveRoutes(app: FastifyInstance, state: ServerState, o: { pro
       const lib = state.svc.library;
       admin(req);
       if (req.query.dryRun) return lib.preview(req.params.id);
-      return lib.deletePage(req.params.id, { confirmProtected: req.query.confirmProtected });
+      return lib.deletePage(req.params.id, { confirmProtected: req.query.confirmProtected, exclude: req.query.exclude });
     },
   );
 
@@ -95,7 +95,8 @@ export function archiveRoutes(app: FastifyInstance, state: ServerState, o: { pro
       admin(req);
       const k = req.headers["idempotency-key"];
       const key = typeof k === "string" && k.length <= 200 ? `${req.url.split("?")[0]}:${k}` : undefined;
-      const out = svc.browser.remember(key, () => svc.browser.save({ url: req.body.url, priority: req.body.priority, queue: req.body.queue }));
+      const sourceId = req.body.sourceId ? svc.sources.resolvePublicId(req.body.sourceId) : undefined;
+      const out = svc.browser.remember(key, () => svc.browser.save({ url: req.body.url, priority: req.body.priority, queue: req.body.queue, sourceId }));
       void reply.code(202);
       return out;
     },

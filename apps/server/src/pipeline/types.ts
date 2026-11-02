@@ -21,6 +21,8 @@ export interface PipelineFetchResult {
   charset?: string | null;
   notModified: boolean;
   truncated?: boolean;
+  /** From a `Retry-After` header on a 429 or 503. */
+  retryAfterMs?: number;
 }
 
 export interface PipelineFetchOptions {
@@ -74,8 +76,12 @@ export interface CaptureOptions {
   requestedBy?: "user" | "schedule" | "discovery" | "search" | "system";
   /** Skip conditional requests and the unchanged check, and always create a version. */
   force?: boolean;
-  /** Plain integer, no foreign key until Phase 3. */
+  /** Source row id. The page is linked to the source (`page_sources`) once it exists. */
   sourceId?: number;
+  /** How the source found this address, stored on the `page_sources` row. Default `manual`. */
+  discoveredVia?: "seed" | "link" | "sitemap" | "feed" | "search" | "manual";
+  /** Link depth from the source's start address, stored on the `page_sources` row. */
+  depth?: number;
   /** Recorded in the activity log when robots.txt was overridden for a user-initiated save (A-04). */
   userInitiated?: boolean;
 }
@@ -134,6 +140,11 @@ export interface PipelineDeps {
   /** Pause between stage attempts. Tests pass a no-op. */
   sleep(ms: number): Promise<void>;
   maxStageAttempts: number;
+  /**
+   * Called after a page was finalised or re-confirmed unchanged, outside any transaction. Collections use it to apply
+   * source collections and automatic rules. Must not throw into the pipeline.
+   */
+  onPageChanged?(pageId: number): void;
   faults?: PipelineFaults;
   /** Replaces a built-in stage. The rendering code registers `render_prep` here. */
   stageOverrides?: Partial<Record<PipelineStage, StageFn>>;

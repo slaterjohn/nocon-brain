@@ -8,6 +8,7 @@ import type { BrowserService, PageSummary, ApiVersionSummary } from "./browser.j
 import type { BlobStore } from "./blobs.js";
 import type { PipelineService } from "../pipeline/service.js";
 import { deleteVersion } from "../pipeline/store.js";
+import { addExclusion } from "../sources/references.js";
 
 export interface DeletePreview {
   versions: number;
@@ -113,17 +114,21 @@ export class LibraryService {
     const protectedPrio = p.effectivePriority != null && p.effectivePriority <= 2;
     return {
       versions, exclusiveBytes: exclusive, sharedBytesKept: shared,
-      references: { sources: [], collections: [], bookmarks, pins: protectedPrio ? [`P${p.effectivePriority}` as "P1" | "P2"] : [] },
+      references: {
+        sources: db.all<{ public_id: string }>("SELECT s.public_id FROM page_sources ps JOIN sources s ON s.id = ps.source_id WHERE ps.page_id = ? AND s.deleted_at IS NULL ORDER BY s.id", [p.id]).map((r) => r.public_id),
+        collections: db.all<{ public_id: string }>("SELECT c.public_id FROM collection_memberships m JOIN collections c ON c.id = m.collection_id WHERE m.page_id = ? AND c.deleted_at IS NULL ORDER BY c.id", [p.id]).map((r) => r.public_id),
+        bookmarks, pins: protectedPrio ? [`P${p.effectivePriority}` as "P1" | "P2"] : [],
+      },
       requiresConfirmation: protectedPrio,
     };
   }
 
   /**
    * Explicit deletion: every version goes with its blob references released, so the storage tidy-up can reclaim what nothing
-   * else uses. Bookmarks that pointed here lose the archive reference but keep the address. (`url_exclusions` arrives with
-   * sources in Phase 3, so a deleted page can be saved again at once.)
+   * else uses. Bookmarks that pointed here lose the archive reference but keep the address. The address is added to `url_exclusions` (unless
+   * `exclude` is false), so crawls skip it; saving it by hand still works.
    */
-  deletePage(idOrPublic: string, opts: { confirmProtected?: boolean } = {}): { deletedVersions: number } {
+  deletePage(idOrPublic: string, opts: { confirmProtected?: boolean; exclude?: boolean } = {}): { deletedVersions: number } {
     const { db, blobs, pipeline, activity } = this.o;
     const p = pipeline.getPage(idOrPublic);
     if (!p) throw new AppError("not_found", "That page is not in the archive.");
@@ -135,6 +140,8 @@ export class LibraryService {
       const targets = db.all<{ to_page_id: number }>("SELECT DISTINCT to_page_id FROM links WHERE from_page_id = ? AND to_page_id IS NOT NULL AND to_page_id <> ?", [p.id, p.id]);
       const versionIds = db.all<{ id: number }>("SELECT id FROM page_versions WHERE page_id = ?", [p.id]);
       for (const v of versionIds) deleteVersion(db, blobs, v.id);
+      // Remember the deletion so a crawl does not fetch the page again. The Human can still save it by hand.
+      if (opts.exclude !== false) addExclusion(db, p.urlKey, null, "deleted_by_user", this.o.clock.now());
       db.run("DELETE FROM pages WHERE id = ?", [p.id]);
       for (const t of targets) {
         db.run(

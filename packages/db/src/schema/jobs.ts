@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import {
   DOWNLOAD_JOB_KINDS, DOWNLOAD_JOB_STATES, DOWNLOAD_REQUESTED_BY, FAILURE_CODES, JOB_QUEUES, JOB_STATES, JOB_TYPES,
 } from "@ncb/shared";
@@ -35,6 +35,8 @@ export const downloadJobs = sqliteTable(
     startedAt: integer("started_at"),
     finishedAt: integer("finished_at"),
     createdAt: integer("created_at").notNull(),
+    /** 1 when the schedule scheduler paused the job at a download-window edge (0006); only those are resumed when it opens. */
+    pausedByWindow: integer("paused_by_window").notNull().default(0),
   },
   (t) => [
     index("download_jobs_state_idx").on(t.state, t.priority, t.queueOrder),
@@ -62,7 +64,38 @@ export const crawlJobs = sqliteTable("crawl_jobs", {
     enum: ["completed", "max_pages", "max_bytes", "max_depth", "deadline", "source_budget", "volume_full", "cancelled"],
   }),
   finishedAt: integer("finished_at"),
+  // Migration 0005 (crawl engine).
+  configJson: text("config_json").notNull().default("{}"),
+  maxDurationMs: integer("max_duration_ms"),
+  startedAt: integer("started_at"),
+  pausedAt: integer("paused_at"),
+  pagesSkipped: integer("pages_skipped").notNull().default(0),
+  stopDetail: text("stop_detail"),
 });
+
+/** Why links were not followed, per crawl (migration 0005). */
+export const crawlSkips = sqliteTable(
+  "crawl_skips",
+  {
+    crawlJobId: integer("crawl_job_id").notNull().references(() => crawlJobs.id, { onDelete: "cascade" }),
+    reason: text("reason").notNull(),
+    count: integer("count").notNull().default(0),
+    sampleUrlsJson: text("sample_urls_json").notNull().default("[]"),
+  },
+  (t) => [primaryKey({ columns: [t.crawlJobId, t.reason] })],
+);
+
+/** Trap-rule counters and small values per crawl (migration 0005). */
+export const crawlCounters = sqliteTable(
+  "crawl_counters",
+  {
+    crawlJobId: integer("crawl_job_id").notNull().references(() => crawlJobs.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    key: text("key").notNull(),
+    value: integer("value").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.crawlJobId, t.kind, t.key] })],
+);
 
 export const jobs = sqliteTable(
   "jobs",

@@ -29,6 +29,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
     "@ncb/content": "workspace:*",
+    "@ncb/crawl": "workspace:*",
     "@ncb/db": "workspace:*",
     "@ncb/fetch": "workspace:*",
     "@ncb/render": "workspace:*",

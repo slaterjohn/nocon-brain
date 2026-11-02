@@ -25,6 +25,8 @@ export interface RunnerOptions {
   mainHandlers?: Record<string, MainJobHandler>;
   mainQueues?: JobQueueName[];
   mainConcurrency?: number;
+  /** Called on every poll, after claiming. For housekeeping that shares the runner's loop, such as the scheduler tick; it throttles itself. */
+  periodic?: () => void;
 }
 
 export type MainJobHandler = (job: Job, ctx: { signal: AbortSignal }) => Promise<void>;
@@ -106,6 +108,7 @@ export class JobRunner {
     this.lastTickAt = this.o.clock.now();
     try {
       this.tickMain();
+      this.runPeriodic();
       if (!pool) return;
       for (;;) {
         const slotId = pool.acquire();
@@ -125,6 +128,14 @@ export class JobRunner {
       this.o.log.error({ err: e instanceof Error ? e.message : String(e) }, "job runner tick failed");
     } finally {
       this.ticking = false;
+    }
+  }
+
+  private runPeriodic(): void {
+    try {
+      this.o.periodic?.();
+    } catch (e) {
+      this.o.log.error({ err: e instanceof Error ? e.message : String(e) }, "periodic task failed");
     }
   }
 

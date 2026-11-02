@@ -1,5 +1,5 @@
 export { PipelineService, createPipelineDeps, RetryJobLater } from "./service.js";
-export type { CaptureResult, PageDetail, VersionResource, VersionDetail, VersionSummary } from "./service.js";
+export type { FetchStoreOutcome, CaptureResult, PageDetail, VersionResource, VersionDetail, VersionSummary } from "./service.js";
 export { ExtractClient } from "./extract-client.js";
 export { runPipeline, BUILTIN_STAGES } from "./orchestrator.js";
 export { supersededBy, parseVersioning, periodStart } from "./policy.js";

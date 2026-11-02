@@ -95,7 +95,7 @@ function fail(deps: PipelineDeps, versionId: number, stage: PipelineStage, messa
     db.run("UPDATE pipeline_stage_runs SET state = 'failed', finished_at = ?, last_error = ? WHERE version_id = ? AND stage = ?", [clock.now(), message.slice(0, 1000), versionId, stage]);
     const v = db.get<{ page_id: number; download_job_id: number | null }>("SELECT page_id, download_job_id FROM page_versions WHERE id = ?", [versionId]);
     db.run("UPDATE page_versions SET status = 'failed', failure_stage = ?, failure_message = ? WHERE id = ?", [stage, message.slice(0, 1000), versionId]);
-    if (v?.download_job_id) {
+    if (v?.download_job_id && !db.get("SELECT 1 AS x FROM crawl_jobs WHERE download_job_id = ?", [v.download_job_id])) {
       const allowed = ["network", "robots_blocked", "ssrf_blocked", "size_cap", "disk_full", "timeout", "http_4xx", "http_5xx", "parse_error", "limit_reached", "internal"];
       db.run("UPDATE download_jobs SET state = 'failed', pages_failed = 1, failure_code = ?, failure_message = ?, finished_at = ? WHERE id = ?", [allowed.includes(code) ? code : "internal", `Stage ${stage}: ${message}`.slice(0, 500), clock.now(), v.download_job_id]);
     }

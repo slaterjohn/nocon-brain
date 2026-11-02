@@ -16,6 +16,11 @@ import type { ArchiveListener } from "./archive/listener.js";
 import type { BrowserService } from "./services/browser.js";
 import type { BookmarksService, HistoryService } from "./services/bookmarks.js";
 import type { LibraryService } from "./services/library.js";
+import type { CrawlService } from "./crawl/service.js";
+import type { SourceService } from "./sources/service.js";
+import type { CollectionService } from "./collections/service.js";
+import type { ScheduleService } from "./schedule/service.js";
+import type { Scheduler } from "./schedule/scheduler.js";
 
 /** Everything that exists once the database is open and migrated. */
 export interface Services {
@@ -34,12 +39,17 @@ export interface Services {
   queue: JobQueue;
   runner: JobRunner;
   pipeline: PipelineService;
+  crawl: CrawlService;
   /** The archive listener, when this process runs one: frame state and token minting. */
   archive?: ArchiveListener;
   browser: BrowserService;
   bookmarks: BookmarksService;
   history: HistoryService;
   library: LibraryService;
+  sources: SourceService;
+  collections: CollectionService;
+  schedules: ScheduleService;
+  scheduler: Scheduler;
   throttle: LoginThrottle;
   /** Returns true when the address may use trusted-LAN read-only access. Null when the mode is off. */
   guestMatcher: ((ip: string) => boolean) | null;

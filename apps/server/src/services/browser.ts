@@ -138,6 +138,8 @@ export interface BrowserServiceOptions {
   pipeline: PipelineService;
   archive?: ArchiveListener;
   history: HistoryService;
+  /** Row id of the built-in "Quick saves" source. Saves made through `save` are linked to it (`page_sources`). */
+  quickSavesSourceId?: () => number;
   /** A guarded `HEAD`; the server wires `@ncb/fetch` through the connectivity guard. */
   head(url: string, signal?: AbortSignal): Promise<Pick<FetchResult, "status" | "finalUrl" | "headers">>;
 }
@@ -440,10 +442,11 @@ export class BrowserService {
 
   /**
    * Creates a capture job for one page. The priority comes from the request or from `browser.quickSavePriority` (the "Quick saves"
-   * default, P3): there is no sources table before Phase 3, so the value is stored on the download job itself.
+   * default, P3). It is stored on the download job and, when it differs from the source's own priority, as `page_sources.priority_override`.
+   * The page is linked to the built-in Quick saves source, or to `sourceId` when the caller names one.
    * Offline, saving needs `queue: true`; the capture then waits, held, until the connection returns.
    */
-  save(input: { url: string; priority?: number; queue?: boolean; requestedBy?: "user" | "search" }): { downloadId: string; url: string; state: "queued"; held: boolean; priority: number } {
+  save(input: { url: string; priority?: number; queue?: boolean; requestedBy?: "user" | "search"; sourceId?: number }): { downloadId: string; url: string; state: "queued"; held: boolean; priority: number } {
     const url = this.normalise(input.url);
     const conn = this.connectivityState();
     const offline = conn === "offline";
@@ -454,7 +457,8 @@ export class BrowserService {
       { canQueue: true, reason: this.o.connectivity.forced ? "forced_offline" : "offline" });
     }
     const priority = (input.priority ?? (this.o.settings.internal("browser") as { quickSavePriority?: number }).quickSavePriority ?? 3) as 1 | 2 | 3 | 4;
-    const { downloadId } = this.o.pipeline.captureUrl(url, { priority, requestedBy: input.requestedBy ?? "user", userInitiated: true });
+    const sourceId = input.sourceId ?? this.o.quickSavesSourceId?.();
+    const { downloadId } = this.o.pipeline.captureUrl(url, { priority, requestedBy: input.requestedBy ?? "user", userInitiated: true, sourceId, discoveredVia: "manual", depth: 0 });
     if (offline) this.o.pipeline.holdCapture(downloadId);
     return { downloadId, url, state: "queued", held: offline, priority };
   }

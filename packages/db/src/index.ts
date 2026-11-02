@@ -2,7 +2,7 @@ export type { Db, RunResult, SqlParams, SqlValue, TransactionOptions } from "./d
 export { BetterSqliteDb, openDb, type OpenOptions } from "./sqlite.js";
 export { WriterLock, WriterLockError } from "./lock.js";
 export {
-  backupBeforeMigration, defaultMigrationsDir, migrate, MigrationError, type MigrateOptions, type MigrationResult,
+  backupBeforeMigration, defaultMigrationsDir, migrate, MigrationError, parseFkDirectives, rebuildWithForeignKeys, type MigrateOptions, type MigrationResult,
 } from "./migrate.js";
 export { openMainDatabase, type MainDatabase, type OpenMainOptions } from "./open.js";
 export * from "./queue/index.js";

@@ -10,6 +10,7 @@ import { runPipeline, type RunOutcome } from "./orchestrator.js";
 import { DEFAULT_VERSIONING, parseVersioning } from "./policy.js";
 import { captureEvent, publishCapture } from "./progress.js";
 import { sha256Hex } from "./store.js";
+import { linkPageSource } from "../sources/references.js";
 import { pageByKey } from "./stages/links.js";
 import {
   DEFAULT_CAPS, type CaptureOptions, type FetchJobPayload, type PipelineDeps, type PipelineFetcher, type PipelineFetchResult,
@@ -21,6 +22,12 @@ export class RetryJobLater extends Error {
     super(message);
   }
 }
+
+/** What the fetch half of a capture found. `unchanged` carries the latest stored version (null when the page has none). */
+export type FetchStoreOutcome =
+  | { kind: "stored"; versionId: number; status: number; finalUrl: string; rawBytes: number; redirects: number }
+  | { kind: "unchanged"; via: "304" | "bytes"; versionId: number | null; status: number; finalUrl: string; redirects: number }
+  | { kind: "http_error"; status: number; retryAfterMs?: number; finalUrl: string };
 
 export type MainHandler = (job: Job, ctx: { signal: AbortSignal }) => Promise<void>;
 
@@ -309,28 +316,22 @@ export class PipelineService {
     publishCapture(this.d.db, this.d.events, id);
   }
 
+  /** Records the source reference for a capture and tells collections about the page. */
+  private linkSource(pageId: number, opts: CaptureOptions): void {
+    if (opts.sourceId !== undefined) {
+      linkPageSource(this.d.db, { pageId, sourceId: opts.sourceId, now: this.d.clock.now(), via: opts.discoveredVia, depth: opts.depth, priority: opts.priority });
+    }
+    this.d.onPageChanged?.(pageId);
+  }
+
   private async handleFetch(job: Job, signal: AbortSignal): Promise<void> {
     const p = job.payload as FetchJobPayload;
     const opts = p.options ?? {};
-    const d = this.d;
     this.markDownload(p.downloadJobId, "running");
     const last = job.attempts >= job.maxAttempts;
-    let res: PipelineFetchResult;
-    const key = d.urlKey(p.url);
-    const page = pageByKey({ deps: d }, key);
-    const versioning = parseVersioning(opts.versioning);
-    const latest = page?.latest_version_id
-      ? d.db.get<{ id: number; etag: string | null; last_modified: string | null; raw_hash: string | null; status: string }>("SELECT id, etag, last_modified, raw_hash, status FROM page_versions WHERE id = ?", [page.latest_version_id])
-      : undefined;
-    const useConditional = !opts.force && versioning.mode === "on_change" && latest && (latest.status === "ready" || latest.status === "partial") && (latest.etag || latest.last_modified);
+    let out: FetchStoreOutcome;
     try {
-      res = await this.o.fetcher.fetch(p.url, {
-        conditional: useConditional ? { etag: latest!.etag, lastModified: latest!.last_modified } : undefined,
-        maxBytes: { ...DEFAULT_CAPS, ...opts.caps }.maxDocumentBytes,
-        accept: ["text/html", "application/xhtml+xml", "text/*", "application/*"],
-        signal,
-        ...({ hooks: { beforeHop: (info: { url: string }) => this.beforeHop(info.url, p, opts) } } as object),
-      });
+      out = await this.fetchAndStore(p, signal, (u) => this.beforeHop(u, p, opts), true);
     } catch (e) {
       const code = failureCodeFor(e);
       const msg = e instanceof Error ? e.message : String(e);
@@ -349,18 +350,54 @@ export class PipelineService {
       }
       throw e;
     }
+    if (out.kind === "unchanged") this.markDownload(p.downloadJobId, "completed");
+    else if (out.kind === "http_error") {
+      this.markDownload(p.downloadJobId, "failed", { code: out.status >= 500 ? "http_5xx" : "http_4xx", message: `The server answered ${out.status}.` });
+      if (out.status >= 500 && !last) throw new Error(`The server answered ${out.status}.`);
+    }
+  }
+
+  /**
+   * The fetch half of a capture for the crawl engine: fetches, stores the original and creates the `capturing` version,
+   * but does not touch the download job and does not enqueue the `process` job (the crawl runs `runVersion` itself, so it
+   * can read the page's links before it picks the next URL). Errors are thrown as they are; the crawl classifies them.
+   * `beforeHop` runs before every request including redirect hops and robots decisions belong in it.
+   */
+  fetchForCrawl(a: { downloadJobId: number; url: string; options: CaptureOptions; signal: AbortSignal; beforeHop: (url: string) => Promise<void> | void }): Promise<FetchStoreOutcome> {
+    return this.fetchAndStore({ downloadJobId: a.downloadJobId, url: a.url, options: a.options }, a.signal, a.beforeHop, false);
+  }
+
+  private async fetchAndStore(
+    p: FetchJobPayload, signal: AbortSignal, beforeHop: (url: string) => Promise<void> | void, enqueueProcess: boolean,
+  ): Promise<FetchStoreOutcome> {
+    const opts = p.options ?? {};
+    const d = this.d;
+    const key = d.urlKey(p.url);
+    const page = pageByKey({ deps: d }, key);
+    const versioning = parseVersioning(opts.versioning);
+    const latest = page?.latest_version_id
+      ? d.db.get<{ id: number; etag: string | null; last_modified: string | null; raw_hash: string | null; status: string }>("SELECT id, etag, last_modified, raw_hash, status FROM page_versions WHERE id = ?", [page.latest_version_id])
+      : undefined;
+    const useConditional = !opts.force && versioning.mode === "on_change" && latest && (latest.status === "ready" || latest.status === "partial") && (latest.etag || latest.last_modified);
+    const res: PipelineFetchResult = await this.o.fetcher.fetch(p.url, {
+      conditional: useConditional ? { etag: latest!.etag, lastModified: latest!.last_modified } : undefined,
+      maxBytes: { ...DEFAULT_CAPS, ...opts.caps }.maxDocumentBytes,
+      accept: ["text/html", "application/xhtml+xml", "text/*", "application/*"],
+      signal,
+      ...({ hooks: { beforeHop: (info: { url: string }) => beforeHop(info.url) } } as object),
+    });
 
     const now = d.clock.now();
     if (res.notModified || res.status === 304) {
-      if (page) d.db.run("UPDATE pages SET last_checked_at = ? WHERE id = ?", [now, page.id]);
+      if (page) {
+        d.db.run("UPDATE pages SET last_checked_at = ? WHERE id = ?", [now, page.id]);
+        this.linkSource(page.id, opts);
+      }
       d.activity.write({ level: "info", area: "pipeline", message: `Unchanged (304) for ${p.url}`, downloadJobId: p.downloadJobId });
-      this.markDownload(p.downloadJobId, "completed");
-      return;
+      return { kind: "unchanged", via: "304", versionId: latest?.id ?? null, status: 304, finalUrl: res.finalUrl, redirects: res.redirects?.length ?? 0 };
     }
     if (res.status < 200 || res.status > 299) {
-      this.markDownload(p.downloadJobId, "failed", { code: res.status >= 500 ? "http_5xx" : "http_4xx", message: `The server answered ${res.status}.` });
-      if (res.status >= 500 && !last) throw new Error(`The server answered ${res.status}.`);
-      return;
+      return { kind: "http_error", status: res.status, retryAfterMs: res.retryAfterMs, finalUrl: res.finalUrl };
     }
     const body = Buffer.isBuffer(res.body) ? res.body : Buffer.concat(await collect(res.body));
     const rawHash = sha256Hex(body);
@@ -369,14 +406,14 @@ export class PipelineService {
     if (latest && !opts.force && versioning.mode === "on_change" && latest.raw_hash === rawHash && (latest.status === "ready" || latest.status === "partial")) {
       d.db.run("UPDATE pages SET last_checked_at = ? WHERE id = ?", [now, page!.id]);
       d.db.run("UPDATE page_versions SET etag = COALESCE(?, etag), last_modified = COALESCE(?, last_modified) WHERE id = ?", [res.headers.etag ?? null, res.headers["last-modified"] ?? null, latest.id]);
+      this.linkSource(page!.id, opts);
       d.activity.write({ level: "info", area: "pipeline", message: `Unchanged (same bytes) for ${p.url}`, downloadJobId: p.downloadJobId });
-      this.markDownload(p.downloadJobId, "completed");
-      return;
+      return { kind: "unchanged", via: "bytes", versionId: latest.id, status: res.status, finalUrl: res.finalUrl, redirects: res.redirects?.length ?? 0 };
     }
     const mime = (res.contentType ?? "").split(";")[0]!.trim().toLowerCase() || null;
-    const put = await d.blobs.put(body, { kind: "document", mime: mime ?? undefined, maxBytes: { ...DEFAULT_CAPS, ...opts.caps }.maxDocumentBytes });
+    await d.blobs.put(body, { kind: "document", mime: mime ?? undefined, maxBytes: { ...DEFAULT_CAPS, ...opts.caps }.maxDocumentBytes });
 
-    d.db.transaction(() => {
+    const versionId = d.db.transaction(() => {
       const finalNorm = normaliseUrl(res.finalUrl, { queryPolicy: "keep_all" });
       const finalKey = d.urlKey(res.finalUrl);
       let pg = pageByKey({ deps: d }, finalKey) ?? pageByKey({ deps: d }, key);
@@ -393,14 +430,20 @@ export class PipelineService {
            etag, last_modified, headers_json, fetched_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'capturing', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [d.newId("ver"), pg.id, vno, opts.sourceId ?? null, p.downloadJobId, p.url, res.finalUrl, res.status, rawHash, body.length, mime, res.headers.etag ?? null, res.headers["last-modified"] ?? null, JSON.stringify(headers), now, now],
       );
-      const versionId = Number(ins.lastInsertRowid);
-      for (const s of PIPELINE_STAGES) d.db.run("INSERT INTO pipeline_stage_runs (version_id, stage) VALUES (?, ?) ON CONFLICT DO NOTHING", [versionId, s]);
-      d.queue.enqueue({
-        type: "process", queue: "process", versionId, downloadJobId: p.downloadJobId, payload: { options: opts }, idempotencyKey: `process:${versionId}`,
-        maxAttempts: 3, priority: 5 - (opts.priority ?? 3),
-      });
+      const vid = Number(ins.lastInsertRowid);
+      if (opts.sourceId !== undefined) {
+        linkPageSource(d.db, { pageId: pg.id, sourceId: opts.sourceId, now, via: opts.discoveredVia, depth: opts.depth, priority: opts.priority });
+      }
+      for (const s of PIPELINE_STAGES) d.db.run("INSERT INTO pipeline_stage_runs (version_id, stage) VALUES (?, ?) ON CONFLICT DO NOTHING", [vid, s]);
+      if (enqueueProcess) {
+        d.queue.enqueue({
+          type: "process", queue: "process", versionId: vid, downloadJobId: p.downloadJobId, payload: { options: opts }, idempotencyKey: `process:${vid}`,
+          maxAttempts: 3, priority: 5 - (opts.priority ?? 3),
+        });
+      }
+      return vid;
     });
-    void put;
+    return { kind: "stored", versionId, status: res.status, finalUrl: res.finalUrl, rawBytes: body.length, redirects: res.redirects?.length ?? 0 };
   }
 
   private async beforeHop(url: string, p: FetchJobPayload, opts: CaptureOptions): Promise<void> {

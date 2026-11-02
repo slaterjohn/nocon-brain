@@ -13,7 +13,10 @@ import { authRoutes, setupRoutes } from "./routes/auth.js";
 import { archiveRoutes } from "./routes/archive.js";
 import { bookmarkRoutes } from "./routes/bookmarks.js";
 import { browserRoutes } from "./routes/browser.js";
+import { collectionRoutes } from "./routes/collections.js";
+import { scheduleRoutes } from "./routes/schedules.js";
 import { settingsRoutes } from "./routes/settings.js";
+import { sourceRoutes } from "./routes/sources.js";
 import { storageRoutes } from "./routes/storage.js";
 import { systemRoutes } from "./routes/system.js";
 
@@ -236,6 +239,9 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
     browserRoutes(a, state, { proxyVerified });
     archiveRoutes(a, state, { proxyVerified });
     bookmarkRoutes(a, state);
+    sourceRoutes(a, state);
+    collectionRoutes(a, state);
+    scheduleRoutes(a, state);
   });
 
   return app;
