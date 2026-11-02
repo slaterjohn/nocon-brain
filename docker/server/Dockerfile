@@ -3,7 +3,7 @@
 #
 # Targets:
 #   runtime  (default) the production image
-#   bench    runtime plus the queue benchmark bundle, used by scripts/bench/run.sh
+#   bench    runtime plus the queue and search benchmark bundles, used by scripts/bench/run.sh and scripts/bench/search.sh
 ARG NODE_IMAGE=node:24-trixie-slim
 
 # Every workspace package.json, found automatically, so adding a package never means editing this file. Only
@@ -32,6 +32,7 @@ COPY tsconfig.base.json ./
 COPY packages packages
 COPY apps/server apps/server
 COPY scripts/bench-queue.ts scripts/bench-queue.ts
+COPY scripts/search/bench.ts scripts/search/bench.ts
 RUN pnpm --filter @ncb/server build
 # The queue benchmark as one file, so the bench target needs no TypeScript runtime.
 RUN cd apps/server && pnpm exec esbuild ../../scripts/bench-queue.ts --bundle --platform=node --format=esm --target=node24 \
@@ -39,6 +40,12 @@ RUN cd apps/server && pnpm exec esbuild ../../scripts/bench-queue.ts --bundle --
       --alias:@ncb/db=../../packages/db/src/index.ts --alias:@ncb/shared=../../packages/shared/src/index.ts \
       --banner:js="import { createRequire as __r } from 'module'; const require = __r(import.meta.url);" \
       --outfile=dist-bench/bench-queue.js
+# The search benchmark (S-13), same approach.
+RUN cd apps/server && pnpm exec esbuild ../../scripts/search/bench.ts --bundle --platform=node --format=esm --target=node24 \
+      --external:better-sqlite3 \
+      --alias:@ncb/db=../../packages/db/src/index.ts --alias:@ncb/shared=../../packages/shared/src/index.ts \
+      --banner:js="import { createRequire as __r } from 'module'; const require = __r(import.meta.url);" \
+      --outfile=dist-bench/bench-search.js
 
 # The native addon, installed on the TARGET platform. better-sqlite3 ships prebuilt linux-x64 and
 # linux-arm64 binaries inside the npm package, so no compiler and no download are needed. The stage
@@ -79,6 +86,7 @@ CMD ["node", "dist/index.js"]
 
 FROM runtime AS bench
 COPY --from=build --chown=node:node /repo/apps/server/dist-bench/bench-queue.js ./bench/bench-queue.js
+COPY --from=build --chown=node:node /repo/apps/server/dist-bench/bench-search.js ./bench/bench-search.js
 # The bundled benchmark looks for ../migrations next to itself.
 COPY --from=build --chown=node:node /repo/packages/db/migrations ./migrations
 HEALTHCHECK NONE

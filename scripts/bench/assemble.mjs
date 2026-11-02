@@ -9,4 +9,4 @@ if (!hostFile || !image || !platform) {
 }
 const host = JSON.parse(fs.readFileSync(hostFile, "utf8"));
 const runs = runFiles.map((f) => JSON.parse(fs.readFileSync(f, "utf8")));
-console.log(JSON.stringify({ benchmark: "queue", image, platform, host, runs }, null, 2));
+console.log(JSON.stringify({ benchmark: process.env.BENCH_NAME ?? "queue", image, platform, host, runs }, null, 2));

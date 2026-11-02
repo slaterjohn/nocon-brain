@@ -159,6 +159,8 @@ Phase 3 exit: criteria 4, 6 (cross-page), 13, 14 demonstrable; a mirror of the f
 
 Phase 4 exit: criteria 8, 9, 19 pass on AMD64 CI; PT-01 to PT-04 measured on a Pi.
 
+**S-01 to S-15 as built (server).** `packages/search` and `apps/server/src/search`; contract in [api.md 6.1](api.md#61-local-search-phase-4-as-built), tables in [data-model.md 6.2](data-model.md#62-phase-4-as-built-tasks-s-01-to-s-15). The UI (S-11 and the UI of S-12 and S-14) is in `apps/web`. S-13 numbers, all marked "not a Pi", are in [benchmarks.md](benchmarks.md); Pi 4, Pi 5 and amd64 are outstanding. Tests: `packages/search/test` (parser properties, engine, ranking table, quality suite), `tests/integration/search` (outbox, API, rebuild, drift, resume).
+
 ## 6. Phase 5: Combined search
 
 | ID | Task | Depends | Acceptance check and tests | Scope |

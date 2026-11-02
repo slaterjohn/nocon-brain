@@ -26,6 +26,9 @@ importers:
       '@ncb/render':
         specifier: workspace:*
         version: link:packages/render
+      '@ncb/search':
+        specifier: workspace:*
+        version: link:packages/search
       '@ncb/server':
         specifier: workspace:*
         version: link:apps/server
@@ -90,6 +93,9 @@ importers:
       '@ncb/render':
         specifier: workspace:*
         version: link:../../packages/render
+      '@ncb/search':
+        specifier: workspace:*
+        version: link:../../packages/search
       '@ncb/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -277,6 +283,19 @@ importers:
       '@types/css-tree':
         specifier: ^2.3.11
         version: 2.3.11
+
+  packages/search:
+    dependencies:
+      '@ncb/db':
+        specifier: workspace:*
+        version: link:../db
+      better-sqlite3:
+        specifier: ^13.0.3
+        version: 13.0.3
+    devDependencies:
+      '@types/better-sqlite3':
+        specifier: ^7.6.13
+        version: 7.6.13
 
   packages/shared:
     dependencies:

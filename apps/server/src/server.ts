@@ -34,6 +34,7 @@ import { CrawlService } from "./crawl/service.js";
 import { crawlConfigForDownload, DownloadService } from "./downloads/index.js";
 import { RefreshService } from "./refresh/index.js";
 import { ResourceGovernor } from "./limits/governor.js";
+import { SearchService, type SearchServiceOptions } from "./search/service.js";
 import { workerStatuses } from "./routes/system.js";
 import type { PipelineFaults, PipelineFetcher } from "./pipeline/types.js";
 import { VERSION } from "./version.js";
@@ -74,6 +75,7 @@ export { linkPageSource, sourceReferences } from "./sources/references.js";
 export { collectionReferences } from "./collections/references.js";
 export { ImportService } from "./imports/service.js";
 export { RenderService } from "./renderer/service.js";
+export { SearchService } from "./search/service.js";
 export { GuardedProxy } from "./renderer/proxy.js";
 export { decideRender } from "./renderer/triggers.js";
 
@@ -111,6 +113,8 @@ export interface ServerOptions extends BuildOptions {
   archive?: boolean;
   /** Where the archive listener reads captures from. Defaults to an empty in-memory store until the pipeline supplies one. */
   archiveStore?: CaptureStore;
+  /** Search workers and test flags (task S-01). */
+  search?: Partial<Pick<SearchServiceOptions, "searchWorkerFile" | "indexWorkerFile" | "workerExecArgv" | "pollMs" | "batch" | "testFlags" | "autoRebuild">>;
 }
 
 export interface NcbServer {
@@ -279,12 +283,13 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       const robots = new RobotsService({ fetcher: realFetcher, userAgentToken: "NoConBrain", now: () => Date.now() });
       const extractClient = new ExtractClient(pool);
       const collections = new CollectionService({ db, clock, activity });
+      let searchRef: SearchService | undefined;
       // Optional renderer (C-16). Everything below is inert unless NCB_RENDERER_URL is set.
       const rendererSecret = config.NCB_RENDERER_SECRET ?? config.NCB_PROXY_SECRET;
       let render: RenderService | undefined;
       const deps = createPipelineDeps({
         db, clock, blobs, fetcher: captureFetcher, extract: extractClient, activity, events, queue, log: app.log,
-        faults: opts.pipelineFaults, stageOverrides: opts.stageOverrides, onPageChanged: (id) => collections.onPageChanged(id),
+        faults: opts.pipelineFaults, stageOverrides: opts.stageOverrides, onPageChanged: (id) => { collections.onPageChanged(id); searchRef?.wake(); },
         onVersionDone: (id, o) => render?.consider(id, o),
       });
       render = new RenderService({
@@ -395,6 +400,12 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         mainHandlers: { ...crawl.mainHandlers({ ...pipeline.handlers, ...refresh.handlers }), ...render.handlers }, periodic: () => { scheduler.tick(); },
         mainConcurrency: () => limits.fetchConcurrency(),
       });
+      const search = new SearchService({
+        db, clock, settings, activity, dataDir: config.NCB_DATA_DIR, log: app.log, isOffline: () => connectivity.forced, ...(opts.search ?? {}),
+      });
+      searchRef = search;
+      collections.savedSearches = { ref: (id) => search.savedSearchRef(id), link: (sid, cid) => search.linkCollection(sid, cid) };
+      search.collectionRefresh = () => search.refreshAllCollections();
       const downloads = new DownloadService({
         db, clock, queue, events, activity, crawl, pipeline, refresh, sources, scheduler, schedules, connectivity, governor: limits, settings,
         workers: () => workerStatuses(svc!),
@@ -403,7 +414,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
 
       svc = {
         config, clock, main, db, activity, auth, settings, volumes, blobs, connectivity, fetcher, events, queue, runner, pipeline, imports, render, crawl,
-        archive, browser, bookmarks, history, library, sources, collections, schedules, scheduler, downloads, refresh, limits, throttle: new LoginThrottle(clock), guestMatcher,
+        archive, browser, bookmarks, history, library, sources, collections, schedules, scheduler, downloads, refresh, limits, search, throttle: new LoginThrottle(clock), guestMatcher,
       };
       state.attach(svc);
 
@@ -432,6 +443,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       }, 10 * 60_000);
       maintenanceTimer.unref();
 
+      await search.start(); // opens or rebuilds index.db; searching is available while a missing index rebuilds
       state.phase = "ready";
       activity.write({ level: "info", area: "system", message: "Server started", details: { migrations: main.migration.applied, recovery: runner.recovery } });
       return svc;
@@ -455,6 +467,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         if (archiveServer?.listening) await new Promise<void>((r) => archiveServer.close(() => r()));
         archiveServer?.closeAllConnections();
         await app.close();
+        await svc?.search.stop();
         main?.close(); // wal_checkpoint(TRUNCATE), close, release the writer lock
       })();
       return closed;

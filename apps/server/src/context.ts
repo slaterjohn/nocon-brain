@@ -26,6 +26,7 @@ import type { Scheduler } from "./schedule/scheduler.js";
 import type { DownloadService } from "./downloads/service.js";
 import type { RefreshService } from "./refresh/service.js";
 import type { ResourceGovernor } from "./limits/governor.js";
+import type { SearchService } from "./search/service.js";
 
 /** Everything that exists once the database is open and migrated. */
 export interface Services {
@@ -60,6 +61,7 @@ export interface Services {
   downloads: DownloadService;
   refresh: RefreshService;
   limits: ResourceGovernor;
+  search: SearchService;
   throttle: LoginThrottle;
   /** Returns true when the address may use trusted-LAN read-only access. Null when the mode is off. */
   guestMatcher: ((ip: string) => boolean) | null;

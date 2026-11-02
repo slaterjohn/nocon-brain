@@ -21,6 +21,12 @@ export function collectionRoutes(app: FastifyInstance, state: ServerState): void
   r.post("/api/collections", { config: { auth: "session" } }, async (req, reply) => {
     admin(req);
     const c = state.svc.collections.create(req.body);
+    if (c.kind === "saved_search") {
+      const row = state.svc.collections.rowByPublic(c.id);
+      await state.svc.search.refreshCollection(row.id).catch(() => undefined);
+      void reply.code(201);
+      return state.svc.collections.get(c.id);
+    }
     void reply.code(201);
     return c;
   });
@@ -53,6 +59,8 @@ export function collectionRoutes(app: FastifyInstance, state: ServerState): void
 
   r.post("/api/collections/:id/rebuild", { config: { auth: "session" }, schema: { params: idParam } }, async (req) => {
     admin(req);
+    const row = state.svc.collections.rowByPublic(req.params.id);
+    if (row.kind === "saved_search") return state.svc.search.refreshCollection(row.id);
     return state.svc.collections.rebuild(req.params.id);
   });
 }

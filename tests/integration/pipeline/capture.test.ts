@@ -15,8 +15,8 @@ describe("A-05/A-06 capture end to end", () => {
     expect(v.language).toBe("en");
     expect(v.publishedSource).toBe("og");
     expect(v.stages).toHaveLength(15);
-    expect(v.stages.filter((s) => s.state === "done")).toHaveLength(12);
-    expect(v.stages.filter((s) => s.state === "skipped").map((s) => s.stage)).toEqual(["index", "link_graph", "candidates"]);
+    expect(v.stages.filter((s) => s.state === "done")).toHaveLength(13);
+    expect(v.stages.filter((s) => s.state === "skipped").map((s) => s.stage)).toEqual(["link_graph", "candidates"]);
     expect(v.content.textSha256 && v.content.readerSha256 && v.content.outlineSha256).toBeTruthy();
     const page = t.pipeline.getPage(v.pageId)!;
     expect(page).toMatchObject({ availability: "archived", versionCount: 1, latestVersionPublicId: v.publicId });

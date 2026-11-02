@@ -40,7 +40,8 @@ export function workerStatuses(svc: Services): WorkerStatus[] {
     };
   }
   const off = (name: WorkerStatus["name"]): WorkerStatus => ({ name, state: "disabled" });
-  return [runner, extract, off("index"), off("search"), off("zim"), off("renderer")];
+  const live = (name: WorkerStatus["name"]): WorkerStatus => (svc.search ? { name, state: svc.search.state === "building" || svc.search.state === "rebuilding" ? (name === "index" ? "busy" : "idle") : "idle" } : off(name));
+  return [runner, extract, live("index"), live("search"), off("zim"), off("renderer")];
 }
 
 type Health = "ok" | "degraded" | "starting";
@@ -158,7 +159,7 @@ export function systemRoutes(app: FastifyInstance, state: ServerState, o: { sseH
       pages: { total: 0, archived: 0, partial: 0, evicted: 0 },
       sources: { total: 0, enabled: 0 },
       collections: 0,
-      index: { docs: 0, sizeBytes: 0, drift: 0, state: "missing" as const },
+      index: svc.search.indexStatusSimple(),
       storage: { usedBytes: used, availableBytes: available, byPriority: { P1: 0, P2: 0, P3: 0, P4: 0 } },
       jobs: {
         active: sum("running"),

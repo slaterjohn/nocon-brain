@@ -1,4 +1,4 @@
-import { call, setupAdmin, type TestServer } from "../server/helpers.js";
+import { ADMIN, call, cookieFrom, setupAdmin, type TestServer } from "../server/helpers.js";
 import { startPipelineServer, until } from "../pipeline/helpers.js";
 import type { StartOptions } from "../server/helpers.js";
 
@@ -14,10 +14,15 @@ export interface BrowserTest extends Awaited<ReturnType<typeof startPipelineServ
 }
 
 /** A pipeline server with an administrator, the archive listener on a free port and the loopback fixtures allowed. */
-export async function startBrowserServer(opts: StartOptions & { allow?: string } = {}): Promise<BrowserTest> {
+export async function startBrowserServer(opts: StartOptions & { allow?: string; signIn?: boolean } = {}): Promise<BrowserTest> {
   const t = await startPipelineServer({ ...opts, server: { archive: true, ...(opts.server ?? {}) } });
   const { archivePort } = await t.server.listen();
-  const cookie = await setupAdmin(t);
+  let cookie: string;
+  if (opts.signIn) {
+    const res = await call(t, { url: "/api/auth/login", body: ADMIN });
+    if (res.statusCode !== 200) throw new Error(`login failed: ${res.statusCode} ${res.body}`);
+    cookie = cookieFrom(res);
+  } else cookie = await setupAdmin(t);
   const api = async (method: string, url: string, body?: unknown) => {
     const res = await call(t, { method, url, body, cookie });
     let parsed: unknown = undefined;

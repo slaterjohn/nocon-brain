@@ -103,6 +103,12 @@ export const userSettingsSchema = z.object({
   density: z.enum(["comfortable", "compact"]).default("comfortable"),
   tabRestore: z.boolean().default(true),
   shortcuts: z.record(z.string().max(40), z.string().max(40)).default({}),
+  search: z.object({
+    homepageSections: z.object({
+      recentSearches: z.boolean().default(false), bookmarks: z.boolean().default(false), favourites: z.boolean().default(false), libraryStats: z.boolean().default(false),
+    }).default({ recentSearches: false, bookmarks: false, favourites: false, libraryStats: false }),
+    resultsPerPage: z.number().int().min(1).max(50).default(10),
+  }).default({ homepageSections: { recentSearches: false, bookmarks: false, favourites: false, libraryStats: false }, resultsPerPage: 10 }),
 });
 
 type Json = Record<string, unknown>;

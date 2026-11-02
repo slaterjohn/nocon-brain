@@ -2,7 +2,7 @@ import { PIPELINE_STAGES, type PipelineStage } from "@ncb/db/schema";
 import { SimulatedCrash } from "../services/blobs.js";
 import { assets, storeOriginal, validate } from "./stages/capture.js";
 import { metadata, readable, reader, sections } from "./stages/content.js";
-import { renderPrep, skippedStage, status } from "./stages/finish.js";
+import { indexStage, renderPrep, skippedStage, status } from "./stages/finish.js";
 import { dedup, discardAsUnchanged, links, normalise } from "./stages/links.js";
 import { DEFAULT_CAPS, StageFailure, type CaptureCaps, type PipelineDeps, type StageContext, type StageFn, type VersioningPolicy } from "./types.js";
 import { DEFAULT_VERSIONING } from "./policy.js";
@@ -11,13 +11,13 @@ import { publishCapture } from "./progress.js";
 export const BUILTIN_STAGES: Record<PipelineStage, StageFn> = {
   validate, store_original: storeOriginal, assets, metadata, readable, sections, links, normalise, dedup, reader,
   render_prep: renderPrep,
-  index: skippedStage("search indexing arrives in phase 4 (S-02)"),
+  index: indexStage,
   link_graph: skippedStage("link graph resolution beyond rows arrives in phase 4"),
   candidates: skippedStage("discovery candidates arrive in phase 7 (D-02)"),
   status,
 };
-/** Stages 12 to 14 are registered as `skipped` until their phases. */
-export const STUB_STAGES: ReadonlySet<PipelineStage> = new Set(["index", "link_graph", "candidates"]);
+/** Stages 13 and 14 are registered as `skipped` until their phases. */
+export const STUB_STAGES: ReadonlySet<PipelineStage> = new Set(["link_graph", "candidates"]);
 
 export type RunOutcome = { kind: "done"; status: string } | { kind: "unchanged"; reason: string } | { kind: "failed"; stage: PipelineStage; message: string };
 

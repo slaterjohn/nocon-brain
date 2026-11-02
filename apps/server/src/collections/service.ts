@@ -16,6 +16,7 @@ export const collectionCreateSchema = z.object({
   description: z.string().trim().max(1000).optional(),
   icon: icon.optional(),
   kind: z.enum(["manual", "auto", "saved_search", "favourites"]).default("manual"),
+  savedSearchId: z.string().max(64).optional(),
   parentId: z.string().max(64).nullable().optional(),
   rule: ruleSchema.optional(),
   priorityFloor: priority.nullable().optional(),
@@ -40,7 +41,7 @@ export interface CollectionOut {
   icon: string;
   kind: "manual" | "auto" | "saved_search" | "favourites";
   parentId: string | null;
-  rule: Rule | null;
+  rule: Rule | { savedSearchId: string } | null;
   priorityFloor: "P1" | "P2" | "P3" | "P4" | null;
   sortOrder: number;
   itemCount: number;
@@ -57,6 +58,8 @@ interface Row {
 const iso = (n: number): string => new Date(n).toISOString();
 
 export class CollectionService {
+  /** Set by the server: the saved-search link for `kind: saved_search` (S-12). */
+  savedSearches?: { ref(publicId: string): { id: number; publicId: string }; link(savedId: number, collectionId: number): void };
   constructor(private readonly o: { db: Db; clock: Clock; activity?: ActivityLog }) {}
 
   private get db(): Db {
@@ -79,7 +82,7 @@ export class CollectionService {
     const parent = r.parent_id == null ? null : (this.db.get<{ public_id: string }>("SELECT public_id FROM collections WHERE id = ?", [r.parent_id])?.public_id ?? null);
     return {
       id: r.public_id, name: r.name, description: r.description, icon: r.icon, kind: r.kind, parentId: parent,
-      rule: r.rule_json ? (JSON.parse(r.rule_json) as Rule) : null,
+      rule: r.rule_json ? (JSON.parse(r.rule_json) as Rule | { savedSearchId: string }) : null,
       priorityFloor: r.priority_floor == null ? null : priorityToCode(r.priority_floor as PriorityNumber),
       sortOrder: r.sort_order, itemCount: this.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM collection_memberships WHERE collection_id = ?", [r.id])!.n,
       createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
@@ -148,8 +151,13 @@ export class CollectionService {
 
   create(body: unknown): CollectionOut {
     const v = parseOrThrow(collectionCreateSchema, body);
+    let savedRef: { id: number; publicId: string } | undefined;
     if (v.kind === "saved_search") {
-      throw new AppError("not_implemented", "Saved-search collections arrive with saved searches. Use a manual or automatic collection for now.");
+      if (!v.savedSearchId) throw new AppError("bad_request", "A saved-search collection needs a saved search.", { fields: [{ in: "body", path: "savedSearchId", message: "Choose a saved search" }] });
+      savedRef = this.savedSearches?.ref(v.savedSearchId);
+      if (!savedRef) throw new AppError("not_implemented", "Saved searches are not available.");
+    } else if (v.savedSearchId) {
+      throw new AppError("bad_request", "Only saved-search collections take a saved search.", { fields: [{ in: "body", path: "savedSearchId", message: "Remove it or choose the saved-search kind" }] });
     }
     if (v.kind === "auto" && !v.rule) throw new AppError("bad_request", "An automatic collection needs a rule.", { fields: [{ in: "body", path: "rule", message: "Add at least one condition" }] });
     if (v.kind !== "auto" && v.rule) throw new AppError("bad_request", "Only automatic collections have a rule.", { fields: [{ in: "body", path: "rule", message: "Remove the rule or choose the automatic kind" }] });
@@ -164,8 +172,9 @@ export class CollectionService {
         `INSERT INTO collections (public_id, name, description, icon, kind, parent_id, rule_json, priority_floor, sort_order, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [newId("col"), v.name, v.description ?? null, v.icon ?? (v.kind === "favourites" ? FAVOURITES_ICON : DEFAULT_ICON), v.kind, parent,
-          v.rule ? JSON.stringify(v.rule) : null, v.priorityFloor ?? null, v.sortOrder ?? 0, now, now],
+          savedRef ? JSON.stringify({ savedSearchId: savedRef.publicId }) : v.rule ? JSON.stringify(v.rule) : null, v.priorityFloor ?? null, v.sortOrder ?? 0, now, now],
       );
+      if (savedRef) this.savedSearches!.link(savedRef.id, Number(res.lastInsertRowid));
       return Number(res.lastInsertRowid);
     }, { durable: true });
     if (v.kind === "auto") this.applyRule(id);
@@ -230,7 +239,7 @@ export class CollectionService {
     const c = this.rowByPublic(publicId);
     const v = parseOrThrow(itemsBodySchema, body);
     if (c.kind === "auto") throw new AppError("conflict", "This collection fills itself from its rule. Change the rule instead of adding pages by hand.");
-    if (c.kind === "saved_search") throw new AppError("not_implemented", "Saved-search collections arrive with saved searches.");
+    if (c.kind === "saved_search") throw new AppError("conflict", "This collection fills itself from its saved search. Change the saved search instead of adding pages by hand.");
     if ([...v.add, ...v.remove].some((r) => "zimId" in r)) throw new AppError("not_implemented", "Articles from offline packages can be added once ZIM support arrives.");
     const now = this.o.clock.now();
     const res = { added: 0, alreadyMember: 0, removed: 0, notFound: [] as string[] };
@@ -334,7 +343,7 @@ export class CollectionService {
 
   rebuild(publicId: string): { added: number; removed: number } {
     const c = this.rowByPublic(publicId);
-    if (c.kind === "saved_search") throw new AppError("not_implemented", "Saved-search collections arrive with saved searches.");
+    if (c.kind === "saved_search") throw new AppError("conflict", "Saved-search collections are rebuilt by the search service.");
     if (c.kind !== "auto") throw new AppError("conflict", "Only automatic collections can be rebuilt. This one is filled by hand.");
     return this.applyRule(c.id);
   }

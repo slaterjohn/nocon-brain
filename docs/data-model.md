@@ -617,6 +617,19 @@ The index is rebuildable from stored content:
 
 If `index.db` is missing, corrupt or has a different `schema_version`, the server starts, serves archived content, shows "search index is rebuilding", and rebuilds automatically. Benchmark reference: 50,000 pages indexed in about 11 s on the Mac (docs 3.1 s, FTS 6.2 s, optimise 1.1 s, vocab 0.7 s); Pi figures are to be measured (S-13).
 
+### 6.2 Phase 4 as built (tasks S-01 to S-15)
+
+Code: `packages/search` (`@ncb/search`: parser, query builder, FTS5 engine behind the `SearchIndex` interface) and `apps/server/src/search` (workers, service, rebuild). Deviations from the tables above:
+
+- **Own FTS content.** `fts_en`, `fts_default` and `title_fts` are ordinary FTS5 tables that hold their own text (`title`, `headings`, `url` without scheme, `body`, body capped at 120,000 characters); `docs` holds metadata only (no `body` or `headings`). Reason: one language group per document needs two FTS tables, and an external-content table reads every `docs` row on `rebuild`. Because of this nothing uses `INSERT INTO fts(fts) VALUES('rebuild')`; documents are inserted directly (bulk path) and `optimize` runs at the end. `docs.id` (the rowid) is the FTS rowid. Extra `docs` columns: `title_norm` (exact-title matches), `words`; `simhash` is filled (64-bit, hex, over word 3-grams of the first 1000 words).
+- `doc_sources.source_id` and `doc_collections.collection_id` hold **public ids** (`src_...`, `col_...`) as text, not integers; `doc_collections` includes every ancestor of each collection the page belongs to. New tables: `domains` (host counts for autocomplete). `vocab` is built from the raw (unstemmed, accent-folded) words of title, headings and body, 3 to 32 letters, not plain numbers, because `fts5vocab` over a Porter table yields stems. It is counted exactly on incremental changes and recounted in memory during a build (single-use terms are dropped if the map passes 2,000,000 terms).
+- `meta` also holds `last_optimize_at`; shadow files hold `rebuild_in_progress`, `rebuild_checkpoint` (last page id), `rebuild_done`, `outbox_start`.
+- **Outbox by trigger.** `index_outbox` rows (migration `0010_search`) are written by triggers on `pages` (latest version, availability, deletion, title, type, language, priority, in-link bucket, delete), `page_versions` (eviction states, deletion), `collection_memberships`, `collections` (move, delete: every member of the subtree), and `page_sources`, plus pipeline stage 12 (`upsert_page`). The consumer treats `op` as a hint and reads the page's current state, so rows are idempotent and coalesced per page. The index worker keeps `last_applied_outbox_id` in `index.db` `meta`; the main thread deletes outbox rows up to the applied id (not during a rebuild, whose replay point is the highest id seen when it began).
+- A page is indexed when it is not deleted, `availability` is `archived` or `partial`, and its latest version is `ready` or `partial`. Eviction and deletion therefore remove the document.
+- `saved_searches` gains `scope` and `updated_at`; `collection_id` is a plain integer. A saved-search collection stores `{"savedSearchId": "ss_..."}` in `collections.rule_json` and its members as `collection_memberships` with `added_by = 'rule'`.
+- `index_generations.state` may also be `failed`; `indexing_jobs` has `detail_json`, `started_at` and states `queued`, `running`, `done`, `failed`, `cancelled`.
+- Writers: the `index` worker thread is the only writer of `index.db` (lock file `index.db.lock`); the `search` worker thread reads through a read-only connection. The shadow file `index.rebuild.db` is built by the same worker and swapped with an atomic rename after the live file is checkpointed and closed.
+
 ## 7. Integrity invariants and the verify-and-repair operation
 
 Checked by the maintenance `verify` run (dry-run by default), repaired by `repair`:

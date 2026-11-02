@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { SearchPlaceholder } from "@/components/search/search-placeholder";
+import { SearchPage } from "@/components/search/search-page";
 
 export const metadata: Metadata = { title: "Search" };
 
 export default function Page() {
-  return <SearchPlaceholder />;
+  return <SearchPage />;
 }

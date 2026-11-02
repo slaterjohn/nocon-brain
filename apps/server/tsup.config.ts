@@ -26,7 +26,7 @@ const cssTreeJson = {
 // One bundle for the server process (dist/index.js) and one for worker threads (dist/worker.js).
 // better-sqlite3 is native, so it stays external and is a direct dependency of this package.
 export default defineConfig({
-  entry: ["src/index.ts", "src/worker.ts"],
+  entry: { index: "src/index.ts", worker: "src/worker.ts", "index-worker": "src/search/index-worker.ts", "search-worker": "src/search/search-worker.ts" },
   format: ["esm"],
   target: "node24",
   platform: "node",

@@ -22,6 +22,7 @@
     "@ncb/db": "workspace:*",
     "@ncb/fetch": "workspace:*",
     "@ncb/render": "workspace:*",
+    "@ncb/search": "workspace:*",
     "@ncb/shared": "workspace:*",
     "better-sqlite3": "^13.0.3",
     "cron-parser": "^5.10.3",

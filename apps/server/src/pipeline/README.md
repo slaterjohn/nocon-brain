@@ -21,7 +21,8 @@ The `process` job runs the stages. DOM work (stages 4 to 7 and 10) goes to the e
 | 9 | dedup | unchanged under `on_change` ends the capture; same text on another page is flagged (`duplicate_of_version_id`); `simhash` unused |
 | 10 | reader | reader HTML and plain-text blobs |
 | 11 | render_prep | `version_resources` (replaceable through `stageOverrides.render_prep`) |
-| 12-14 | index, link_graph, candidates | `skipped` stubs |
+| 12 | index | writes an `upsert_page` row to `index_outbox`; the `index` worker applies it (search tasks S-01, S-02) |
+| 13-14 | link_graph, candidates | `skipped` stubs |
 | 15 | status | one transaction: `ready`/`partial`, `pages.latest_version_id`, link resolution, `inbound_count`, versioning policy, download job done |
 
 A finished stage is never re-run; a stage found `running` after a crash is re-run (attempts accumulate, at most 3 per stage). Each stage writes with upserts or content-addressed blobs. Readers (`SqliteCaptureStore`) only see `ready`/`partial` versions, and `latest_version_id` moves only in stage 15.

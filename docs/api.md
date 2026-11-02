@@ -219,19 +219,22 @@ The listener injects one `<style>` block that styles `a[data-ncb-link="partial"|
 
 | Method | Path | Purpose | Auth |
 |---|---|---|---|
-| POST | `/api/search` | Start a search; returns local and ZIM results immediately plus a `searchId` | S+C, G |
-| GET | `/api/search/{searchId}/events` | **SSE** stream of online results and updates | S/G |
-| GET | `/api/search/{searchId}` | Snapshot of the search; `?after=<seq>` returns events after a sequence number (polling fallback and back-navigation restore) | S/G |
-| POST | `/api/search/{searchId}/more` | Next page from providers (`{ providerId? }`) | S+C |
-| GET | `/api/search/suggestions` | `?q=&limit=8`: local autocomplete (titles, queries, domains) and did-you-mean; never calls providers | S/G |
-| POST | `/api/search/coverage/plan` | "Improve offline coverage": estimate for selected results | S+C |
+| POST | `/api/search` | Start a search; returns local and ZIM results immediately plus a `searchId`. **Phase 4: local archive only** (see 6.1) | S+C, G |
+| GET | `/api/search/{searchId}/events` | **SSE** stream of online results and updates. *Phase 5; answers 501 `not_implemented` until then* | S/G |
+| GET | `/api/search/{searchId}` | Snapshot of the search (the stored `SearchResponse`, kept 30 minutes in memory); `?after=<seq>` returns events after a sequence number (Phase 5). Back-navigation restore | S/G |
+| POST | `/api/search/{searchId}/more` | Next page from providers (`{ providerId? }`). *Phase 5: 501 until then* | S+C |
+| GET | `/api/search/favicon/{pageId}` | The archived favicon of a page (image bytes, `nosniff`, sandboxed CSP, immutable cache); 404 when none was archived | S/G |
+| GET | `/api/search/suggestions` | `?q=&limit=8`: local autocomplete (titles, queries, domains) and did-you-mean; never calls providers. Shape in 6.1 | S/G |
+| POST | `/api/search/coverage/plan` | "Improve offline coverage": estimate for selected results *(Phase 5)* | S+C |
 | POST | `/api/search/coverage/queue` | Queue the plan, optionally as a collection | S+C |
-| GET/POST | `/api/search/providers` | List / create providers | S / S+C |
+| GET/POST | `/api/search/providers` | List / create providers *(Phase 5; all provider routes answer 501 until then)* | S / S+C |
 | GET/PATCH/DELETE | `/api/search/providers/{id}` | Read / update / delete | S / S+C |
 | POST | `/api/search/providers/{id}/test` | Health check and a small test query; returns latency and error code | S+C |
 | GET | `/api/search/providers/{id}/usage` | Request counts against caps | S |
-| GET/POST/PATCH/DELETE | `/api/search/saved` , `/api/search/saved/{id}` | Saved searches; `POST /api/search/saved/{id}/run` | S / S+C |
-| GET/DELETE | `/api/search/history` | Search history (only if enabled); `DELETE` clears | S / S+C |
+| GET/POST | `/api/search/saved` | List / create saved searches | S / S+C |
+| GET/PATCH/DELETE | `/api/search/saved/{id}` | Read / update / delete | S / S+C |
+| POST | `/api/search/saved/{id}/run` | Run it; returns a `SearchResponse`; updates `lastRunAt` and `lastResultCount` | S+C |
+| GET/DELETE | `/api/search/history` | Search history (only written if `privacy.searchHistory.enabled`); `DELETE` clears all; `DELETE /api/search/history/{id}` removes one | S / S+C |
 
 **Progressive results: SSE chosen (D-3).** Local and ZIM results return in the `POST` response within tens of milliseconds. Online providers answer in 300 ms to a few seconds, or never. The client opens `GET /api/search/{searchId}/events` and appends. SSE was chosen over polling for server push without an interval, native reconnection with `Last-Event-ID`, and low cost. The server keeps each search session in memory for 30 minutes (ring buffer of events, URLs and titles only; snippets from providers whose `storagePolicy` is `none` stay in memory and are never written to disk), so `GET /api/search/{id}` restores the exact list for back navigation and serves as the polling fallback for environments that buffer SSE. Heartbeat comment every 15 s; `X-Accel-Buffering: no`.
 
@@ -242,13 +245,25 @@ interface SearchRequest {
   filters?: SearchFilters;
   online?: "auto" | "off" | "on";                                   // auto = per settings and connectivity
   providers?: string[];                                              // subset of enabled provider IDs
-  page?: number; pageSize?: number;                                  // default 20, max 50
+  page?: number; pageSize?: number;                                  // 1-based; default 20, max 50
+  // Phase 4 additions (all optional):
+  typo?: boolean;                                                    // typo tolerance and "did you mean"; default true
+  synonyms?: boolean;                                                // query-time synonym expansion; default true
+  facets?: boolean;                                                  // compute facet counts; default true on page 1, false on later pages
+  group?: boolean;                                                   // collapse duplicates ("also at"); default true
+  record?: boolean;                                                  // write to search history when that setting is on; default true for page 1 only
+  debug?: boolean;                                                   // include `explain` on every result and `plan` on the response
 }
 interface SearchFilters {
   sources?: string[]; collections?: string[]; domains?: string[]; types?: DocType[];
   downloadedFrom?: Iso; downloadedTo?: Iso; publishedFrom?: Iso; publishedTo?: Iso;
   availability?: ("cached" | "partial" | "queued" | "online_only")[]; languages?: string[];
 }
+// DocType = "html" | "pdf" | "image" | "text" | "other"   (pages.content_type; imported Markdown and text are "text")
+// Phase 4 notes: `sources` and `collections` take public ids (`src_...`, `col_...`); a collection filter includes pages in its
+// sub-collections; `domains` match the host or any subdomain; `languages` take ISO 639-1 codes ("en"); `availability`
+// accepts "cached" (archived) and "partial"; "queued" and "online_only" match nothing locally. Dates are ISO-8601 instants
+// (a bare date is the start of that day, UTC; `*To` as a bare date is the end of that day).
 // Operators in `query`: site:example.org  type:pdf  before:2026-01-01  after:2025-06-30  "exact phrase"  -excluded
 // before:/after: use the publication date, falling back to the capture date when none is known.
 
@@ -258,14 +273,23 @@ interface SearchResponse {
   results: SearchResult[];
   didYouMean?: { text: string; corrected: { from: string; to: string }[]; appliedAutomatically: boolean };
   coverage: Coverage;
-  facets?: { sources: Facet[]; collections: Facet[]; domains: Facet[]; types: Facet[]; languages: Facet[] };   // local counts only
+  facets?: Facets;                     // local counts only; see 6.1
+  total: number; totalCapped: boolean; // matches in the local index (exact up to the candidate cap of 2000)
+  page: number; pageSize: number;
+  index?: { state: "ok" | "building" | "rebuilding" | "missing" | "error" };   // Phase 4: anything but "ok" means results may be missing; `warnings` then says so
+  warnings?: string[];
   online: { state: "disabled" | "offline" | "pending" | "done"; pending: string[] /* provider IDs */; disclosure: string };
   tookMs: { local: number; zim: number };
-  nextCursor?: string;
+  nextCursor?: string;                 // the next page number as a string; absent on the last page
+  plan?: unknown;                      // debug: FTS expressions run, groups queried, fallback used
 }
 interface SearchResult {
   key: string;                         // stable within the search: canonical-URL based
   url: string; canonicalUrl: string; title: string;
+  faviconUrl?: string | null;          // same-origin path `/api/search/favicon/{pageId}` when an icon was archived with the page, else null; never fetched from the web at query time
+  sourceName?: string | null;          // name of the page's first source
+  collections?: { id: string; name: string }[];   // collections the page belongs to directly
+  titleHtml?: string;                  // the title with matches in <mark>; same sanitiser as `snippet` (Phase 4)
   snippet: string;                     // HTML restricted to <mark>; sanitised server-side
   origin: "archive" | "zim" | "online";
   availability: "cached" | "partial" | "queued" | "online_only" | "zim";
@@ -276,6 +300,14 @@ interface SearchResult {
   alsoOnline?: boolean;                // local result that providers also returned
   storage: "persist" | "transient";    // transient = provider storagePolicy none; never saved
   actions: { open: string /* app route */; saveForOffline: boolean };
+  // Phase 4 additions:
+  alsoAt?: { pageId: string; url: string; title: string }[];   // near-identical or same-content pages collapsed into this result
+  explain?: ScoreExplanation;          // only when `debug: true`
+}
+interface ScoreExplanation {
+  total: number; bm25: number;         // bm25 is the FTS5 value, lower (more negative) = better
+  components: { name: "relevance" | "exactTitle" | "freshness" | "linkGraph" | "preference" | "cached"; weight: number; value: number; contribution: number }[];
+  matchedBy: "and" | "or" | "corrected" | "exact_title";
 }
 interface Coverage {                   // counts only; no percentages of "the internet"
   cachedMatches: number; onlineMatches: number; onlineNotArchived: number; queued: number; partial: number;
@@ -308,6 +340,83 @@ interface Estimate { estimate: true; pages: { low: number; high: number }; bytes
 ```
 
 Brave results are `transient`: they are never written to the database; "Save for offline" archives the original page by fetching it from the site and does not copy the provider's snippet into the page description. `POST /api/search` with `online: "on"` for a provider that is disabled or when forced offline returns the local results and `online.state = "disabled" | "offline"`; it never errors because of a provider.
+
+### 6.1 Local search (Phase 4, as built)
+
+This is the contract of the tasks S-01 to S-15. `POST /api/search` answers from the local `index.db` only: `origin` is always `"archive"`, `zim` is `0` in `tookMs`, `online` is `{ state: "disabled", pending: [], disclosure: "" }` (or `"offline"` when forced offline) and `coverage` counts the local matches (`basis: "local_exact"`). Reads need a session or trusted-LAN guest; `POST`, `PUT`, `PATCH` and `DELETE` need a session and the CSRF header.
+
+**`POST /api/search`.**
+
+- `scope`: `all` and `offline` search the whole index; `images` forces `types = ["image"]`; `documents` forces `types = ["pdf", "text"]`; `online` returns no local results (`results: []`, `total: 0`). An explicit `filters.types` narrows within the scope (the intersection; empty means no results).
+- An empty or whitespace query with no filters is a 400 (`details.fields[0].path = "query"`). A query that is only operators (`site:example.org`) is allowed and lists the matching pages newest first. A query longer than 500 characters is a 400. Anything else never errors: unbalanced quotes, stray `-`, `site:` with no value, and FTS5 punctuation are recovered and reported in `parsed.warnings` (plain English, for example `Ignored "before:" because it needs a date such as before:2026-01-01`).
+- **Operators.** `site:example.org` (host or any subdomain; repeated `site:` is OR), `type:pdf` (`html`, `pdf`, `image`, `text`; `markdown`, `md` and `txt` mean `text`; `document` means `pdf` or `text`; repeated is OR), `before:2026-01-01` and `after:2025-06-30` (a date `YYYY`, `YYYY-MM` or `YYYY-MM-DD`; the publication date, falling back to the capture date when none is known; exact rules below), `"exact phrase"`, `-excluded` and `-"excluded phrase"`. Operator names are case-insensitive. `parsed.operators` echoes them as `{ site: "a.org,b.org", type: "pdf", before: "2026-01-01" }` (repeats comma-joined). Operators in the query combine with `filters` by AND.
+- **`before:` and `after:` precisely.** `before:D` matches pages dated strictly before 00:00 UTC on D. `after:D` matches pages dated on or after 00:00 UTC on D. (So `after:2025-06-30 before:2025-07-01` is exactly 30 June.)
+- **Matching.** Bare terms are ANDed. When the AND query returns nothing, the server retries with OR over the terms (best match first) and sets `plan.fallback = "or"` in debug mode; `-excluded` terms and filters still apply. A bare term ending in `*` (`astro*`) is a prefix term; it also matches the full words that start with it, since the English index holds stems. Terms are matched with English stemming (`discovering` finds `discovered`) in the English group and exactly (after case and accent folding) in the default group. Stop words are dropped from bare terms when other terms remain (never from phrases). Synonyms (6.1.3) expand at query time only.
+- **Very common terms.** When a term occurs in 5,000 or more pages, the words are first matched in the title, headings and URL; if at least 30 pages match there, only those pages are ranked (the body-only matches are not candidates, though `total` and the facets still count them). Identical searches are answered from a small cache that any index change empties. (Mitigations from S-13.)
+- **Typo tolerance.** A bare term of 4 or more characters that is not in the vocabulary is replaced by its single best correction (smallest edit distance, then highest document frequency; at most 1 edit for 4 to 6 characters, 2 for longer). The response then has `didYouMean = { text, corrected: [{ from, to }], appliedAutomatically: true }`. If the corrected query finds nothing, the next two candidates are tried as an OR group. When the typed query itself found results but a term is rare and a far more frequent near neighbour exists, `didYouMean` is returned with `appliedAutomatically: false` and the results are the typed query's. A page whose title equals the corrected or typed query ranks first (`exact_title`).
+- **Ranking.** Candidates are the best 300 by BM25 with weights title 10, headings 5, URL 3, body 1, then re-scored: `score = relevance + exactTitle + freshness + linkGraph + preference + cached`, where relevance is the candidate's BM25 divided by the best BM25 of the set (0 to 1), freshness is `exp(-ageDays / 365)` of `date_for_ranking`, linkGraph is `min(1, log(1 + inlinks) / log(101))`, preference is the boost for the page's domain or source (-1 to 1), cached is 1 for `archived` and 0.5 for `partial`. Default weights `{ relevance: 1, exactTitle: 0.6, freshness: 0.08, linkGraph: 0.06, preference: 0.1, cached: 0.03 }`; change them with `PUT /api/index/ranking`. Ties break by score, then newer `date_for_ranking`, then lower page id, so the order is stable between runs. `fusedRank` is the 1-based rank and `fusedScore` the score.
+- **Highlighting.** `snippet` (about 24 words around the best match) and `titleHtml` contain the page's own text with every character HTML-escaped (`&lt;`, `&gt;`, `&amp;`, `&quot;`, `&#39;`) and `<mark>` and `</mark>` as the only markup. Page text that looks like HTML is escaped, never passed on.
+- **Grouping.** With `group` (default) pages with the same content hash, or whose text fingerprints differ in at most 3 of 64 bits, collapse into the best-ranked one. The others are listed in `alsoAt`. `total` counts matches before grouping; a page's `alsoAt` pages do not appear separately in the same response.
+- **Paging.** `page` and `pageSize` (default 20, max 50). The ranked candidate list is capped at 300 pages, so `page * pageSize` beyond 300 returns an empty page. `nextCursor` is the next page number while more candidates remain.
+- **Facets** (`facets`, computed for page 1 by default, over at most 2000 matches; `totalCapped` says the cap was hit). Each dimension is counted over the matches that pass all the other filters but not its own, so the counts of the chosen value stay visible:
+  ```ts
+  interface Facet { value: string; label: string; count: number }         // `value` is what to send back in `filters`
+  interface Facets {
+    sources: Facet[]; collections: Facet[]; domains: Facet[]; types: Facet[]; languages: Facet[];
+    availability: Facet[];                                                  // value "cached" | "partial"
+    downloaded: Facet[]; published: Facet[];                                // value = bucket start: "last_day" | "last_week" | "last_month" | "last_year" | "older" ("unknown" for published)
+    approximate: boolean;
+  }
+  ```
+  Facets are sorted by count (descending), then label; each list has at most 20 entries. Source and collection labels are their names.
+- While the index is `building` (no file yet) the response is 200 with `results: []`, `index.state = "building"` and a warning; the UI shows "search index is rebuilding". While it is `rebuilding` (an existing index is being replaced) results come from the old file.
+- `searchId` is `sch_` plus a ULID. The response is kept in memory for 30 minutes for `GET /api/search/{searchId}`.
+- **History.** On page 1 with `record !== false`, when `privacy.searchHistory.enabled` is true, a row is written (`query`, `scope`, `localCount`). When the setting is off nothing is written, and rows written earlier stay until cleared.
+
+**`GET /api/search/suggestions?q=&limit=8`** returns `{ q, items: Suggestion[], didYouMean?: DidYouMean }` in under 50 ms on 50,000 pages (informational on CI). It never calls a provider. `limit` is 1 to 20. An empty `q` returns the recent queries only (if history is on) and the most visited domains.
+```ts
+type Suggestion =
+  | { kind: "title"; text: string; url: string; pageId: string; domain: string }   // page titles starting with, or containing a word starting with, the last typed word (title-only FTS)
+  | { kind: "query"; text: string }                                                // earlier queries (history on) that start with `q`
+  | { kind: "domain"; text: string; count: number }                                // archived hosts starting with `q`, or after `site:`
+  | { kind: "term"; text: string }                                                 // vocabulary completion of the last word, most frequent first
+```
+Order: title, query, domain, term, each group at most half of `limit`, and a group never repeats a text. `didYouMean` has the same shape as in `SearchResponse` with `appliedAutomatically: false`.
+
+**Saved searches** (`ss_` ids). `POST /api/search/saved` takes `{ name, query, filters?, scope?, includeOnline? }` (name 1 to 120 characters; the query must parse; stored locally in `main.db`) and returns 201 with
+```ts
+interface SavedSearch { id: string; name: string; query: string; filters: SearchFilters; scope: SearchRequest["scope"]; includeOnline: boolean;
+  createdAt: Iso; lastRunAt?: Iso; lastResultCount?: number; collectionId?: string /* the saved-search collection built on it */ }
+```
+`GET /api/search/saved` returns `{ items }`, newest first. `PATCH` takes any of `name`, `query`, `filters`, `scope`, `includeOnline`. `DELETE` returns 204 and refuses with 409 while a saved-search collection uses it (delete the collection first). `POST /api/search/saved/{id}/run` takes `{ page?, pageSize? }` and returns a `SearchResponse` (it is not written to the history).
+
+**History.** `GET /api/search/history?limit=50&cursor=` returns `{ enabled: boolean, items: { id: string, query: string, scope: string, at: Iso, localCount: number }[], nextCursor?: string }` newest first (an empty list when the setting is off). `DELETE /api/search/history` clears everything and returns `{ removed }`; `DELETE /api/search/history/{id}` removes one (404 when unknown).
+
+**Saved search as a collection.** `POST /api/collections` with `{ kind: "saved_search", name, savedSearchId }` (the id of an existing saved search; 400 on `savedSearchId` when missing or unknown) creates a collection whose members are the pages that the saved search currently finds in the local index (up to 2000). The members are stored (`added_by = 'rule'`) and refreshed when the collection is created, on `POST /api/collections/{id}/rebuild` (returns `{ added, removed }`) and within a couple of seconds after the index applies a change; `GET /items` reads the stored members in the usual shape. `POST /items` on it is 409. `rule` in the collection output holds `{ savedSearchId }`.
+
+#### 6.1.1 Index endpoints (section 11) in brief
+
+`GET /api/index/status` returns
+```ts
+interface IndexStatus {
+  state: "ok" | "building" | "missing" | "rebuilding" | "error";   // missing = no usable index.db yet; the server rebuilds it by itself
+  engine: "fts5"; generationId: number; schemaVersion: number; builtAt?: Iso;
+  docs: number; expectedDocs: number; drift: number;                // drift = expectedDocs - docs (pages that should be indexed minus indexed)
+  sizeBytes: number;
+  outbox: { pending: number; oldestAgeMs: number | null; lastAppliedId: number };
+  rebuild?: { jobId: number; state: "queued" | "running" | "failed" | "done"; docsDone: number; docsTotal: number; startedAt: Iso; resumable: boolean; error?: string };
+  lastOptimizeAt?: Iso; lastCheck?: { at: Iso; ok: boolean; sampled: number; mismatches: number; countMismatch: number };
+  vocabTerms: number; groups: { en: number; default: number };
+}
+```
+`POST /api/index/rebuild` (body `{ reason? }`) answers 202 `{ jobId, state }` (409 when one is already running). `POST /api/index/optimize` runs FTS5 `optimize`, a vocabulary rebuild and `ANALYZE`; returns `{ ok, tookMs }`. `POST /api/index/check` runs the sampled consistency check (counts plus up to 200 sampled documents compared with `main.db`) and returns `{ ok, expected, indexed, sampled, mismatches: { pageId, field }[], missing: number, extra: number, repaired: number }`; with `?repair=true` it queues the pages that differ (and a rebuild when the counts differ by more than 1%). `GET /api/index/jobs` returns `{ items }` (the `indexing_jobs` rows, newest first, 50). `GET|PUT /api/index/synonyms` and `GET|PUT /api/index/ranking` are in 6.1.3 and 6.1.4.
+
+**Synonyms (6.1.3).** `GET` returns `{ enabled: boolean, items: { term: string, expansions: string[], kind: "twoway" | "oneway" }[] }`. `PUT` replaces the whole list with the same body (`enabled` is optional; each term and expansion is 1 to 60 characters of letters, digits, spaces, hyphens; at most 500 entries; invalid input is a 400 with field paths). A `twoway` entry means the term and every expansion are interchangeable. A `oneway` entry expands the term only. Expansion happens when the query runs, only for bare terms and never for phrases or exclusions, and `synonyms: false` in the request turns it off. Changing synonyms never rebuilds the index.
+
+**Ranking weights (6.1.4).** `GET` returns `{ weights: RankingWeights, defaults: RankingWeights, bm25: { title: 10, headings: 5, url: 3, body: 1 }, preferences: { domains: Record<string, number>, sources: Record<string, number> } }`; `PUT` takes `{ weights?: Partial<RankingWeights>, preferences?: ... }` (each weight is 0 to 5, each preference -1 to 1; unknown keys are a 400) and returns the same shape. `RankingWeights = { relevance, exactTitle, freshness, linkGraph, preference, cached }`. The BM25 column weights are fixed in Phase 4. Changes apply to the next query.
+
+**Documents and Images categories.** `scope: "documents"` lists PDF, text and Markdown pages by page type (`pages.content_type` `pdf` or `text`, set from the imported file's kind; the synthetic import URL is never consulted); `scope: "images"` lists pages whose `type` is `image`. No image pages are produced by the capture pipeline yet (it refuses non-HTML responses), so the category is empty until image pages exist; the filter and the facet work today. Per-`<img>` sub-documents are post-v1.
+
 
 ## 7. Sources and collections
 
@@ -354,7 +463,7 @@ type ItemRef = { pageId: string } | { zimId: string; path: string };
 
 Implementation notes (server, Phase 3: C-06, C-07, C-09, C-13). Differences from the contract above:
 
-- **Source types.** `single_page`, `website`, `section`, `linked_collection`, `sitemap`, `feed` and `imported_documents` work. `saved_search` and `knowledge_package` are refused at create with a 400 field error on `type` that names the phase that brings them. `adapter: "http"` is accepted (and `"import"` for `imported_documents`). For the web types `startUrl` is required, must be `http(s)` and may not carry a username or password. An `imported_documents` source takes no `startUrl` (400 if one is sent); it holds uploaded files (`POST /api/archive/import?sourceId=`), and `POST /api/sources/{id}/run` on it answers 409 (nothing to run).
+- **Source types.** `single_page`, `website`, `section`, `linked_collection`, `sitemap`, `feed` and `imported_documents` work. `saved_search` (the source type, scheduled searches) and `knowledge_package` are refused at create with a 400 field error on `type` that names the phase that brings them. `adapter: "http"` is accepted (and `"import"` for `imported_documents`). For the web types `startUrl` is required, must be `http(s)` and may not carry a username or password. An `imported_documents` source takes no `startUrl` (400 if one is sent); it holds uploaded files (`POST /api/archive/import?sourceId=`), and `POST /api/sources/{id}/run` on it answers 409 (nothing to run).
 - **Config.** `SourceInput.config` is partial; omitted limits come from the named `profile` (`focused`, `balanced`, `comprehensive`), clamped to the ceilings of the resource profile; `custom` starts from `balanced`. A single page is forced to depth 0 and one page; sitemaps and feeds to depth 0; a section gets `allowedPaths` under the start folder; a linked collection allows one external hop. `linkWeights` keys are `main|heading|related|nav|footer`. Extra fields: `maxLinksPerPage`, `userAgentSuffix`, `sitemapMaxDepth` (default 3). The response carries `config` (the resolved, stored config) and `configVersion`; a `PATCH` that changes the resolved config stores a new `source_configs` version, other fields are updated in place.
 - **Ceilings** (400, one field message each, e.g. `config.maxPages`; they never exceed the crawl engine's own): pi-lite depth 5, pages 5,000, bytes 2 GiB, duration 6 h, concurrency 2, retries 3, external depth 1, request delay at least 1,500 ms. standard depth 10, pages 100,000, bytes 20 GiB, duration 72 h, concurrency 8, retries 5, external depth 2, delay at least 1,000 ms.
 - **Built-in sources.** Quick saves (`quick_saves`, P3), Browsing cache (`browsing_cache`, P4) and Imports (`imports`, P3, no automatic eviction) exist from the first start (`GET /api/sources?system=true`). They cannot be deleted; only `priority`, `retention`, `automaticEviction` and `enabled` can be changed (409 otherwise). `POST /api/browser/save` and `POST /api/archive/capture` link the page to Quick saves (`page_sources`); `sourceId` on `/api/archive/capture` names another source instead (404 if unknown).
@@ -366,7 +475,7 @@ Implementation notes (server, Phase 3: C-06, C-07, C-09, C-13). Differences from
 - **Delete.** `DELETE /api/sources/{id}` soft-deletes. It removes the source's `page_sources` rows, its schedules, windows and discovery records, cancels its queued and running downloads, and keeps the pages. A page left with no reference counts as priority 4 and surplus; Phase 6 removes it by policy. With `?deletePages=true` pages with no other source and no bookmark are also deleted (with an exclusion entry). The response is `{ referencesRemoved, pagesDeleted, pagesUnreferenced, downloadsCancelled }`. Deleted sources answer 404.
 - **Preview.** `POST /api/sources/preview` takes a `SourceInput` and returns `{ valid, type, config, scope: string[], scopeSummary: string, estimate: PreviewEstimate, sample?, robots, warnings: string[], ceilings, requests }`. It fetches the start page and a small sample of in-scope links (at most 12 requests in all, one at a time, with robots.txt honoured, no archive written) and extrapolates. `PreviewEstimate` is `{ estimate: true, label: "Estimate", pages: { low, high }, bytes: { low, high }, basis: string, confidence: "low" | "medium" | "high" }`. `scopeSummary` is one plain sentence ("Pages on example.org, up to 3 links from the start page, 500 pages at most"); `scope` keeps the bullet form. `sample` is `{ fetched, inScopeLinks, averageBytes, startPageBytes, sampledFrom, depthCounts? }` for crawl types and `{ found, sampledFrom }` for sitemaps and feeds. `robots` is `{ checked: boolean, allowed: boolean, crawlDelayMs?, message }`. `warnings` covers robots (start page disallowed, crawl delay, robots ignored), size (the upper bound exceeds the free space left, the page limit is near the ceiling) and an unreachable start address (the preview still answers 200 with `valid: true`, a wide range and the reason). `requests` is how many outbound requests the preview made. The range is a guess from a sample; it is never shown as a promise.
 - **Pages and stats.** `/pages` returns `{ items: { pageId, url, host, title, availability, effectivePriority, firstSeenAt, lastSeenAt, discoveredVia, depth, priorityOverride }[], nextCursor?, total }`. `/stats` returns `{ pages, versions, latestBytes, byPriority, lastRuns, failedRuns, lastRunAt, lastStatus }`.
-- **Collections.** `kind: "saved_search"` answers 501 `not_implemented` until saved searches exist; `kind: "auto"` needs `rule: { match: "all"|"any", conditions: ({ field: "domain"|"source"|"title", value })[] }`. `icon` must be one of `GET /api/collections/icons` (lucide names). `parentId` is a public id or null; a cycle or more than 8 levels is a 400 with a field message (and the database refuses it too). `priorityFloor` is `"P1".."P4"` or null. `GET /api/collections` returns `{ items }` (a nested `children` tree with `?tree=true`) with `itemCount` per collection. A Favourites collection (`kind: "favourites"`) exists from the first start; it cannot be deleted. `DELETE` returns `{ reparented, membershipsRemoved }`: children move up to the parent, pages stay in the archive. `GET /items` takes `limit`, `cursor`, `recursive` and returns `{ items: { pageId, url, host, title, availability, effectivePriority, addedBy, addedAt }[], nextCursor?, total }`. `POST /items` returns `{ added, alreadyMember, removed, notFound }`; it is refused with 409 on an auto collection (change the rule) and with 501 for ZIM items until ZIM support exists. `POST /rebuild` returns `{ added, removed }` and is 409 for a manual collection. Pages join collections by hand (`added_by: user`), through a rule (`rule`) or because the source feeds the collection (`source`). `priority_floor` raises the cached `pages.effective_priority` for members at once; the full reference rules are in data-model.md 5.1.
+- **Collections.** `kind: "saved_search"` needs `savedSearchId` (a `ss_` id) and fills from that search, see 6.1; `kind: "auto"` needs `rule: { match: "all"|"any", conditions: ({ field: "domain"|"source"|"title", value })[] }`. `icon` must be one of `GET /api/collections/icons` (lucide names). `parentId` is a public id or null; a cycle or more than 8 levels is a 400 with a field message (and the database refuses it too). `priorityFloor` is `"P1".."P4"` or null. `GET /api/collections` returns `{ items }` (a nested `children` tree with `?tree=true`) with `itemCount` per collection. A Favourites collection (`kind: "favourites"`) exists from the first start; it cannot be deleted. `DELETE` returns `{ reparented, membershipsRemoved }`: children move up to the parent, pages stay in the archive. `GET /items` takes `limit`, `cursor`, `recursive` and returns `{ items: { pageId, url, host, title, availability, effectivePriority, addedBy, addedAt }[], nextCursor?, total }`. `POST /items` returns `{ added, alreadyMember, removed, notFound }`; it is refused with 409 on an auto collection (change the rule) and with 501 for ZIM items until ZIM support exists. `POST /rebuild` returns `{ added, removed }` and is 409 for a manual collection. Pages join collections by hand (`added_by: user`), through a rule (`rule`) or because the source feeds the collection (`source`). `priority_floor` raises the cached `pages.effective_priority` for members at once; the full reference rules are in data-model.md 5.1.
 
 Validation highlights: P1 or P2 sources default `automaticEviction=false` but any value is accepted (P1 is never auto-evicted either way); `maxPages`, `depth` and `maxBytes` have hard server-side ceilings per resource profile; a `knowledge_package` source requires a ZIM package; Wikipedia sources require `NCB_CONTACT`.
 
@@ -511,6 +620,8 @@ interface StorageForecast { estimate: true; horizonDays: number; projectedUsedBy
 
 ## 11. Index
 
+Shapes and behaviour of these endpoints are in [6.1.1](#611-index-endpoints-section-11-in-brief). Writes need a session and the CSRF header.
+
 | Method | Path | Purpose | Auth |
 |---|---|---|---|
 | GET | `/api/index/status` | Generation, schema version, doc count, expected count, drift, size on disk, outbox backlog, rebuild progress, last optimise | S/G |
@@ -530,7 +641,7 @@ interface StorageForecast { estimate: true; horizonDays: number; projectedUsedBy
 | GET | `/api/settings/schema` | JSON Schema for the groups (drives the settings UI) | S |
 | GET/PATCH | `/api/settings/user` | Per-user settings (theme, shortcuts, tab restore) | S , S+C |
 
-Response shapes (server): `GET /api/settings` returns the groups as `{ general: {...}, resources: {...}, ... }`; secret fields are replaced by a `has<Field>` flag (for example `offline.hasProbeToken`). `PATCH /api/settings` takes a partial of any groups, validates the merged group, returns the same map and, when online search was just enabled, a top-level `disclosure` string. Enabling `privacy.onlineSearch.enabled` requires `privacy.onlineSearch.acknowledged: true` in the same patch (otherwise a field error on that path), which stores `acknowledgedAt`. Invalid values return 400 with `details.fields[].path` such as `offline.probeUrl`. `GET /api/settings/user` and `PATCH` use `{ theme, density, tabRestore, shortcuts }`.
+Response shapes (server): `GET /api/settings` returns the groups as `{ general: {...}, resources: {...}, ... }`; secret fields are replaced by a `has<Field>` flag (for example `offline.hasProbeToken`). `PATCH /api/settings` takes a partial of any groups, validates the merged group, returns the same map and, when online search was just enabled, a top-level `disclosure` string. Enabling `privacy.onlineSearch.enabled` requires `privacy.onlineSearch.acknowledged: true` in the same patch (otherwise a field error on that path), which stores `acknowledgedAt`. Invalid values return 400 with `details.fields[].path` such as `offline.probeUrl`. `GET /api/settings/user` and `PATCH` use `{ theme, density, tabRestore, shortcuts, search }` where `search = { homepageSections: { recentSearches, bookmarks, favourites, libraryStats }, resultsPerPage }`: the four section flags are booleans (default all `false`), `resultsPerPage` is an integer 1 to 50 (default 10).
 
 Groups: `general` (app name, locale `en-GB`), `resources` (profile and limits), `privacy` (`history.enabled`, `searchHistory.enabled`, `onlineSearch.enabled`, disclosure text), `offline` (`forced`, probe URL), `browser` (`showLinkStates`, `liveFrames`, `bookmarkPriority`, `autoCacheOpened`, and from Phase 2 `preferCached` (default true) and `quickSavePriority` (default 3)), `search` (ranking, RRF `k` and weights, synonyms, ZIM budget), `discovery` (section 9), `storage` (section 10 policy), `logging`, `appearance` (theme tokens). Changing `privacy.onlineSearch.enabled` to true returns the disclosure text that the UI must show and record acknowledgement of (`acknowledgedAt`).
 

@@ -99,11 +99,11 @@ describe("C-13 collections: shape and guards", () => {
     expect(() => t.svc.db.run(`INSERT INTO collections (public_id, name, parent_id, created_at, updated_at) VALUES ('col_x', 'x', ?, 1, 1)`, [row.id])).toThrow(/too deep/);
   });
 
-  it("saved-search collections and ZIM items are stubbed with a clear message", async () => {
+  it("saved-search collections need a saved search; ZIM items are stubbed with a clear message", async () => {
     const t = await startSourcesServer();
     const ss = await t.api("POST", "/api/collections", { name: "Saved", kind: "saved_search" });
-    expect(ss.status).toBe(501);
-    expect(ss.body.message).toMatch(/Saved-search collections arrive with saved searches/);
+    expect(ss.status).toBe(400);
+    expect(ss.body.details.fields[0].path).toBe("savedSearchId");
     const c = await col(t, { name: "M" });
     const zim = await t.api("POST", `/api/collections/${c.id}/items`, { add: [{ zimId: "zim_x", path: "A/Foo" }] });
     expect(zim.status).toBe(501);

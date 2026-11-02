@@ -1,11 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
-import { Archive, ExternalLink, Globe, Save, Search, WifiOff } from "lucide-react";
+import { Archive, ExternalLink, Globe, Save, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Wordmark } from "@/components/layout/app-shell";
+import { SearchHome } from "@/components/search/home";
 import { ErrorState, LoadingSkeleton } from "@/components/layout/states";
 import { useEvents } from "@/components/layout/events";
 import { useToast } from "@/components/ui/toast";
@@ -17,37 +15,6 @@ import { hostOf, useBrowser, type Tab } from "./tabs";
 
 /** The sandbox for archived content: popups only. No `allow-scripts`, no `allow-same-origin` (A-14, decision D-5). */
 export const FRAME_SANDBOX = "allow-popups allow-popups-to-escape-sandbox";
-
-function SearchHome() {
-  const router = useRouter();
-  const [q, setQ] = React.useState("");
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-6 px-4 py-16">
-      <h1 className="text-5xl font-semibold tracking-tight sm:text-6xl">
-        <Wordmark />
-      </h1>
-      <form
-        role="search"
-        className="flex w-full max-w-xl gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (q.trim()) router.push(`/search?q=${encodeURIComponent(q.trim())}`);
-        }}
-      >
-        <label htmlFor="home-search" className="sr-only">
-          Search your archive and the web
-        </label>
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute top-3 left-3 size-4 text-muted-foreground" aria-hidden="true" />
-          <Input id="home-search" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" autoComplete="off" className="h-10 rounded-full pl-9" />
-        </div>
-        <Button type="submit" className="h-10 rounded-full px-5">
-          Search
-        </Button>
-      </form>
-    </div>
-  );
-}
 
 function Panel({ title, icon: Icon, children }: { title: string; icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" }>; children: React.ReactNode }) {
   return (

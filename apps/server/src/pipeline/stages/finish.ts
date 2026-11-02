@@ -39,6 +39,20 @@ export const renderPrep: StageFn = (ctx) => {
   return { detail: { resources: rows.length } };
 };
 
+/**
+ * Stage 12: hands the page to the search index (task S-02, decision D-11). The row goes in the outbox in this transaction-sized
+ * step; the `index` worker reads the page's current state when it applies it, so a row that is applied before stage 15 has
+ * finished simply indexes the previous version and stage 15's own outbox row (a trigger on `pages`) indexes the new one.
+ */
+export const indexStage: StageFn = (ctx) => {
+  const { db, clock } = ctx.deps;
+  const v = version(ctx);
+  const text = db.get<{ n: number | null }>(
+    "SELECT b.size_bytes AS n FROM version_content vc JOIN blobs b ON b.id = vc.text_blob_id WHERE vc.version_id = ?", [v.id]);
+  const id = db.run("INSERT INTO index_outbox (op, page_id, version_id, queued_at) VALUES ('upsert_page', ?, ?, ?)", [v.pageId, v.id, clock.now()]).lastInsertRowid;
+  return { detail: { outboxId: Number(id), textBytes: text?.n ?? 0 } };
+};
+
 export const skippedStage = (until: string): StageFn => () => ({ detail: { skipped: until } });
 
 /** Pages that the version's links point at (for inbound-count recomputation). */

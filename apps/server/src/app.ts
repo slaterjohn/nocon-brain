@@ -17,6 +17,7 @@ import { browserRoutes } from "./routes/browser.js";
 import { collectionRoutes } from "./routes/collections.js";
 import { downloadRoutes } from "./routes/downloads.js";
 import { scheduleRoutes } from "./routes/schedules.js";
+import { searchRoutes } from "./routes/search.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { sourceRoutes } from "./routes/sources.js";
 import { storageRoutes } from "./routes/storage.js";
@@ -173,7 +174,7 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
     if (req.principal) return;
 
     if (svc.guestMatcher && svc.guestMatcher(clientIp(req))) {
-      if (level === "guest" && SAFE.has(req.method)) {
+      if (level === "guest" && (SAFE.has(req.method) || req.routeOptions.config.guestPost)) {
         req.principal = { kind: "guest" };
         return;
       }
@@ -244,6 +245,7 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
     bookmarkRoutes(a, state);
     sourceRoutes(a, state);
     collectionRoutes(a, state);
+    searchRoutes(a, state);
     downloadRoutes(a, state);
     scheduleRoutes(a, state);
   });

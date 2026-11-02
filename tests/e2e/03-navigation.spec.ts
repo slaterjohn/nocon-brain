@@ -11,7 +11,7 @@ test("Browser is the landing page, with the five areas in the navigation", async
   await expect(nav.getByRole("link")).toHaveText(["Browser", "Library", "Downloads", "Search", "Storage and settings"]);
   await expect(nav.getByRole("link", { name: "Browser" })).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("NoConBrain");
-  await expect(page.getByRole("searchbox", { name: /Search your archive/ })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: /Search your archive/ })).toBeVisible();
 });
 
 for (const [name, url, heading] of [
@@ -28,13 +28,12 @@ for (const [name, url, heading] of [
   });
 }
 
-test("searching from the home page goes to the placeholder results page until search is built", async ({ page }) => {
-  await page.getByRole("searchbox", { name: /Search your archive/ }).fill("hello world");
+test("searching from the home page goes to the results page", async ({ page }) => {
+  await page.getByRole("combobox", { name: /Search your archive/ }).fill("hello world");
   await page.getByRole("button", { name: "Search", exact: true }).click();
-  await expect(page).toHaveURL(/\/search\?q=hello%20world$/);
-  await expect(page.getByRole("heading", { level: 1, name: "Search" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Search isn't connected yet" })).toBeVisible();
-  await expect(page.getByText(/"hello world" can't be searched/)).toBeVisible();
+  await expect(page).toHaveURL(/\/search\?q=hello\+world$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Search results for hello world" })).toBeAttached();
+  await expect(page.getByRole("tablist", { name: "Result categories" })).toBeVisible();
 });
 
 test("browser chrome: tabs, address bar and history", async ({ page }) => {
