@@ -18,7 +18,7 @@ Soft delete. The source's `page_sources` rows are removed, so nothing keeps a re
 
 ## Running a source
 
-`SourceService.run` by type: `single_page` goes to `pipeline.captureUrl`; `sitemap` and `feed` are read through the guarded fetcher (50,000 addresses, 50 MB compressed and unpacked, nesting and file-count caps) and only addresses not in `source_discovered_urls` are captured; `website`, `section` and `linked_collection` go through `EngineCrawlPort` to `CrawlService.startCrawl`. Captures carry `sourceId`, `discoveredVia` and `depth`; the pipeline writes the reference.
+`SourceService.run` by type (`imported_documents` has nothing to run: its files arrive through `POST /api/archive/import`, see `apps/server/src/imports/README.md`): `single_page` goes to `pipeline.captureUrl`; `sitemap` and `feed` are read through the guarded fetcher (50,000 addresses, 50 MB compressed and unpacked, nesting and file-count caps) and only addresses not in `source_discovered_urls` are captured; `website`, `section` and `linked_collection` go through `EngineCrawlPort` to `CrawlService.startCrawl`. Captures carry `sourceId`, `discoveredVia` and `depth`; the pipeline writes the reference.
 
 ## Scheduler
 

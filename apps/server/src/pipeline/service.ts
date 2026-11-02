@@ -42,6 +42,8 @@ export interface PageDetail {
   id: number; publicId: string; urlKey: string; canonicalUrl: string; host: string; title: string | null; language: string | null;
   availability: string; latestVersionId: number | null; latestVersionPublicId: string | null; versionCount: number; inboundCount: number;
   effectivePriority: number | null; firstCapturedAt: number | null; lastCapturedAt: number | null; lastCheckedAt: number | null;
+  /** Set when a refresh found the page gone (404 or 410). The saved versions are kept. */
+  goneAt: number | null; goneStatus: number | null;
   aliases: { urlKey: string; kind: string }[];
 }
 
@@ -219,7 +221,7 @@ export class PipelineService {
       id: r.id, publicId: r.public_id, urlKey: r.url_key, canonicalUrl: r.canonical_url, host: r.host, title: r.title, language: r.language,
       availability: r.availability, latestVersionId: r.latest_version_id, latestVersionPublicId: r.latest_pid, versionCount: r.version_count,
       inboundCount: r.inbound_count, effectivePriority: r.effective_priority, firstCapturedAt: r.first_captured_at,
-      lastCapturedAt: r.last_captured_at, lastCheckedAt: r.last_checked_at, aliases: aliases.map((a) => ({ urlKey: a.url_key, kind: a.kind })),
+      lastCapturedAt: r.last_captured_at, lastCheckedAt: r.last_checked_at, goneAt: r.gone_at ?? null, goneStatus: r.gone_status ?? null, aliases: aliases.map((a) => ({ urlKey: a.url_key, kind: a.kind })),
     };
   }
 
@@ -303,15 +305,27 @@ export class PipelineService {
   }
 
   /** Runs (or resumes) the pipeline for one version. */
-  runVersion(versionId: number, options: CaptureOptions = {}, signal?: AbortSignal): Promise<RunOutcome> {
-    return runPipeline(this.d, versionId, { caps: options.caps, versioning: parseVersioning(options.versioning), signal });
+  async runVersion(versionId: number, options: CaptureOptions = {}, signal?: AbortSignal): Promise<RunOutcome> {
+    const outcome = await runPipeline(this.d, versionId, { caps: options.caps, versioning: parseVersioning(options.versioning), signal });
+    if (outcome.kind === "done" && this.d.onVersionDone) {
+      try {
+        this.d.onVersionDone(versionId, options);
+      } catch (e) {
+        this.d.log.warn({ err: String(e), versionId }, "post-capture hook failed");
+      }
+    }
+    return outcome;
   }
 
   private markDownload(id: number, state: "running" | "completed" | "failed", extra: { code?: string; message?: string } = {}): void {
     const now = this.d.clock.now();
     if (state === "running") this.d.db.run("UPDATE download_jobs SET state = 'running', started_at = COALESCE(started_at, ?) WHERE id = ? AND state IN ('queued','running')", [now, id]);
-    else if (state === "completed") this.d.db.run("UPDATE download_jobs SET state = 'completed', finished_at = ? WHERE id = ?", [now, id]);
-    else this.d.db.run("UPDATE download_jobs SET state = 'failed', failure_code = ?, failure_message = ?, finished_at = ? WHERE id = ?", [extra.code ?? "internal", (extra.message ?? "").slice(0, 500), now, id]);
+    else if (state === "completed") this.d.db.run("UPDATE download_jobs SET state = 'completed', finished_at = ? WHERE id = ? AND state <> 'cancelled'", [now, id]);
+    else this.d.db.run("UPDATE download_jobs SET state = 'failed', failure_code = ?, failure_message = ?, finished_at = ? WHERE id = ? AND state <> 'cancelled'", [extra.code ?? "internal", (extra.message ?? "").slice(0, 500), now, id]);
+    const logged = { running: "Started: fetching the page", completed: "Finished", failed: `Failed: ${extra.message ?? "the page could not be saved"}` }[state];
+    if (state !== "running" || this.d.db.get("SELECT 1 AS x FROM activity_log WHERE download_job_id = ? LIMIT 1", [id]) === undefined) {
+      this.d.activity.write({ level: state === "failed" ? "error" : "info", area: "pipeline", message: logged, downloadJobId: id, details: state === "failed" ? { code: extra.code ?? "internal" } : undefined });
+    }
     this.d.events.publish("download", { downloadJobId: id, state });
     publishCapture(this.d.db, this.d.events, id);
   }

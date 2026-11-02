@@ -184,6 +184,64 @@ export async function startArticle({ appApiUrl = 'http://127.0.0.1:3000/api/evil
     if (p === '/about') {
       return html(res, layout(origin, { title: 'About', canonical: `${origin}/about`, body: '<main><h1>About</h1><p>Fixture Gazette is not a real publication.</p></main>' }));
     }
+    // ---- script-built pages (renderer tests). The server sends an empty shell; the article is inserted by script.
+    if (p === '/js-only' || p === '/js-only/big') {
+      const big = p === '/js-only/big';
+      // `big` has no recognisable mount id, but is a large bundle shell, so only the "little text" trigger fires.
+      const pad = big ? `<!-- ${'bundle '.repeat(4000)} -->\n` : '';
+      const mount = big ? '<div class="shell-frame"></div>' : '<div id="root"></div>';
+      return html(res, `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Aurora survey (script-built)</title>
+<link rel="canonical" href="${origin}${p}"></head><body>${pad}${mount}<noscript>You need to enable JavaScript to run this app.</noscript>
+<script src="/js-only/app.js"></script></body></html>`);
+    }
+    if (p === '/js-only/app.js') {
+      return send(res, 200, `(function () {
+  var mount = document.getElementById('root') || document.querySelector('.shell-frame');
+  function show(data) {
+    var h = document.createElement('main');
+    h.innerHTML = '<article><h1>' + data.title + '</h1>' + data.paragraphs.map(function (t) { return '<p>' + t + '</p>'; }).join('') + '</article>';
+    mount.appendChild(h);
+  }
+  fetch('/js-only/data.json').then(function (r) { return r.json(); }).then(show);
+})();
+`, { 'Content-Type': 'text/javascript' });
+    }
+    // A script-heavy page for memory measurements: a 1.5 MB JSON payload and 30,000 table rows built by script.
+    if (p === '/js-only/heavy') {
+      return html(res, `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Heavy script-built table</title></head><body><div id="root"></div>
+<script src="/js-only/heavy.js"></script></body></html>`);
+    }
+    if (p === '/js-only/heavy.js') {
+      return send(res, 200, `(function () {
+  fetch('/js-only/heavy.json').then(function (r) { return r.json(); }).then(function (rows) {
+    var t = document.createElement('table'), b = document.createElement('tbody');
+    rows.forEach(function (r) {
+      var tr = document.createElement('tr');
+      r.forEach(function (c) { var td = document.createElement('td'); td.textContent = c; tr.appendChild(td); });
+      b.appendChild(tr);
+    });
+    t.appendChild(b);
+    document.getElementById('root').appendChild(t);
+    window.__rows = rows;
+  });
+})();
+`, { 'Content-Type': 'text/javascript' });
+    }
+    if (p === '/js-only/heavy.json') {
+      const rows = [];
+      for (let i = 0; i < 30000; i++) rows.push([`row-${i}`, `value ${hash32('v' + i) % 100000}`, `note ${hash32('n' + i) % 977}`]);
+      return json(res, rows);
+    }
+    if (p === '/js-only/data.json') {
+      return json(res, {
+        title: 'Aurora survey',
+        paragraphs: [
+          'The aurora survey recorded forty-one displays over the winter, and the brightest, on the ninth of January, filled the northern sky for almost two hours.',
+          'Observers at the Kvaloya station noted that green emission dominated, with red fringes appearing above one hundred and fifty kilometres. The scriptbuilt marker phrase is lanternfish-migration-7731.',
+          'Magnetometer traces showed the substorm onset eleven minutes before the first visible arc brightened, which matches the delay seen in earlier seasons.',
+        ],
+      });
+    }
     if (p === '/malicious') {
       const body = `<main><article><h1>Totally safe article</h1><p>Some harmless text about astronomy.</p>
 <form id="evil-form" action="http://127.0.0.1:9/steal" method="post"><input name="q" value="secret"><button>Go</button></form>

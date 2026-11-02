@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { StageContext, StageFn } from "../types.js";
 import { deleteVersion } from "../store.js";
 import { supersededBy } from "../policy.js";
-import { stageDetail, version } from "./shared.js";
+import { importKindOf, stageDetail, version } from "./shared.js";
 
 export const PIPELINE_VERSION = "1";
 export const REWRITER_VERSION = "prep-1";
@@ -66,6 +66,7 @@ export const status: StageFn = (ctx) => {
   const { db, blobs, clock } = ctx.deps;
   const v = version(ctx);
   const now = clock.now();
+  const importKind = importKindOf(ctx);
   const assetsDetail = stageDetail(ctx, "assets");
   const readableDetail = stageDetail(ctx, "readable") as { method?: string; rejected?: string };
 
@@ -75,7 +76,8 @@ export const status: StageFn = (ctx) => {
   if (assetsDetail.capHit || readableDetail.rejected === "too_large") partial = "size_cap";
   else if (failedAssets > 0) partial = "assets_missing";
   else if (readableDetail.rejected) partial = "truncated";
-  else if (readableDetail.method === "body_text" || readableDetail.method === "none") partial = "reader_only";
+  // A short note or an empty-looking PDF page is still the whole document, so an import is never "reader only".
+  else if ((readableDetail.method === "body_text" || readableDetail.method === "none") && importKind === null) partial = "reader_only";
   const nextStatus = partial ? "partial" : "ready";
 
   const result = db.transaction(() => {
@@ -90,10 +92,10 @@ export const status: StageFn = (ctx) => {
     );
     const meta = db.get<{ title: string | null; language: string | null }>("SELECT title, language FROM page_versions WHERE id = ?", [v.id])!;
     db.run(
-      `UPDATE pages SET latest_version_id = ?, title = ?, language = ?, availability = ?, content_type = 'html',
+      `UPDATE pages SET latest_version_id = ?, title = ?, language = ?, availability = ?, content_type = ?,
          effective_priority = MIN(COALESCE(effective_priority, 4), ?), first_captured_at = COALESCE(first_captured_at, ?),
          last_captured_at = ?, last_checked_at = ? WHERE id = ?`,
-      [v.id, meta.title, meta.language, partial ? "partial" : "archived", jobPriority ?? page.effective_priority ?? 3, v.fetchedAt, v.fetchedAt, now, v.pageId],
+      [v.id, meta.title, meta.language, partial ? "partial" : "archived", importKind === "pdf" ? "pdf" : importKind === "text" || importKind === "markdown" ? "text" : "html", jobPriority ?? page.effective_priority ?? 3, v.fetchedAt, v.fetchedAt, now, v.pageId],
     );
 
     // Links: resolve this version's targets, then point every earlier link that was waiting for this page at it.
@@ -121,7 +123,7 @@ export const status: StageFn = (ctx) => {
     // A crawl owns its download job (it finishes when the frontier is empty), so a page of a crawl never completes it.
     if (v.downloadJobId && !db.get("SELECT 1 AS x FROM crawl_jobs WHERE download_job_id = ?", [v.downloadJobId])) {
       db.run(
-        `UPDATE download_jobs SET state = 'completed', pages_done = 1, bytes_done = ?, finished_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ?`, [total, now, v.downloadJobId]);
+        `UPDATE download_jobs SET state = 'completed', pages_done = 1, bytes_done = ?, finished_at = ?, failure_code = NULL, failure_message = NULL WHERE id = ? AND state <> 'cancelled'`, [total, now, v.downloadJobId]);
     }
     return { superseded: doomed.length, total };
   });

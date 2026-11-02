@@ -52,7 +52,7 @@ describe("C-07 sitemap sources against the sitemapFeed fixture", () => {
     expect(p.status).toBe(200);
     expect(p.body).toMatchObject({ valid: true, sample: { found: total }, estimate: { estimate: true, pages: { low: 10, high: 10 } } });
     expect(p.body.warnings.join(" ")).toMatch(/limited to 10 pages/);
-    const w = await t.api("POST", "/api/sources/preview", { name: "x", type: "website", startUrl: "https://example.com/", config: { respectRobots: false } });
+    const w = await t.api("POST", "/api/sources/preview", { name: "x", type: "website", startUrl: "http://127.0.0.1:9/", config: { respectRobots: false } }); // nothing listens there: no real network is touched
     expect(w.body.warnings.join(" ")).toMatch(/ignores robots.txt/);
     expect(w.body.estimate).toMatchObject({ estimate: true });
     expect((await t.api("POST", "/api/sources/preview", { name: "", type: "website" })).status).toBe(400);

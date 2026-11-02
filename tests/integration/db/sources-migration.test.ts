@@ -5,11 +5,11 @@ import { defaultMigrationsDir, migrate, openDb, parseFkDirectives, rebuildWithFo
 import { tempDir } from "../helpers.js";
 
 /** The migrations before 0006 in a directory of their own, so a database can be built "as it was" and then upgraded. */
-function before0006(): string {
+function before0006(upTo: "0006" | "0007" = "0006"): string {
   const dir = path.join(tempDir(), "migrations");
   fs.mkdirSync(dir);
   for (const f of fs.readdirSync(defaultMigrationsDir)) {
-    if (/^\d{4}_/.test(f) && f < "0006") fs.copyFileSync(path.join(defaultMigrationsDir, f), path.join(dir, f));
+    if (/^\d{4}_/.test(f) && f < upTo) fs.copyFileSync(path.join(defaultMigrationsDir, f), path.join(dir, f));
   }
   return dir;
 }
@@ -45,7 +45,7 @@ describe("migration 0006: foreign keys added to plain-integer columns", () => {
     const beforeSeq = db.all(`SELECT name, seq FROM sqlite_sequence ORDER BY name`);
     const indexesBefore = db.all<{ name: string }>(`SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL AND tbl_name IN ('download_jobs','crawl_jobs','page_versions','bookmarks') ORDER BY name`);
 
-    migrate(db);
+    migrate(db, { migrationsDir: before0006("0007") }); // 0006 only; later migrations add their own columns
 
     // Every row survives. The only changes are the stale source, config and collection values the migration clears.
     const cleared: Record<string, string[]> = { download_jobs: ["source_id", "config_id"], crawl_jobs: ["source_id"], page_versions: ["source_id"], bookmarks: ["collection_id"] };
@@ -107,10 +107,11 @@ describe("migration 0006: foreign keys added to plain-integer columns", () => {
     const db = openDb(file);
     migrate(db, { migrationsDir: mig });
     seed(db);
-    const r = migrate(db, { backupDir: path.join(dir, "backups") });
+    const through0006 = before0006("0007");
+    const r = migrate(db, { backupDir: path.join(dir, "backups"), migrationsDir: through0006 });
     expect(r.applied).toContain("0006_sources_collections");
     expect(r.backups).toHaveLength(1);
-    expect(migrate(db).applied).toEqual([]);
+    expect(migrate(db, { migrationsDir: through0006 }).applied).toEqual([]);
     const backup = openDb(r.backups[0]!);
     expect(backup.get<{ n: number }>(`SELECT COUNT(*) AS n FROM download_jobs`)!.n).toBe(3);
     expect(backup.all(`PRAGMA foreign_key_list(download_jobs)`)).toEqual([]);

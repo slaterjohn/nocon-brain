@@ -60,6 +60,21 @@ export const envSchema = z.object({
   NCB_SCHEDULER_ENABLED: bool(true),
   /** Requests a minute per client IP across the API (docs/api.md section 1). The end-to-end suite raises it. */
   NCB_RATE_LIMIT_PER_MINUTE: int(600, 10, 1_000_000),
+  /** Largest file `POST /api/archive/import` accepts, in MiB (C-14). */
+  NCB_IMPORT_MAX_MB: int(50, 1, 2048),
+  /** Where the optional renderer container listens, for example http://renderer:8080. Empty: rendering is off (C-16). */
+  NCB_RENDERER_URL: z.union([z.literal(""), z.url({ error: "must be empty or an absolute URL, for example http://renderer:8080" })]).default(""),
+  /** Shared by `server` and `renderer`: the renderer's API bearer token and its password at the forward proxy. Defaults to NCB_PROXY_SECRET. */
+  NCB_RENDERER_SECRET: z.string().min(16, "must be at least 16 characters").optional(),
+  /** The guarded forward proxy for the renderer. It starts only when NCB_RENDERER_URL is set. 0 picks a free port (tests). */
+  NCB_RENDER_PROXY_PORT: int(3128, 0, 65535),
+  NCB_RENDER_PROXY_HOST: z.string().min(1).default("0.0.0.0"),
+  /** Pages rendered at once. Only the default of the `resources.renderConcurrency` setting, which the renderer reads live. */
+  NCB_RENDER_CONCURRENCY: int(1, 1, 4),
+  /** Wall-clock budget for one rendered page, in seconds. */
+  NCB_RENDER_TIMEOUT_SECONDS: int(45, 5, 300),
+  /** Hosts that are never rendered, exact or `*.suffix`. */
+  NCB_RENDER_NEVER_HOSTS: list([]),
 });
 
 export type Env = z.infer<typeof envSchema>;

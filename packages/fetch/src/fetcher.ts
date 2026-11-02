@@ -49,6 +49,11 @@ export interface FetcherOptions {
   maxEncodingLayers?: number;
   timeouts?: Partial<Timeouts>;
   hooks?: FetchHooks;
+  /**
+   * Makes a transform that paces the response body (a bandwidth limit). It is put in front of the byte counters, so it
+   * paces what came over the wire. Called once per response; share one limiter between the transforms to limit all downloads together.
+   */
+  bodyThrottle?: () => Transform | undefined;
 }
 
 export interface FetchRequestOptions {
@@ -280,7 +285,8 @@ export function createFetcher(options: FetcherOptions = {}): Fetcher {
         const truncating = !!opts.truncateAtCap;
         const unlimited = Number.MAX_SAFE_INTEGER;
         const wire = new ByteCounter(truncating && stages.length ? unlimited : maxBytes, capErr, truncating && !stages.length);
-        const chain: Transform[] = [wire];
+        const throttle = options.bodyThrottle?.();
+        const chain: Transform[] = throttle ? [throttle, wire] : [wire];
         let last: ByteCounter = wire;
         for (const s of stages) {
           chain.push(s);

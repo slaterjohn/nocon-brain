@@ -1,0 +1,21 @@
+{
+  "name": "@ncb/renderer",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "description": "Optional rendering container: Playwright with chromium_headless_shell behind a small HTTP API. Reaches the web only through the server's guarded forward proxy.",
+  "scripts": {
+    "build": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node24 --external:playwright-core --outfile=dist/server.js",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "playwright-core": "1.64.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "5.9.3"
+  }
+}

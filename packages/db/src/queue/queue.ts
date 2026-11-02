@@ -67,6 +67,11 @@ export interface QueueOptions {
   leaseMs?: number;
   backoff?: BackoffOptions;
   random?: () => number;
+  /**
+   * Global per-host limits read on every claim (resource limits, task C-10). `maxConcurrent` caps every host's own
+   * `max_concurrent`; `minDelayMs` is a floor for the pause after a request to a host (`crawl_delay_ms`).
+   */
+  hostLimits?: () => { maxConcurrent?: number; minDelayMs?: number };
 }
 
 export interface FailOptions {
@@ -96,7 +101,7 @@ WHERE id = (
   SELECT j.id FROM jobs j LEFT JOIN host_state h ON h.host = j.host
   WHERE j.queue = :queue AND j.state = 'queued' AND j.run_at <= :now
     AND (j.host IS NULL OR (
-      COALESCE(h.in_flight, 0) < COALESCE(h.max_concurrent, :defaultPerHost)
+      COALESCE(h.in_flight, 0) < MIN(COALESCE(h.max_concurrent, :defaultPerHost), :hostCap)
       AND COALESCE(h.next_allowed_at, 0) <= :now
       AND COALESCE(h.backoff_until, 0) <= :now))
   ORDER BY j.priority DESC, j.score DESC, j.id
@@ -142,6 +147,7 @@ export class JobQueue {
   private readonly leaseMs: number;
   private readonly backoff: BackoffOptions;
   private readonly random: () => number;
+  private readonly hostLimits?: QueueOptions["hostLimits"];
   /** Used when a host has no `host_state` row yet. Matches the column default. */
   private readonly defaultPerHost = 1;
 
@@ -150,6 +156,7 @@ export class JobQueue {
     this.leaseMs = opts.leaseMs ?? 60_000;
     this.backoff = opts.backoff ?? {};
     this.random = opts.random ?? Math.random;
+    this.hostLimits = opts.hostLimits;
   }
 
   // ---- producing -----------------------------------------------------------------------------
@@ -213,14 +220,17 @@ export class JobQueue {
   claim(queue: JobQueueName, workerId: string, leaseMs: number = this.leaseMs): Job | undefined {
     return this.db.transaction(() => {
       const now = this.clock.now();
-      const row = this.db.get<Row>(CLAIM_SQL, { queue, worker: workerId, lease: now + leaseMs, now, defaultPerHost: this.defaultPerHost });
+      const limits = this.hostLimits?.() ?? {};
+      const hostCap = limits.maxConcurrent && limits.maxConcurrent > 0 ? limits.maxConcurrent : 1_000_000;
+      const minDelay = Math.max(0, limits.minDelayMs ?? 0);
+      const row = this.db.get<Row>(CLAIM_SQL, { queue, worker: workerId, lease: now + leaseMs, now, defaultPerHost: this.defaultPerHost, hostCap });
       if (!row) return undefined;
       const host = row.host as string | null;
       if (host) {
         this.db.run(`INSERT OR IGNORE INTO host_state (host) VALUES (?)`, [host]);
         this.db.run(
-          `UPDATE host_state SET in_flight = in_flight + 1, next_allowed_at = MAX(next_allowed_at, ? + crawl_delay_ms) WHERE host = ?`,
-          [now, host],
+          `UPDATE host_state SET in_flight = in_flight + 1, next_allowed_at = MAX(next_allowed_at, ? + MAX(crawl_delay_ms, ?)) WHERE host = ?`,
+          [now, minDelay, host],
         );
       }
       return toJob(row);
@@ -428,11 +438,11 @@ export class JobQueue {
     this.db.run(
       `UPDATE host_state SET
           in_flight = MAX(in_flight - ?, 0),
-          next_allowed_at = MAX(next_allowed_at, ? + crawl_delay_ms),
+          next_allowed_at = MAX(next_allowed_at, ? + MAX(crawl_delay_ms, ?)),
           consecutive_failures = CASE WHEN ? = 1 THEN 0 ELSE consecutive_failures + 1 END,
           backoff_until = CASE WHEN ? > 0 THEN MAX(backoff_until, ? + ?) ELSE backoff_until END
        WHERE host = ?`,
-      [o.count ?? 1, now, o.success ? 1 : 0, o.hostBackoffMs ?? 0, now, o.hostBackoffMs ?? 0, host],
+      [o.count ?? 1, now, Math.max(0, this.hostLimits?.().minDelayMs ?? 0), o.success ? 1 : 0, o.hostBackoffMs ?? 0, now, o.hostBackoffMs ?? 0, host],
     );
   }
 }

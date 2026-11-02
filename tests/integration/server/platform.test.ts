@@ -232,9 +232,13 @@ describe("F-11 setup wizard and F-12 dashboard", () => {
     expect((await call(t, { url: "/api/setup/profile", body: { profile: "huge" }, cookie })).statusCode).toBe(400);
     expect((await call(t, { url: "/api/setup/providers", body: { skip: true }, cookie })).json()).toEqual({ skipped: true });
     expect((await call(t, { url: "/api/setup/providers", body: { providers: [{ name: "x" }] }, cookie })).statusCode).toBe(501);
-    expect((await call(t, { url: "/api/setup/first-source", body: {}, cookie })).statusCode).toBe(501);
+    // The first source is created through the sources service (full coverage in tests/integration/phase3/gaps.test.ts).
+    expect((await call(t, { url: "/api/setup/first-source", body: {}, cookie })).statusCode).toBe(400);
+    const first = await call(t, { url: "/api/setup/first-source", body: { url: "https://example.org/guide", kind: "page" }, cookie });
+    expect(first.statusCode).toBe(201);
+    expect(first.json().source).toMatchObject({ type: "single_page", name: "example.org", startUrl: "https://example.org/guide" });
 
-    expect((await call(t, { url: "/api/setup/status" })).json()).toEqual({ adminExists: true, storageConfigured: true, profile: "pi-lite", firstSourceCreated: false, complete: false });
+    expect((await call(t, { url: "/api/setup/status" })).json()).toEqual({ adminExists: true, storageConfigured: true, profile: "pi-lite", firstSourceCreated: true, complete: false });
     expect((await call(t, { url: "/api/setup/complete", body: {}, cookie })).json()).toEqual({ complete: true });
     expect((await call(t, { url: "/api/setup/status" })).json().complete).toBe(true);
     // Validation stays available to the admin afterwards; the wizard steps do not.

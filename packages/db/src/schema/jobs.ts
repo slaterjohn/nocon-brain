@@ -37,6 +37,12 @@ export const downloadJobs = sqliteTable(
     createdAt: integer("created_at").notNull(),
     /** 1 when the schedule scheduler paused the job at a download-window edge (0006); only those are resumed when it opens. */
     pausedByWindow: integer("paused_by_window").notNull().default(0),
+    /** 1 when the disk guard paused the job because every volume is under its free-space reserve (0007). */
+    pausedByLimit: integer("paused_by_limit").notNull().default(0),
+    /** Retries by hand (0007). */
+    attempts: integer("attempts").notNull().default(0),
+    /** Counters for one kind of job, for example a refresh's checked, unchanged, changed, gone, failed (0007). */
+    summaryJson: text("summary_json"),
   },
   (t) => [
     index("download_jobs_state_idx").on(t.state, t.priority, t.queueOrder),
@@ -148,3 +154,15 @@ export const hostState = sqliteTable("host_state", {
   robotsFetchedAt: integer("robots_fetched_at"),
   robotsBlobId: integer("robots_blob_id").references(() => blobs.id, { onDelete: "set null" }),
 });
+
+/** `Idempotency-Key` for POST /api/downloads: the same key and body answers the first download (24 hours; migration 0007). */
+export const idempotencyKeys = sqliteTable(
+  "idempotency_keys",
+  {
+    key: text("key").primaryKey(),
+    requestHash: text("request_hash").notNull(),
+    downloadJobId: integer("download_job_id").notNull().references(() => downloadJobs.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("idempotency_keys_created_idx").on(t.createdAt)],
+);

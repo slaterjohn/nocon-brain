@@ -1,17 +1,18 @@
 import { z } from "zod";
 import { parsePriority, type PriorityNumber } from "@ncb/shared";
+import { windowInputSchema } from "../schedule/service.js";
 import { ceilingsFor, presetFor, type ResourceProfile, type SourceCeilings, type SourceProfile } from "./limits.js";
 
 export const SOURCE_TYPES = ["single_page", "website", "section", "linked_collection", "sitemap", "feed", "saved_search", "knowledge_package", "imported_documents"] as const;
 export type SourceType = (typeof SOURCE_TYPES)[number];
 /** Types a source can have in this release. The rest are rejected with a message saying which phase brings them. */
-export const SUPPORTED_TYPES = ["single_page", "website", "section", "linked_collection", "sitemap", "feed"] as const;
-export const WEB_TYPES = new Set<string>(SUPPORTED_TYPES);
+export const SUPPORTED_TYPES = ["single_page", "website", "section", "linked_collection", "sitemap", "feed", "imported_documents"] as const;
+/** Types that start from a web address. `imported_documents` holds uploaded files and has no start address. */
+export const WEB_TYPES = new Set<string>(["single_page", "website", "section", "linked_collection", "sitemap", "feed"]);
 
 const LATER: Record<string, string> = {
   saved_search: "Saved-search sources arrive with online search. Choose a website, section, sitemap or feed for now.",
   knowledge_package: "Knowledge-package sources arrive with ZIM support. Choose a website, section, sitemap or feed for now.",
-  imported_documents: "Imported-document sources arrive with document import. Choose a website, section, sitemap or feed for now.",
 };
 
 export const priorityInput = z
@@ -115,6 +116,8 @@ export const scheduleInputSchema = z
     cron: z.string().trim().min(1).max(120).optional(),
     timezone: z.string().trim().min(1).max(64).default("UTC"),
     windowId: z.string().max(64).nullable().optional(),
+    /** A download window created together with the schedule (only this source's schedule uses it). */
+    window: windowInputSchema.optional(),
     missedRunPolicy: z.enum(["skip", "run_once"]).default("run_once"),
     enabled: z.boolean().default(true),
   });
@@ -193,7 +196,9 @@ const sourceFields = {
 /** Checks that apply to a whole source (create, or the merged result of a patch). */
 export function refineSource(v: { type: string; adapter?: string; startUrl?: string; config: ConfigInput }, ctx: z.RefinementCtx, profile: ResourceProfile): void {
   if (LATER[v.type]) ctx.addIssue({ code: "custom", path: ["type"], message: LATER[v.type]! });
-  if (v.adapter && v.adapter !== "http") ctx.addIssue({ code: "custom", path: ["adapter"], message: "Only the web adapter is available in this release" });
+  const adapterOk = !v.adapter || v.adapter === "http" || (v.type === "imported_documents" && v.adapter === "import");
+  if (!adapterOk) ctx.addIssue({ code: "custom", path: ["adapter"], message: "Only the web adapter is available in this release" });
+  if (v.type === "imported_documents" && v.startUrl) ctx.addIssue({ code: "custom", path: ["startUrl"], message: "Imported-document sources take uploaded files, not a web address" });
   if (WEB_TYPES.has(v.type)) {
     if (!v.startUrl) ctx.addIssue({ code: "custom", path: ["startUrl"], message: "Enter the address to start from" });
     else if (!checkUrl(v.startUrl)) ctx.addIssue({ code: "custom", path: ["startUrl"], message: "Enter a web address that starts with http:// or https://, without a username or password" });

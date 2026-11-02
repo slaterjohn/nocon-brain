@@ -13,7 +13,7 @@ import { CidrError, privateCidrMatcher } from "./lib/cidr.js";
 import { loadSecretKey } from "./lib/secrets.js";
 import { LoginThrottle } from "./lib/throttle.js";
 import { WorkerPool, type PoolOptions } from "./runtime/pool.js";
-import { buildUserAgent, createFetcher, RobotsService, type FetcherOptions } from "@ncb/fetch";
+import { allowlistFromEnv, buildUserAgent, createFetcher, createSsrfGuard, RobotsService, type FetcherOptions, type SsrfGuard } from "@ncb/fetch";
 import { SqliteCaptureStore } from "./pipeline/capture-store.js";
 import { BrowserService } from "./services/browser.js";
 import { BookmarksService, HistoryService } from "./services/bookmarks.js";
@@ -26,7 +26,15 @@ import type { DiscoveryFetcher } from "./sources/discovery/fetch.js";
 import { SourceService } from "./sources/service.js";
 import { ExtractClient } from "./pipeline/extract-client.js";
 import { createPipelineDeps, PipelineService } from "./pipeline/service.js";
+import { ImportService } from "./imports/service.js";
+import { RendererClient } from "./renderer/client.js";
+import { GuardedProxy } from "./renderer/proxy.js";
+import { RenderService } from "./renderer/service.js";
 import { CrawlService } from "./crawl/service.js";
+import { crawlConfigForDownload, DownloadService } from "./downloads/index.js";
+import { RefreshService } from "./refresh/index.js";
+import { ResourceGovernor } from "./limits/governor.js";
+import { workerStatuses } from "./routes/system.js";
 import type { PipelineFaults, PipelineFetcher } from "./pipeline/types.js";
 import { VERSION } from "./version.js";
 import { JobRunner } from "./runtime/runner.js";
@@ -54,6 +62,9 @@ export { handlerFor, JobRunner } from "./runtime/runner.js";
 export { WorkerPool } from "./runtime/pool.js";
 export * from "./pipeline/index.js";
 export * from "./crawl/index.js";
+export * from "./downloads/index.js";
+export * from "./refresh/index.js";
+export * from "./limits/index.js";
 export { SourceService } from "./sources/service.js";
 export { CollectionService } from "./collections/service.js";
 export { ScheduleService } from "./schedule/service.js";
@@ -61,6 +72,10 @@ export { Scheduler } from "./schedule/scheduler.js";
 export * from "./sources/crawl-port.js";
 export { linkPageSource, sourceReferences } from "./sources/references.js";
 export { collectionReferences } from "./collections/references.js";
+export { ImportService } from "./imports/service.js";
+export { RenderService } from "./renderer/service.js";
+export { GuardedProxy } from "./renderer/proxy.js";
+export { decideRender } from "./renderer/triggers.js";
 
 export interface ServerOptions extends BuildOptions {
   config: ResolvedConfig;
@@ -88,6 +103,10 @@ export interface ServerOptions extends BuildOptions {
   crawlPort?: CrawlPort;
   /** Scheduler tick settings (tests use a short `tickMs`). */
   scheduler?: { tickMs?: number; graceMs?: number };
+  /** The SSRF guard of the renderer's forward proxy. Default: the one the capture fetcher uses (`captureFetcherOptions.ssrf`), else the environment allowlist. */
+  renderProxyGuard?: SsrfGuard;
+  /** Resource limit sampling. Tests pass synthetic sources and short intervals. */
+  limits?: { lagSource?: () => number; loadSource?: () => number; cpuTickMs?: number; diskTickMs?: number };
   /** Start the archive listener on `listen()`. Default true. */
   archive?: boolean;
   /** Where the archive listener reads captures from. Defaults to an empty in-memory store until the pipeline supplies one. */
@@ -106,6 +125,8 @@ export interface NcbServer {
   readonly archiveServer?: http.Server;
   /** The archive listener (token service available after `initialize()`). */
   readonly archive?: ArchiveListener;
+  /** The renderer's forward proxy; only exists when `NCB_RENDERER_URL` is set, after `initialize()`. */
+  readonly renderProxy?: GuardedProxy;
 }
 
 /** Where migrations live: next to the bundle (dist/migrations) when bundled, otherwise the db package's folder. */
@@ -135,8 +156,12 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
   let closed: Promise<void> | undefined;
   let jumpTimer: NodeJS.Timeout | undefined;
   let maintenanceTimer: NodeJS.Timeout | undefined;
+  let renderProxy: GuardedProxy | undefined;
 
   const server: NcbServer = {
+    get renderProxy() {
+      return renderProxy;
+    },
     app,
     state,
     archiveServer,
@@ -206,8 +231,14 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         }
       }
 
+      // Resource limits (C-10): global concurrency, per-host limits, the shared bandwidth limiter, CPU and disk guards.
+      const limits = new ResourceGovernor({
+        clock, settings, volumes, events, activity, log: app.log,
+        lagSource: opts.limits?.lagSource, loadSource: opts.limits?.loadSource, cpuTickMs: opts.limits?.cpuTickMs, diskTickMs: opts.limits?.diskTickMs,
+      });
+
       // Queue time is the steady clock so a wall-clock jump cannot expire leases (F-18).
-      const queue = new JobQueue(db, { clock: steadyClock(clock), leaseMs: opts.leaseMs ?? 60_000 });
+      const queue = new JobQueue(db, { clock: steadyClock(clock), leaseMs: opts.leaseMs ?? 60_000, hostLimits: () => limits.hostLimits() });
 
       const poolSize = settings.internal("resources").extractWorkers;
       const worker = opts.workerFile ? { file: opts.workerFile, execArgv: opts.workerExecArgv ?? [] } : resolveWorker();
@@ -229,7 +260,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
           : undefined;
 
       const userAgent = buildUserAgent({ version: VERSION, contact: config.NCB_APP_URL });
-      const realFetcher = createFetcher({ userAgent, isOffline: () => connectivity.forced, ...opts.captureFetcherOptions });
+      const realFetcher = createFetcher({ userAgent, isOffline: () => connectivity.forced, bodyThrottle: () => limits.bandwidth.transform(), ...opts.captureFetcherOptions });
       const rawCapture: PipelineFetcher = opts.captureFetcher ?? (realFetcher as unknown as PipelineFetcher);
       // Every outcome feeds passive connectivity, and forced offline refuses the call, as for any outbound request.
       const captureFetcher: PipelineFetcher = {
@@ -248,10 +279,37 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       const robots = new RobotsService({ fetcher: realFetcher, userAgentToken: "NoConBrain", now: () => Date.now() });
       const extractClient = new ExtractClient(pool);
       const collections = new CollectionService({ db, clock, activity });
+      // Optional renderer (C-16). Everything below is inert unless NCB_RENDERER_URL is set.
+      const rendererSecret = config.NCB_RENDERER_SECRET ?? config.NCB_PROXY_SECRET;
+      let render: RenderService | undefined;
       const deps = createPipelineDeps({
         db, clock, blobs, fetcher: captureFetcher, extract: extractClient, activity, events, queue, log: app.log,
         faults: opts.pipelineFaults, stageOverrides: opts.stageOverrides, onPageChanged: (id) => collections.onPageChanged(id),
+        onVersionDone: (id, o) => render?.consider(id, o),
       });
+      render = new RenderService({
+        deps,
+        client: config.NCB_RENDERER_URL ? new RendererClient({ baseUrl: config.NCB_RENDERER_URL, secret: rendererSecret }) : undefined,
+        robots,
+        concurrency: () => renderConcurrency(settings, config.NCB_RENDER_CONCURRENCY),
+        neverHosts: () => config.NCB_RENDER_NEVER_HOSTS,
+        timeoutMs: config.NCB_RENDER_TIMEOUT_SECONDS * 1000,
+        userAgent,
+        assertOnline: () => connectivity.assertCanReachInternet({ background: false }),
+        log: app.log,
+      });
+      // A change to resources.renderConcurrency reaches jobs already queued, not only the next one.
+      if (config.NCB_RENDERER_URL) settings.onChange((group) => { if (group === "resources") render?.applyConcurrency(); });
+      if (config.NCB_RENDERER_URL) {
+        renderProxy = new GuardedProxy({
+          guard: opts.renderProxyGuard ?? opts.captureFetcherOptions?.ssrf ?? createSsrfGuard({ allow: allowlistFromEnv() }),
+          token: rendererSecret, host: config.NCB_RENDER_PROXY_HOST, port: config.NCB_RENDER_PROXY_PORT,
+          isOffline: () => connectivity.forced,
+          onEvent: (e) => { if (e.type === "blocked") app.log.warn({ target: e.target, reason: e.reason, method: e.method }, "renderer proxy blocked a request"); },
+        });
+        const addr = await renderProxy.listen();
+        app.log.info({ port: addr.port }, "renderer forward proxy listening");
+      }
       const pipeline = new PipelineService({
         fetcher: captureFetcher,
         robots,
@@ -275,6 +333,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
           throw e;
         }
       };
+      const refresh = new RefreshService({ db, clock, queue, pipeline, robots, activity, events, log: app.log });
       const history = new HistoryService({ db, clock, settings, pipeline });
       // Sitemaps and feeds are read through the same guarded fetcher as captures.
       const discoveryFetcher: DiscoveryFetcher = {
@@ -298,13 +357,19 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         volumeId: (pid) => db.get<{ id: number }>("SELECT id FROM volumes WHERE public_id = ?", [pid])?.id,
         deletePage: (pid) => { libraryRef?.deletePage(pid, { confirmProtected: true, exclude: true }); },
         onCollectionsChanged: (id) => collections.backfillSource(id),
+        refresh, previewRobots: robots,
+        freeBytes: () => {
+          const room = volumes.list().filter((v) => v.state === "online").map((v) => Math.max(0, (v.statFree ?? 0) - v.reserveFreeBytes));
+          return room.length ? Math.max(...room) : undefined;
+        },
         crawlControl: { pause: (id) => crawlRef?.pause(id), resume: (id) => crawlRef?.resume(id), cancel: (id) => crawlRef?.cancel(id) },
       });
       sources.ensureSystemSources();
+      const imports = new ImportService({ deps, maxBytes: config.NCB_IMPORT_MAX_MB * 1024 * 1024, importsSourceId: () => sources.systemId("imports") });
       collections.ensureFavourites();
       const browser = new BrowserService({ db, clock, config, settings, connectivity, pipeline, archive, history, head, quickSavesSourceId: () => sources.systemId("quick_saves") });
       const bookmarks = new BookmarksService({ db, clock, settings, pipeline });
-      const library = new LibraryService({ db, clock, pipeline, browser, store, blobs, activity });
+      const library = new LibraryService({ db, clock, pipeline, browser, store, blobs, activity, collections });
       libraryRef = library;
       // Captures queued while offline wait, held, until the server is no longer known to be offline (the connection is seen
       // again, or "work offline" is switched off).
@@ -327,12 +392,18 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       crawlRef = crawl;
       const runner = new JobRunner({
         queue, pool, activity, events, clock, log: app.log, pollMs: opts.runnerPollMs, leaseMs: opts.leaseMs,
-        mainHandlers: crawl.mainHandlers(pipeline.handlers), periodic: () => { scheduler.tick(); },
+        mainHandlers: { ...crawl.mainHandlers({ ...pipeline.handlers, ...refresh.handlers }), ...render.handlers }, periodic: () => { scheduler.tick(); },
+        mainConcurrency: () => limits.fetchConcurrency(),
+      });
+      const downloads = new DownloadService({
+        db, clock, queue, events, activity, crawl, pipeline, refresh, sources, scheduler, schedules, connectivity, governor: limits, settings,
+        workers: () => workerStatuses(svc!),
+        buildCrawl: (a) => crawlConfigForDownload(a, settings.internal("resources").profile),
       });
 
       svc = {
-        config, clock, main, db, activity, auth, settings, volumes, blobs, connectivity, fetcher, events, queue, runner, pipeline, crawl,
-        archive, browser, bookmarks, history, library, sources, collections, schedules, scheduler, throttle: new LoginThrottle(clock), guestMatcher,
+        config, clock, main, db, activity, auth, settings, volumes, blobs, connectivity, fetcher, events, queue, runner, pipeline, imports, render, crawl,
+        archive, browser, bookmarks, history, library, sources, collections, schedules, scheduler, downloads, refresh, limits, throttle: new LoginThrottle(clock), guestMatcher,
       };
       state.attach(svc);
 
@@ -346,6 +417,8 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       connectivity.start();
       runner.start(); // recoverOnStartup runs first, then the workers start
       crawl.start(); // finishes crawls whose last job ended before a crash; watches deadlines
+      downloads.start(); // closes downloads whose work all ended; publishes download.update
+      limits.start(); // CPU and disk guards
       jumpTimer = setInterval(() => svc?.auth.jumps.check(), 1000);
       jumpTimer.unref();
       maintenanceTimer = setInterval(() => {
@@ -373,6 +446,9 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         for (const s of state.streams) s.end();
         svc?.connectivity.stop();
         svc?.crawl.stop();
+        svc?.downloads.stop();
+        svc?.limits.stop();
+        await renderProxy?.close();
         // Stop claiming, let running stages reach a checkpoint, put the rest back on the queue.
         const drain = svc ? await svc.runner.stop(graceMs) : undefined;
         if (svc && drain) svc.activity.write({ level: "info", area: "system", message: "Server stopping", details: drain });
@@ -385,4 +461,15 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
     },
   };
   return server;
+}
+
+/** `resources.renderConcurrency`, read every time (so a change applies live). The environment value is only the default of that setting; it is also the fallback here. */
+function renderConcurrency(settings: SettingsService, fallback: number): number {
+  try {
+    const n = Number(settings.internal("resources").renderConcurrency);
+    if (Number.isInteger(n) && n >= 0) return Math.min(Math.max(n, 1), 8);
+  } catch {
+    /* settings not readable yet */
+  }
+  return fallback;
 }

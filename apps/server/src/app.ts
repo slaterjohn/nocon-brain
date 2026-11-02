@@ -12,8 +12,10 @@ import { SESSION_COOKIE } from "./services/auth.js";
 import { authRoutes, setupRoutes } from "./routes/auth.js";
 import { archiveRoutes } from "./routes/archive.js";
 import { bookmarkRoutes } from "./routes/bookmarks.js";
+import { importRoutes } from "./imports/routes.js";
 import { browserRoutes } from "./routes/browser.js";
 import { collectionRoutes } from "./routes/collections.js";
+import { downloadRoutes } from "./routes/downloads.js";
 import { scheduleRoutes } from "./routes/schedules.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { sourceRoutes } from "./routes/sources.js";
@@ -238,9 +240,11 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
     storageRoutes(a, state);
     browserRoutes(a, state, { proxyVerified });
     archiveRoutes(a, state, { proxyVerified });
+    importRoutes(a, state, { maxBytes: config.NCB_IMPORT_MAX_MB * 1024 * 1024 });
     bookmarkRoutes(a, state);
     sourceRoutes(a, state);
     collectionRoutes(a, state);
+    downloadRoutes(a, state);
     scheduleRoutes(a, state);
   });
 

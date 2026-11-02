@@ -29,6 +29,9 @@ export function trackExternalRequests(page: Page, baseURL: string) {
 /** The local article fixture site (global-setup starts it and allows its loopback host for fetching). */
 export const articleUrl = (path = "") => `${process.env.E2E_ARTICLE_URL ?? ""}${path}`;
 
+/** The local link-graph fixture site (200 nodes at /n/0 to /n/199). */
+export const linkGraphUrl = (path = "") => `${process.env.E2E_LINKGRAPH_URL ?? ""}${path}`;
+
 const CSRF = { "X-NoCon-CSRF": "1" };
 
 /** Saves a page through the API and waits until the capture has finished. */
@@ -69,4 +72,27 @@ export async function openAddress(page: Page, address: string) {
   const bar = page.getByRole("textbox", { name: "Address or search terms" });
   await bar.fill(address);
   await bar.press("Enter");
+}
+
+/**
+ * Opens a saved page and waits until it is really there: the archive frame is shown and the shell has read the frame's state from
+ * the server (`GET /api/browser/frame-state`, which follows the frame's `load`). Anything that depends on the shell knowing the
+ * page (the bookmark star, a shortcut, History) can then be used without racing the load.
+ */
+export async function openSaved(page: Page, address: string) {
+  const stateRead = page.waitForResponse((r) => r.request().method() === "GET" && r.url().includes("/api/browser/frame-state") && r.status() === 200);
+  await openAddress(page, address);
+  await expect(activeFrame(page)).toBeVisible();
+  await stateRead;
+}
+
+/** Polls History until it holds the address with the marker (`archive` for a saved copy, `live` for the live site). */
+export async function expectHistory(page: Page, address: string, servedFrom: "archive" | "live" | "offline") {
+  await expect
+    .poll(async () => {
+      const r = await page.request.get("/api/history");
+      const items = ((await r.json()) as { items: { url: string; servedFrom: string }[] }).items;
+      return items.some((i) => i.url === address && i.servedFrom === servedFrom);
+    }, { message: `History should list ${address} (${servedFrom})` })
+    .toBe(true);
 }

@@ -14,13 +14,13 @@ test("lists saved pages with title, site, saved date, versions and size, and ope
   await page.getByRole("navigation", { name: "Areas" }).getByRole("link", { name: "Library" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Library" })).toBeVisible();
   const table = page.getByRole("table", { name: "Saved pages" });
-  await expect(table.getByRole("columnheader")).toHaveText(["Title", "Site", "Saved", "Versions", "Size", "Actions"]);
+  await expect(table.getByRole("columnheader")).toHaveText(["", "Title", "Site", "Saved", "Versions", "Size", "Actions"]);
   const row = page.getByTestId("library-row").filter({ hasText: "/planets" });
   await expect(row).toBeVisible();
   await expect(row).toContainText("127.0.0.1");
-  await expect(row.getByRole("cell").nth(3)).toHaveText("1");
-  await expect(row.getByRole("cell").nth(4)).toHaveText(/\d+(\.\d)? (KB|MB)/);
-  await expect(row.getByRole("cell").nth(2)).not.toBeEmpty();
+  await expect(row.getByRole("cell").nth(4)).toHaveText("1");
+  await expect(row.getByRole("cell").nth(5)).toHaveText(/\d+(\.\d)? (KB|MB)/);
+  await expect(row.getByRole("cell").nth(3)).not.toBeEmpty();
 
   await page.getByLabel("Search saved pages").fill("planets");
   await expect(page.getByTestId("library-count")).toContainText(/^1 page$/);

@@ -115,6 +115,15 @@ export class ScheduleService {
     return Number(res.lastInsertRowid);
   }
 
+  /** The soonest enabled schedule of a live, unpaused source, for the downloads summary. */
+  nextScheduled(): { scheduleId: string; sourceId: string; sourceName: string; at: string } | undefined {
+    const r = this.db.get<{ public_id: string; next_run_at: number; source_pid: string; name: string }>(
+      `SELECT sc.public_id, sc.next_run_at, s.public_id AS source_pid, s.name FROM schedules sc JOIN sources s ON s.id = sc.source_id
+       WHERE sc.enabled = 1 AND sc.kind <> 'manual' AND sc.next_run_at IS NOT NULL AND s.deleted_at IS NULL AND s.enabled = 1 AND s.paused_at IS NULL
+       ORDER BY sc.next_run_at LIMIT 1`);
+    return r ? { scheduleId: r.public_id, sourceId: r.source_pid, sourceName: r.name, at: new Date(r.next_run_at).toISOString() } : undefined;
+  }
+
   listGlobalWindows(): WindowOut[] {
     return this.db.all<WindowRow>("SELECT * FROM download_windows WHERE source_id IS NULL ORDER BY id").map((r) => this.windowOut(r));
   }

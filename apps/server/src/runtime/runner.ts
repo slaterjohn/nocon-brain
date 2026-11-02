@@ -24,7 +24,8 @@ export interface RunnerOptions {
    */
   mainHandlers?: Record<string, MainJobHandler>;
   mainQueues?: JobQueueName[];
-  mainConcurrency?: number;
+  /** How many main-thread jobs run at once. A function is read on every tick (resource limits and CPU throttling change it). */
+  mainConcurrency?: number | (() => number);
   /** Called on every poll, after claiming. For housekeeping that shares the runner's loop, such as the scheduler tick; it throttles itself. */
   periodic?: () => void;
 }
@@ -142,7 +143,8 @@ export class JobRunner {
   private tickMain(): void {
     const handlers = this.o.mainHandlers;
     if (!handlers) return;
-    const max = this.o.mainConcurrency ?? 2;
+    const mc = this.o.mainConcurrency ?? 2;
+    const max = typeof mc === "function" ? mc() : mc;
     while (this.mainRunning < max) {
       let job: Job | undefined;
       for (const q of this.mainQueues) {

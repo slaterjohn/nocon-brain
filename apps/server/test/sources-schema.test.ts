@@ -32,10 +32,14 @@ describe("C-06 source validation", () => {
   it.each([
     ["saved_search", /Saved-search sources arrive with online search/],
     ["knowledge_package", /Knowledge-package sources arrive with ZIM support/],
-    ["imported_documents", /Imported-document sources arrive/],
   ])("rejects the later type %s with a message saying why", (type, msg) => {
     const f = fieldsOf(sourceInputSchema("standard"), { ...base, type });
     expect(f.find((x) => x.path === "type")?.message).toMatch(msg);
+  });
+
+  it("accepts imported_documents without an address and refuses one", () => {
+    expect(fieldsOf(sourceInputSchema("standard"), { name: "Papers", type: "imported_documents" })).toEqual([]);
+    expect(fieldsOf(sourceInputSchema("standard"), { name: "Papers", type: "imported_documents", startUrl: "https://x.test/" }).map((f) => f.path)).toEqual(["startUrl"]);
   });
 
   it("needs a start address for web types and refuses odd addresses", () => {

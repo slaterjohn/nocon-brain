@@ -2,7 +2,7 @@ import { discoverCssRefs, decodeHtml, type DiscoveredAsset } from "@ncb/content"
 import { FetchError } from "@ncb/fetch";
 import type { StageContext, StageFn, StageResult } from "../types.js";
 import { StageFailure } from "../types.js";
-import { setDetail, version, documentHtml, blobKindFor } from "./shared.js";
+import { setDetail, version, documentHtml, blobKindFor, importKindOf } from "./shared.js";
 
 const HTML_TYPES = new Set(["text/html", "application/xhtml+xml"]);
 
@@ -88,6 +88,11 @@ interface Pending extends DiscoveredAsset {
 export const assets: StageFn = async (ctx) => {
   const { db, blobs, fetcher, urlKey } = ctx.deps;
   const v = version(ctx);
+  // An uploaded file has no web address to resolve relative references against, and nothing is fetched on its behalf.
+  if (importKindOf(ctx) !== null) {
+    db.run("UPDATE page_versions SET total_bytes = ? WHERE id = ?", [v.rawBytes ?? 0, v.id]);
+    return { detail: { skipped: "imported document: sub-resources are not fetched" } };
+  }
   const html = await documentHtml(ctx, v);
   const discovered = await ctx.deps.extract.run<DiscoveredAsset[]>({ op: "assets", html, url: v.finalUrl }).catch(() => [] as DiscoveredAsset[]);
 

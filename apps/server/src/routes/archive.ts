@@ -9,6 +9,25 @@ import type { ZodTypeProvider } from "../lib/zod.js";
 const bool = z.preprocess((v) => (v === "true" || v === true ? true : v === "false" || v === false ? false : v), z.boolean());
 const priority = z.union([z.enum(["P1", "P2", "P3", "P4"]).transform((p) => Number(p.slice(1))), z.number().int().min(1).max(4)]);
 
+const PAGE_TYPES = ["html", "pdf", "markdown", "text", "rendered"] as const;
+
+/** `2025-03-01` or a full ISO instant. A date alone for `to` includes that whole day (the result is the start of the next day). */
+function instant(name: string, raw: string | undefined, endOfDay: boolean): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(raw);
+  const t = Date.parse(dateOnly ? `${raw}T00:00:00.000Z` : raw);
+  if (Number.isNaN(t)) throw new AppError("bad_request", `Use a date such as 2025-03-01 for ${name}.`, { fields: [{ in: "query", path: name, message: "Use a date such as 2025-03-01" }] });
+  return dateOnly && endOfDay ? t + 86_400_000 : t;
+}
+
+function csv<T extends string>(name: string, raw: string | undefined, allowed: readonly T[]): T[] | undefined {
+  if (!raw) return undefined;
+  const items = raw.split(",").map((x) => x.trim()).filter(Boolean);
+  const bad = items.find((x) => !(allowed as readonly string[]).includes(x));
+  if (bad) throw new AppError("bad_request", `Use ${allowed.join(", ")} for ${name}.`, { fields: [{ in: "query", path: name, message: `"${bad}" is not one of ${allowed.join(", ")}` }] });
+  return items as T[];
+}
+
 function forwardedHost(req: FastifyRequest, proxyVerified: (r: FastifyRequest) => boolean): string | undefined {
   if (!proxyVerified(req)) return undefined;
   const v = req.headers["x-forwarded-host"];
@@ -28,6 +47,13 @@ export function archiveRoutes(app: FastifyInstance, state: ServerState, o: { pro
           q: z.string().max(200).optional(),
           domain: z.string().max(200).optional(),
           availability: z.string().max(100).optional(),
+          sourceId: z.string().min(1).max(64).optional(),
+          collectionId: z.string().min(1).max(64).optional(),
+          from: z.string().max(40).optional(),
+          to: z.string().max(40).optional(),
+          type: z.string().max(100).optional(),
+          priority: z.string().max(20).optional(),
+          minVersions: z.coerce.number().int().min(1).max(10_000).optional(),
           sort: z.enum(["captured", "title", "size", "site"]).default("captured"),
           limit: z.coerce.number().int().min(1).max(200).default(50),
           cursor: z.string().regex(/^\d+$/).optional(),
@@ -37,7 +63,12 @@ export function archiveRoutes(app: FastifyInstance, state: ServerState, o: { pro
     async (req) => {
       const q = req.query;
       const availability = q.availability?.split(",").map((s) => s.trim()).filter((s) => ["archived", "partial", "evicted", "failed"].includes(s));
-      return state.svc.library.list({ q: q.q, domain: q.domain, availability, sort: q.sort, limit: q.limit, offset: q.cursor ? Number(q.cursor) : 0 });
+      const types = csv("type", q.type, PAGE_TYPES);
+      const priorities = csv("priority", q.priority, ["P1", "P2", "P3", "P4"] as const)?.map((p) => Number(p.slice(1)));
+      return state.svc.library.list({
+        q: q.q, domain: q.domain, availability, sort: q.sort, limit: q.limit, offset: q.cursor ? Number(q.cursor) : 0,
+        sourceId: q.sourceId, collectionId: q.collectionId, from: instant("from", q.from, false), to: instant("to", q.to, true), types, priorities, minVersions: q.minVersions,
+      });
     },
   );
 

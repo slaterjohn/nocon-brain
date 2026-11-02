@@ -1,10 +1,11 @@
 import type { Clock } from "@ncb/shared";
-import { AppError } from "@ncb/shared";
+import { AppError, priorityToCode, type PriorityNumber } from "@ncb/shared";
 import type { Db } from "@ncb/db";
 import { MAX_HITS, normaliseTerm, sanitizeHtml } from "@ncb/render";
 import type { CaptureStore } from "../archive/store.js";
 import type { ActivityLog } from "./activity.js";
-import type { BrowserService, PageSummary, ApiVersionSummary } from "./browser.js";
+import type { BrowserService, PageSummary, PageType, ApiVersionSummary } from "./browser.js";
+import type { CollectionService } from "../collections/service.js";
 import type { BlobStore } from "./blobs.js";
 import type { PipelineService } from "../pipeline/service.js";
 import { deleteVersion } from "../pipeline/store.js";
@@ -32,9 +33,36 @@ export interface ListPagesQuery {
   domain?: string;
   availability?: string[];
   sort?: "captured" | "title" | "size" | "site";
+  /** Public id of a source: pages it references. */
+  sourceId?: string;
+  /** Public id of a collection: pages in it or in any collection below it. */
+  collectionId?: string;
+  /** Last saved at or after this instant (epoch ms). */
+  from?: number;
+  /** Last saved before this instant (epoch ms, exclusive). */
+  to?: number;
+  types?: PageType[];
+  /** Effective priorities, 1 to 4. */
+  priorities?: number[];
+  /** Pages with at least this many saved versions. */
+  minVersions?: number;
   limit: number;
   offset: number;
 }
+
+/** A reference from a source to a page, for the page detail. */
+export interface PageSourceRef {
+  id: string;
+  name: string;
+  type: string;
+  priority: "P1" | "P2" | "P3" | "P4";
+  discoveredVia: string;
+  system: boolean;
+  systemKind: string | null;
+}
+
+/** SQL for the type of a page's latest version: the import kind, "rendered" for browser captures, otherwise "html". Needs `v` and `d` joined. */
+const PAGE_TYPE_SQL = "(CASE WHEN d.kind IS NOT NULL THEN d.kind WHEN v.render_mode = 'browser' THEN 'rendered' ELSE 'html' END)";
 
 /**
  * The archive's page-level reads and the explicit deletion that the Library uses (A-14 to A-18). Find-in-page lives here
@@ -43,6 +71,7 @@ export interface ListPagesQuery {
 export class LibraryService {
   constructor(private readonly o: {
     db: Db; clock: Clock; pipeline: PipelineService; browser: BrowserService; store: CaptureStore; blobs: BlobStore; activity: ActivityLog;
+    collections: Pick<CollectionService, "collectionsOfPage" | "descendantIds">;
   }) {}
 
   list(q: ListPagesQuery): { items: PageSummary[]; total: number; nextCursor?: string } {
@@ -60,12 +89,34 @@ export class LibraryService {
       where.push("(p.host = ? OR p.registrable_domain = ?)");
       args.push(q.domain.toLowerCase(), q.domain.toLowerCase());
     }
+    if (q.sourceId) {
+      const row = db.get<{ id: number }>("SELECT id FROM sources WHERE public_id = ? AND deleted_at IS NULL", [q.sourceId]);
+      if (!row) throw new AppError("not_found", "That source does not exist.");
+      where.push("EXISTS (SELECT 1 FROM page_sources ps WHERE ps.page_id = p.id AND ps.source_id = ?)");
+      args.push(row.id);
+    }
+    if (q.collectionId) {
+      const row = db.get<{ id: number }>("SELECT id FROM collections WHERE public_id = ? AND deleted_at IS NULL", [q.collectionId]);
+      if (!row) throw new AppError("not_found", "That collection does not exist.");
+      // The collection and the collections below it.
+      const ids = this.o.collections.descendantIds(row.id);
+      where.push(`EXISTS (SELECT 1 FROM collection_memberships m WHERE m.page_id = p.id AND m.collection_id IN (${ids.map(() => "?").join(",")}))`);
+      args.push(...ids);
+    }
+    if (q.from !== undefined) { where.push("p.last_captured_at >= ?"); args.push(q.from); }
+    if (q.to !== undefined) { where.push("p.last_captured_at < ?"); args.push(q.to); }
+    if (q.priorities?.length) {
+      where.push(`p.effective_priority IN (${q.priorities.map(() => "?").join(",")})`);
+      args.push(...q.priorities);
+    }
+    if (q.minVersions && q.minVersions > 1) { where.push("p.version_count >= ?"); args.push(q.minVersions); }
+    if (q.types?.length) where.push(`(${q.types.map((t) => `${PAGE_TYPE_SQL} = '${t}'`).join(" OR ")})`);
     const order =
       q.sort === "title" ? "lower(COALESCE(p.title, p.canonical_url)) ASC, p.id ASC"
       : q.sort === "site" ? "p.host ASC, lower(COALESCE(p.title, '')) ASC, p.id ASC"
       : q.sort === "size" ? "COALESCE(v.total_bytes, 0) DESC, p.id DESC"
       : "COALESCE(p.last_captured_at, 0) DESC, p.id DESC";
-    const from = "FROM pages p LEFT JOIN page_versions v ON v.id = p.latest_version_id";
+    const from = "FROM pages p LEFT JOIN page_versions v ON v.id = p.latest_version_id LEFT JOIN import_documents d ON d.version_id = v.id";
     const total = db.get<{ n: number }>(`SELECT COUNT(*) AS n ${from} WHERE ${where.join(" AND ")}`, args)!.n;
     const rows = db.all<{ id: number }>(`SELECT p.id ${from} WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT ? OFFSET ?`, [...args, q.limit + 1, q.offset]);
     const items = rows.slice(0, q.limit).flatMap((r) => {
@@ -75,7 +126,9 @@ export class LibraryService {
     return { items, total, ...(rows.length > q.limit ? { nextCursor: String(q.offset + q.limit) } : {}) };
   }
 
-  detail(idOrPublic: string): { page: PageSummary; versions: ApiVersionSummary[]; bookmarks: number } {
+  detail(idOrPublic: string): {
+    page: PageSummary; versions: ApiVersionSummary[]; bookmarks: number; sources: PageSourceRef[]; collections: { id: string; name: string; kind: string; priorityFloor: string | null }[];
+  } {
     const { pipeline, browser, db } = this.o;
     const p = pipeline.getPage(idOrPublic);
     if (!p) throw new AppError("not_found", "That page is not in the archive.");
@@ -84,7 +137,13 @@ export class LibraryService {
       return d ? [browser.versionSummary(d)] : [];
     });
     const bookmarks = db.get<{ n: number }>("SELECT COUNT(*) AS n FROM bookmarks WHERE page_id = ? AND deleted_at IS NULL", [p.id])!.n;
-    return { page: browser.pageSummary(p), versions, bookmarks };
+    const sources = db.all<{ public_id: string; name: string; type: string; priority: number; via: string; system_kind: string | null }>(
+      `SELECT s.public_id, s.name, s.type, COALESCE(ps.priority_override, s.priority) AS priority, ps.discovered_via AS via, s.system_kind
+       FROM page_sources ps JOIN sources s ON s.id = ps.source_id WHERE ps.page_id = ? AND s.deleted_at IS NULL ORDER BY (s.system_kind IS NOT NULL), s.id`, [p.id])
+      .map((r): PageSourceRef => ({
+        id: r.public_id, name: r.name, type: r.type, priority: priorityToCode(r.priority as PriorityNumber), discoveredVia: r.via, system: r.system_kind !== null, systemKind: r.system_kind,
+      }));
+    return { page: browser.pageSummary(p), versions, bookmarks, sources, collections: this.o.collections.collectionsOfPage(p.id) };
   }
 
   // ---- delete --------------------------------------------------------------------------------

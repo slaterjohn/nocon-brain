@@ -37,6 +37,9 @@ export const pages = sqliteTable(
     firstCapturedAt: integer("first_captured_at"),
     lastCapturedAt: integer("last_captured_at"),
     lastCheckedAt: integer("last_checked_at"),
+    /** Set by a refresh that got 404 or 410. The page and its versions stay (0007). */
+    goneAt: integer("gone_at"),
+    goneStatus: integer("gone_status"),
     createdAt: integer("created_at").notNull(),
     deletedAt: integer("deleted_at"),
   },
@@ -46,6 +49,7 @@ export const pages = sqliteTable(
     index("pages_availability_idx").on(t.availability),
     index("pages_last_captured_idx").on(t.lastCapturedAt),
     index("pages_priority_idx").on(t.effectivePriority, t.lastCapturedAt),
+    index("pages_multi_version_idx").on(t.lastCapturedAt).where(sql`${t.versionCount} > 1`),
   ],
 );
 
@@ -118,6 +122,7 @@ export const pageVersions = sqliteTable(
     index("page_versions_source_idx").on(t.sourceId),
     index("page_versions_fetched_idx").on(t.fetchedAt),
     index("page_versions_job_idx").on(t.downloadJobId),
+    index("page_versions_rendered_idx").on(t.pageId).where(sql`${t.renderMode} = 'browser'`),
   ],
 );
 

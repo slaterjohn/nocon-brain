@@ -103,7 +103,7 @@ interface BrowserState {
   selectTab: (id: string) => void;
   navigate: (input: string, opts?: { mode?: ViewMode }) => Promise<void>;
   /** Opens an address from anywhere in the app: goes to the Browser area, then navigates the active tab. */
-  openInBrowser: (url: string, opts?: { newTab?: boolean; mode?: ViewMode }) => void;
+  openInBrowser: (url: string, opts?: { newTab?: boolean; mode?: ViewMode; versionId?: string }) => void;
   setMode: (mode: ViewMode) => void;
   back: () => void;
   forward: () => void;
@@ -205,7 +205,7 @@ export function BrowserProvider({ children }: { children: React.ReactNode }) {
   );
 
   const openInBrowser = React.useCallback(
-    (url: string, opts: { newTab?: boolean; mode?: ViewMode } = {}) => {
+    (url: string, opts: { newTab?: boolean; mode?: ViewMode; versionId?: string } = {}) => {
       let id = activeRef.current;
       if (opts.newTab) {
         const t = makeTab();
@@ -215,7 +215,7 @@ export function BrowserProvider({ children }: { children: React.ReactNode }) {
         id = t.id;
       }
       router.push("/");
-      void run(id, url, { push: true, mode: opts.mode ?? "archived" });
+      void run(id, url, { push: true, mode: opts.mode ?? "archived", versionId: opts.versionId });
     },
     [router, run],
   );

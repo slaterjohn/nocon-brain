@@ -56,10 +56,25 @@ test("setup wizard, first run with no search providers", async ({ page, baseURL 
   await expect(page.getByTestId("provider-disclosure")).toContainText("sent to that provider's servers");
   await page.getByRole("button", { name: "Skip for now" }).click();
 
-  // Step 5: first source is a placeholder.
+  // Step 5: the first source is optional. A bad address is refused with a message on the field.
   await expect(page.getByRole("heading", { level: 1, name: "Add your first source" })).toBeVisible();
-  await expect(page.getByText("arrive in a later release")).toBeVisible();
-  await page.getByRole("button", { name: "Skip for now" }).click();
+  if (process.env.E2E_MODE === "real-server") {
+    await page.getByLabel("Web address").fill("not-an-address");
+    await page.getByRole("button", { name: "Add source and continue" }).click();
+    await expect(page.getByText("Start the address with https:// or http://.")).toBeVisible();
+    // A real page from the local fixture site, created with the default profile. It is not started here: a finished fetch would make
+    // the connectivity indicator "online", and later specs rely on a fresh start being "not checked" (running it is covered by the integration tests).
+    await page.getByLabel("Web address").fill(`${process.env.E2E_ARTICLE_URL}/bread-baking`);
+    await page.getByLabel("Start saving it now").uncheck();
+    await page.getByRole("button", { name: "Add source and continue" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Your first source is ready" })).toBeVisible();
+    await expect(page.getByTestId("first-source-done")).toContainText("was added");
+    const status = await page.request.get("/api/setup/status");
+    expect(((await status.json()) as { firstSourceCreated: boolean }).firstSourceCreated).toBe(true);
+    await page.getByRole("button", { name: "Continue" }).click();
+  } else {
+    await page.getByRole("button", { name: "Skip for now" }).click();
+  }
 
   // Step 6: finish, and land in the main UI with no providers configured.
   await expect(page.getByRole("heading", { level: 1, name: "Ready to go" })).toBeVisible();

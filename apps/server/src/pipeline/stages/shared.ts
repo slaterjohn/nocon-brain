@@ -40,3 +40,8 @@ export function blobKindFor(mime: string | null, role: string): "css" | "image" 
   if (m === "application/pdf") return "pdf";
   return "other";
 }
+
+/** The import kind of a version made from an uploaded file, or null for a captured web page (task C-14). */
+export function importKindOf(ctx: StageContext, versionId: number = ctx.versionId): "html" | "pdf" | "text" | "markdown" | null {
+  return ctx.deps.db.get<{ kind: "html" | "pdf" | "text" | "markdown" }>("SELECT kind FROM import_documents WHERE version_id = ?", [versionId])?.kind ?? null;
+}

@@ -2,6 +2,8 @@ import {
   buildOutline, discoverCssRefs, discoverHtmlAssets, ExtractionRejected, extractLinks, extractMetadata, extractReadable, guardHtml,
   sanitiseReaderHtml, type HtmlLimits,
 } from "@ncb/content";
+import { decodeUploadedText, markdownToDocument, pdfToDocument, textToDocument } from "../imports/convert.js";
+import { extractPdfText, PdfRefused, type PdfLimits } from "../imports/pdf.js";
 
 /**
  * The operations the `extract` worker handler runs. They are pure functions of their payload, so the same
@@ -14,9 +16,13 @@ export type ExtractPayload =
   | { op: "reader"; html: string; url: string }
   | { op: "links"; html: string; url: string; limits?: Partial<HtmlLimits> }
   | { op: "assets"; html: string; url: string }
-  | { op: "css"; css: string; url: string };
+  | { op: "css"; css: string; url: string }
+  // Document import (C-14). The bytes are the upload; the reply is a DerivedDocument.
+  | { op: "import_text"; data: Uint8Array; filename: string }
+  | { op: "import_markdown"; data: Uint8Array; filename: string; url: string }
+  | { op: "import_pdf"; data: Uint8Array; filename: string; limits?: Partial<PdfLimits> };
 
-export type ExtractReply = { ok: true; value: unknown } | { ok: false; rejected: string };
+export type ExtractReply = { ok: true; value: unknown } | { ok: false; rejected: string; message?: string };
 
 export async function runExtractOp(p: ExtractPayload): Promise<ExtractReply> {
   try {
@@ -41,9 +47,16 @@ export async function runExtractOp(p: ExtractPayload): Promise<ExtractReply> {
         return { ok: true, value: discoverHtmlAssets(p.html, p.url) };
       case "css":
         return { ok: true, value: discoverCssRefs(p.css, p.url) };
+      case "import_text":
+        return { ok: true, value: textToDocument(decodeUploadedText(p.data), p.filename) };
+      case "import_markdown":
+        return { ok: true, value: markdownToDocument(decodeUploadedText(p.data), p.filename, p.url) };
+      case "import_pdf":
+        return { ok: true, value: pdfToDocument(await extractPdfText(p.data, p.limits), p.filename) };
     }
   } catch (e) {
     if (e instanceof ExtractionRejected) return { ok: false, rejected: e.reason };
+    if (e instanceof PdfRefused) return { ok: false, rejected: e.reason, message: e.message };
     throw e;
   }
 }

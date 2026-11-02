@@ -71,9 +71,11 @@ describe("A-17 history", () => {
     await saveAndWait(t, `${base}/astronomy`);
     const r = await t.api("POST", "/api/browser/resolve", { input: `${base}/astronomy` });
     const frame = r.body.resolution.frame;
-    // Nothing is recorded until the listener serves the page and the shell reads the frame state.
+    // Nothing is recorded until the listener serves the page.
     expect((await t.api("GET", "/api/history")).body.items).toHaveLength(0);
     await t.archiveFetch(frame.url, { headers: { "sec-fetch-dest": "iframe" } });
+    // The visit is written by the listener's own request: a shell that never asks for the frame state (or asks too late) loses nothing.
+    expect((await t.api("GET", "/api/history")).body.items).toEqual([expect.objectContaining({ servedFrom: "archive", url: `${base}/astronomy` })]);
     const fs = await t.api("GET", `/api/browser/frame-state?frameId=${frame.frameId}`);
     expect(fs.status).toBe(200);
     await t.api("GET", `/api/browser/frame-state?frameId=${frame.frameId}`); // reading twice records one visit

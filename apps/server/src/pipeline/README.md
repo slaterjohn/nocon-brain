@@ -53,3 +53,9 @@ runVersion(versionId, opts)                            // run or resume the stag
 **Progress events.** `captureUrl`, each stage start and end, completion and failure publish a `capture` event on the event bus (`GET /api/system/events`): `{ downloadId, url, state, held, outcome, label, percent, stage?, pageId?, versionId?, failureMessage? }`. `label` is the plain-English stage name (`STAGE_LABELS` in `progress.ts`), `percent` is finished stages over 15.
 
 The listener reads through `SqliteCaptureStore` (`archiveStore` in `createServer` replaces it). Tests: `tests/integration/pipeline`.
+
+## Imports and rendered captures
+
+- **Imported documents** (C-14, `apps/server/src/imports/README.md`) enter the same 15 stages without a fetch: the import service creates the page (`origin = 'import'`), the version and the `process` job. For an import, stage 3 (`assets`) does nothing, and stage 15 sets `pages.content_type` to `html`, `pdf` or `text` and never marks the version `reader_only`. `deleteVersion` also releases the upload's own blob (`import_documents`).
+- **Rendered captures** (C-16, `apps/server/src/renderer/README.md`): `PipelineDeps.onVersionDone(versionId, options)` runs after a version finishes (`ready` or `partial`), and the renderer uses it to decide whether to queue a `render` job. The job creates a second version of the page from the browser's DOM with `page_versions.render_mode = 'browser'`; it runs the normal stages, so scripts in it stay text and are sanitised when the listener serves it.
+- The `extract` worker handler also runs `import_text`, `import_markdown` and `import_pdf` (the PDF text extraction).

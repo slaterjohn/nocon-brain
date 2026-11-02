@@ -352,6 +352,17 @@ export class VolumeService {
     return out;
   }
 
+  /** A fresh `statfs` only (no marker or write probe, so it is cheap enough for a timer). Updates the cached figures and returns them. */
+  async statNow(volume: VolumeRow): Promise<{ total: number; free: number } | undefined> {
+    try {
+      const s = await this.probes.statfs(volume.rootPath);
+      this.o.db.run("UPDATE volumes SET stat_total = ?, stat_free = ?, stat_at = ? WHERE id = ?", [s.total, s.free, this.o.clock.now(), volume.id]);
+      return s;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Cached `statfs`, refreshed when older than the TTL. Never touches the disk if the volume is offline. */
   async stat(volume: VolumeRow): Promise<{ total: number; free: number }> {
     const fresh = volume.statAt !== null && this.o.clock.now() - volume.statAt < this.statTtl;

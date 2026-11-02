@@ -80,6 +80,8 @@ export function deleteVersion(db: Db, blobs: BlobStore, versionId: number): void
       `SELECT a.blob_id AS blob_id, COUNT(*) AS n FROM asset_references ar JOIN assets a ON a.id = ar.asset_id
        WHERE ar.version_id = ? AND a.blob_id IS NOT NULL GROUP BY a.blob_id`, [versionId]);
     for (const r of refs) blobs.release(r.blob_id, r.n);
+    const imported = db.get<{ original_blob_id: number }>("SELECT original_blob_id FROM import_documents WHERE version_id = ?", [versionId]);
+    if (imported) blobs.release(imported.original_blob_id, 1);
     const content = db.get<Record<string, number | null>>(
       "SELECT text_blob_id, reader_blob_id, outline_blob_id, extraction_blob_id FROM version_content WHERE version_id = ?", [versionId]);
     for (const id of Object.values(content ?? {})) if (id) blobs.release(id, 1);

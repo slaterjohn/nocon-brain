@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Wifi, WifiOff, CircleHelp, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import type { CaptureProgress, ConnectivityInfo, ConnectivityState } from "@/lib/types";
+import type { CaptureProgress, ConnectivityInfo, ConnectivityState, DownloadJob } from "@/lib/types";
 import { api, errorMessage } from "@/lib/api";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -27,10 +27,17 @@ interface EventsValue {
   captures: Record<string, CaptureProgress>;
   /** Tell the stream about a capture the page just started (the first event can arrive before the response). */
   trackCapture: (c: CaptureProgress) => void;
+  /** Listen to `download.update` and `download.queue` events (and a `reconnected` signal). Returns the unsubscribe function. */
+  subscribeDownloads: (fn: (e: DownloadEvent) => void) => () => void;
 }
 
+export type DownloadEvent =
+  | { type: "download.update"; download: DownloadJob }
+  | { type: "download.queue"; data: { counts?: Record<string, number> } }
+  | { type: "reconnected" };
+
 const Ctx = React.createContext<EventsValue>({
-  stream: "connecting", connectivity: "unknown", forced: false, setForceOffline: async () => {}, captures: {}, trackCapture: () => {},
+  stream: "connecting", connectivity: "unknown", forced: false, setForceOffline: async () => {}, captures: {}, trackCapture: () => {}, subscribeDownloads: () => () => {},
 });
 export const useEvents = () => React.useContext(Ctx);
 
@@ -52,6 +59,11 @@ export function EventsProvider({ children, enabled = true }: { children: React.R
   const [captures, setCaptures] = React.useState<Record<string, CaptureProgress>>({});
   const [announcement, setAnnouncement] = React.useState("");
   const lastState = React.useRef<Record<string, string>>({});
+  const dlListeners = React.useRef(new Set<(e: DownloadEvent) => void>());
+  const subscribeDownloads = React.useCallback((fn: (e: DownloadEvent) => void) => {
+    dlListeners.current.add(fn);
+    return () => { dlListeners.current.delete(fn); };
+  }, []);
 
   const trackCapture = React.useCallback((c: CaptureProgress) => {
     setCaptures((m) => (m[c.downloadId] ? m : { ...m, [c.downloadId]: c }));
@@ -74,8 +86,14 @@ export function EventsProvider({ children, enabled = true }: { children: React.R
       })
       .catch(() => {});
 
+    const emit = (e: DownloadEvent) => dlListeners.current.forEach((fn) => fn(e));
+    let opened = false;
     const es = new EventSource("/api/system/events");
-    es.onopen = () => setStream("open");
+    es.onopen = () => {
+      setStream("open");
+      if (opened) emit({ type: "reconnected" });
+      opened = true;
+    };
     es.onerror = () => setStream(es.readyState === EventSource.CLOSED ? "lost" : "connecting");
     const onConnectivity = (e: MessageEvent<string>) => {
       const s = readState(e.data);
@@ -85,6 +103,21 @@ export function EventsProvider({ children, enabled = true }: { children: React.R
       }
     };
     es.addEventListener("connectivity", onConnectivity as EventListener);
+    es.addEventListener("download.update", ((e: MessageEvent<string>) => {
+      try {
+        const j = JSON.parse(e.data) as { download?: DownloadJob };
+        if (j.download) emit({ type: "download.update", download: j.download });
+      } catch {
+        /* ignore a malformed event */
+      }
+    }) as EventListener);
+    es.addEventListener("download.queue", ((e: MessageEvent<string>) => {
+      try {
+        emit({ type: "download.queue", data: JSON.parse(e.data) as { counts?: Record<string, number> } });
+      } catch {
+        /* ignore */
+      }
+    }) as EventListener);
     // Capture progress: the visible line updates on every event; the screen reader announcement only on a change of state.
     es.addEventListener("capture", ((e: MessageEvent<string>) => {
       let c: CaptureProgress;
@@ -122,8 +155,8 @@ export function EventsProvider({ children, enabled = true }: { children: React.R
   }, [enabled]);
 
   const value = React.useMemo(
-    () => ({ stream, connectivity, forced, setForceOffline, captures, trackCapture }),
-    [stream, connectivity, forced, setForceOffline, captures, trackCapture],
+    () => ({ stream, connectivity, forced, setForceOffline, captures, trackCapture, subscribeDownloads }),
+    [stream, connectivity, forced, setForceOffline, captures, trackCapture, subscribeDownloads],
   );
   return (
     <Ctx.Provider value={value}>

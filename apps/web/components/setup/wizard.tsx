@@ -105,7 +105,7 @@ export function SetupWizard() {
             {step === 1 ? <StorageStep headingRef={headingRef} onDone={next} /> : null}
             {step === 2 ? <ProfileStep headingRef={headingRef} initial={status.profile ?? undefined} onDone={next} /> : null}
             {step === 3 ? <ProvidersStep headingRef={headingRef} onDone={next} /> : null}
-            {step === 4 ? <SourceStep headingRef={headingRef} onDone={next} /> : null}
+            {step === 4 ? <SourceStep headingRef={headingRef} onDone={next} created={status.firstSourceCreated} /> : null}
             {step === 5 ? <FinishStep headingRef={headingRef} /> : null}
           </>
         )}
@@ -535,15 +535,79 @@ function ProvidersStep({ headingRef, onDone }: StepProps) {
   );
 }
 
-function SourceStep({ headingRef, onDone }: StepProps) {
+function SourceStep({ headingRef, onDone, created }: StepProps & { created: boolean }) {
+  const [url, setUrl] = React.useState("");
+  const [kind, setKind] = React.useState<"page" | "website">("page");
+  const [run, setRun] = React.useState(true);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const [errs, setErrs] = React.useState<Record<string, string>>({});
+  const [done, setDone] = React.useState<{ name: string; started: boolean } | null>(created ? { name: "", started: false } : null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    const fe: Record<string, string> = {};
+    if (!url.trim()) fe.url = "Enter the address of a page or site.";
+    else if (!/^https?:\/\/[^\s/]+/i.test(url.trim())) fe.url = "Start the address with https:// or http://.";
+    setErrs(fe);
+    setError(null);
+    if (Object.keys(fe).length) return;
+    setBusy(true);
+    try {
+      const r = await post<{ source: { name: string }; downloadIds?: string[] }>("/api/setup/first-source", { url: url.trim(), kind, run });
+      setDone({ name: r.source.name, started: !!r.downloadIds?.length });
+    } catch (err) {
+      const f = fieldErrors(err);
+      setErrs(f);
+      setError(Object.keys(f).length ? null : errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (done) {
+    return (
+      <StepCard headingRef={headingRef} title="Your first source is ready" description="You can see it, and add more, in the Library.">
+        <CardContent>
+          <p className="text-sm" role="status" data-testid="first-source-done">
+            {done.name ? `“${done.name}” was added${done.started ? " and is being saved now" : ""}.` : "A first source was already added."}
+            {done.started ? " Follow it on the Downloads screen once setup is finished." : ""}
+          </p>
+        </CardContent>
+        <CardFooter>
+          <Button onClick={onDone} data-testid="first-source-continue">Continue</Button>
+        </CardFooter>
+      </StepCard>
+    );
+  }
+
   return (
-    <StepCard headingRef={headingRef} title="Add your first source" description="A source is a page, site or feed that NoConBrain keeps up to date.">
-      <CardContent>
-        <p className="text-sm">Archiving sources arrive in a later release, so there is nothing to add yet. You can add your first source from the Library once they do.</p>
-      </CardContent>
-      <CardFooter>
-        <Button onClick={onDone}>Skip for now</Button>
-      </CardFooter>
+    <StepCard headingRef={headingRef} title="Add your first source" description="A source is a page or site that NoConBrain saves for offline use. This step is optional.">
+      <form onSubmit={submit} noValidate>
+        <CardContent className="space-y-4">
+          <FormError message={error} />
+          <fieldset className="space-y-2">
+            <legend className="mb-1 text-sm font-medium">What do you want to save?</legend>
+            {([["page", "A single page", "Just this page, with its images and styles."], ["website", "A whole website", "Follow links on the same site, within sensible limits."]] as const).map(([v, label, text]) => (
+              <label key={v} className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 has-[:checked]:border-primary">
+                <input type="radio" name="first-kind" value={v} checked={kind === v} onChange={() => setKind(v)} className="mt-1 size-4 accent-[var(--primary)]" data-testid={`first-kind-${v}`} />
+                <span className="text-sm"><span className="font-medium">{label}</span><span className="block text-xs text-muted-foreground">{text}</span></span>
+              </label>
+            ))}
+          </fieldset>
+          <Field id="first-url" label="Web address" hint="For example https://example.org/guide." error={errs.url}>
+            {(p) => <Input {...p} type="url" inputMode="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.org/" autoComplete="off" spellCheck={false} />}
+          </Field>
+          <div className="flex items-start gap-3">
+            <Checkbox id="first-run" checked={run} onCheckedChange={(v) => setRun(v === true)} />
+            <Label htmlFor="first-run" className="font-normal">Start saving it now</Label>
+          </div>
+        </CardContent>
+        <CardFooter className="flex-wrap gap-2">
+          <Button type="submit" disabled={busy} data-testid="first-source-add">{busy ? "Adding…" : "Add source and continue"}</Button>
+          <Button type="button" variant="outline" onClick={onDone} disabled={busy}>Skip for now</Button>
+        </CardFooter>
+      </form>
     </StepCard>
   );
 }

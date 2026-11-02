@@ -3,8 +3,8 @@ import { runExtractOp, type ExtractPayload } from "./extract-ops.js";
 
 /** The page was refused before parsing (too large, too many nodes, too deep). Not retryable. */
 export class ExtractionRefused extends Error {
-  constructor(readonly reason: string) {
-    super(`The page was refused by the extractor: ${reason}`);
+  constructor(readonly reason: string, readonly detail?: string) {
+    super(detail ?? `The page was refused by the extractor: ${reason}`);
     this.name = "ExtractionRefused";
   }
 }
@@ -33,7 +33,7 @@ export class ExtractClient {
 
   async run<T>(payload: ExtractPayload): Promise<T> {
     const pool = this.pool;
-    let reply: { ok: true; value: unknown } | { ok: false; rejected: string };
+    let reply: { ok: true; value: unknown } | { ok: false; rejected: string; message?: string };
     if (!pool || pool.size === 0) reply = await runExtractOp(payload);
     else {
       const deadline = Date.now() + (this.opts.waitMs ?? 120_000);
@@ -49,7 +49,7 @@ export class ExtractClient {
       else if (outcome.kind === "crashed") throw new ExtractionWorkerError(`The extraction worker stopped: ${outcome.error}`);
       else throw new ExtractionWorkerError("The extraction worker was asked to stop.");
     }
-    if (!reply.ok) throw new ExtractionRefused(reply.rejected);
+    if (!reply.ok) throw new ExtractionRefused(reply.rejected, reply.message);
     return reply.value as T;
   }
 }

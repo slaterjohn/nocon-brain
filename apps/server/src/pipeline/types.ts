@@ -145,6 +145,11 @@ export interface PipelineDeps {
    * source collections and automatic rules. Must not throw into the pipeline.
    */
   onPageChanged?(pageId: number): void;
+  /**
+   * Called after a version's pipeline finished (ready or partial), outside any transaction, with the options of the
+   * capture. The renderer uses it to decide whether the page needs a rendered copy. Must not throw into the pipeline.
+   */
+  onVersionDone?(versionId: number, options: CaptureOptions): void;
   faults?: PipelineFaults;
   /** Replaces a built-in stage. The rendering code registers `render_prep` here. */
   stageOverrides?: Partial<Record<PipelineStage, StageFn>>;

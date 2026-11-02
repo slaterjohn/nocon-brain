@@ -106,8 +106,10 @@ test("the Downloads page lists saves with their state", async ({ page }) => {
   await savePage(page, articleUrl("/biomass"));
   await page.goto("/downloads");
   await expect(page.getByRole("heading", { level: 1, name: "Downloads" })).toBeVisible();
+  await page.getByTestId("tab-completed").click();
   const row = page.getByTestId("download-row").filter({ hasText: "/biomass" });
   await expect(row).toBeVisible();
+  await expect(row.getByTestId("download-state")).toHaveText("Completed");
   await expect(row).toContainText("Saved");
 });
 

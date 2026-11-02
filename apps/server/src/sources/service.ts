@@ -5,11 +5,14 @@ import type { ScheduleOut, ScheduleService } from "../schedule/service.js";
 import type { ActivityLog } from "../services/activity.js";
 import type { EventBus } from "../services/events.js";
 import type { SettingsService } from "../services/settings.js";
+import type { RobotsService } from "@ncb/fetch";
 import type { PipelineService } from "../pipeline/service.js";
 import { parseVersioning } from "../pipeline/policy.js";
 import type { VersioningPolicy } from "../pipeline/types.js";
 import type { CrawlPort } from "./crawl-port.js";
 import { readFeed, readSitemap, type DiscoveryFetcher } from "./discovery/fetch.js";
+import { toCrawlConfig } from "./crawl-port.js";
+import { previewCrawl, type PreviewEstimate } from "./preview.js";
 import { ceilingsFor, type ResourceProfile } from "./limits.js";
 import { linkPageSource } from "./references.js";
 import {
@@ -92,6 +95,12 @@ export interface SourceServiceOptions {
   crawlControl?: { pause(id: string): unknown; resume(id: string): unknown; cancel(id: string): unknown };
   /** Called after a source's collection list changed, to add its existing pages to the new collections. */
   onCollectionsChanged?: (sourceRowId: number) => void;
+  /** Checks a source's saved pages for changes. Scheduled runs of a source that has pages use it (task C-11). */
+  refresh?: { refreshSource(sourceRowId: number, o: { requestedBy: "user" | "schedule" | "system" }): Promise<{ downloadId: string; pages: number }>; pageCount(sourceRowId: number): number };
+  /** robots.txt for the preview's sample (`robots.check`); without it the preview does not look at robots.txt. */
+  previewRobots?: Pick<RobotsService, "check">;
+  /** Free bytes on the best writable volume, for the preview's size warning. */
+  freeBytes?: () => number | undefined;
 }
 
 const iso = (n: number | null): string | null => (n == null ? null : new Date(n).toISOString());
@@ -439,17 +448,37 @@ export class SourceService {
     return this.runRow(r, opts);
   }
 
-  private async runRow(r: Row, opts: { requestedBy?: "user" | "schedule" | "system"; signal?: AbortSignal }): Promise<RunResult> {
+  /** Checks the source's saved pages for changes now (a `refresh` download). */
+  async refresh(publicId: string, opts: { requestedBy?: "user" | "schedule" | "system"; signal?: AbortSignal } = {}): Promise<RunResult> {
+    return this.runRow(this.rowByPublic(publicId), { ...opts, mode: "refresh" });
+  }
+
+  private async runRow(r: Row, opts: { requestedBy?: "user" | "schedule" | "system"; signal?: AbortSignal; mode?: "refresh" }): Promise<RunResult> {
     if (r.enabled !== 1) throw new AppError("conflict", "This source is switched off. Turn it on before running it.");
+    if (r.type === "imported_documents") throw new AppError("conflict", "This source holds files you upload. There is nothing to run; add documents with an import instead.");
     if (!WEB_TYPES.has(r.type) || !r.start_url) throw new AppError("not_implemented", "This kind of source cannot be run yet.");
     const requestedBy = opts.requestedBy ?? "user";
     const { config, version } = this.config(r);
     const now = this.o.clock.now();
     const priority = r.priority as PriorityNumber;
     const common = { priority, requestedBy, sourceId: r.id, versioning: parseVersioning(config.versioning) } as const;
+    // A scheduled run of a source that already has pages checks them for changes instead of fetching everything again.
+    const refreshing = !!this.o.refresh && (opts.mode === "refresh" || (requestedBy === "schedule" && this.o.refresh.pageCount(r.id) > 0));
+    if (opts.mode === "refresh" && !this.o.refresh) throw new AppError("not_implemented", "Checking for changes is not available.");
     let result: RunResult;
     try {
-      switch (r.type) {
+      if (refreshing) {
+        const ids: string[] = [];
+        let extra: Partial<RunResult> = {};
+        if (r.type === "sitemap" || r.type === "feed") {
+          // New items are still picked up; the pages already saved are checked.
+          extra = await this.runDiscovery(r, config, common, opts.signal);
+          ids.push(...extra.downloadIds!);
+        }
+        if (this.o.refresh!.pageCount(r.id) > 0) ids.unshift((await this.o.refresh!.refreshSource(r.id, { requestedBy })).downloadId);
+        else if (opts.mode === "refresh" && ids.length === 0) throw new AppError("conflict", "This source has no saved pages to check yet. Run it first.");
+        result = { ...extra, downloadIds: ids };
+      } else switch (r.type) {
         case "single_page": {
           const { downloadId } = this.o.pipeline.captureUrl(r.start_url, { ...common, discoveredVia: "seed", depth: 0, userInitiated: requestedBy === "user", force: false });
           result = { downloadIds: [downloadId] };
@@ -531,58 +560,143 @@ export class SourceService {
 
   // ---- preview -------------------------------------------------------------------------------
 
-  /** Dry run for a new source: validates it and explains what it would do. Fetches the start address (sitemaps and feeds fully, other types a sample). */
+  /**
+   * Dry run for a new source (task C-15): validates it, explains its scope in plain words and gives a sampled estimate of pages and
+   * bytes. Crawl types fetch the start page and a small sample of in-scope links (at most `PREVIEW_MAX_REQUESTS` requests,
+   * robots.txt honoured, nothing saved); sitemaps and feeds are read and counted. The estimate is always labelled as one.
+   */
   async preview(body: unknown, signal?: AbortSignal) {
     const v = parseOrThrow(sourceInputSchema(this.resourceProfile), body) as unknown as SourceInput;
     const config = resolveConfig(v.config, v.type, v.profile, this.resourceProfile, v.startUrl);
     const warnings: string[] = [];
     const ceilings = ceilingsFor(this.resourceProfile);
-    if (!config.respectRobots) warnings.push("This source ignores robots.txt. Sites may block you if you crawl them without it.");
-    if (config.maxPages >= ceilings.maxPages * 0.8) warnings.push(`This source may save up to ${config.maxPages.toLocaleString("en-GB")} pages, close to the ${ceilings.maxPages.toLocaleString("en-GB")} limit for your device.`);
+    const n = (x: number) => x.toLocaleString("en-GB");
+    if (config.maxPages >= ceilings.maxPages * 0.8) warnings.push(`This source may save up to ${n(config.maxPages)} pages, close to the ${n(ceilings.maxPages)} limit for your device.`);
     if (config.assets === "all" && config.maxBytes > 10 * 1024 ** 3) warnings.push("Saving every asset with a large size limit can fill the disk quickly.");
+    const free = this.o.freeBytes?.();
     const scope: string[] = [];
-    let estimate: { pages: { low: number; high: number }; basis: string; estimate: true };
-    let sample: { found: number; sampledFrom: string } | undefined;
+    const host = (() => { try { return new URL(v.startUrl!).host; } catch { return "the start page's site"; } })();
+    const links = `${config.depth} link${config.depth === 1 ? "" : "s"}`;
+    let scopeSummary: string;
+    let estimate: PreviewEstimate;
+    let sample: unknown;
+    let robots: unknown = { checked: false, allowed: true, message: "robots.txt was not checked." };
+    let requests = 0;
     switch (v.type) {
-      case "single_page":
+      case "single_page": {
         scope.push("Saves this one page and nothing it links to.");
-        estimate = { pages: { low: 1, high: 1 }, basis: "A single page", estimate: true };
+        scopeSummary = `Saves only ${v.startUrl}, with its images and styles, and nothing it links to.`;
+        const r = await this.crawlSample(v, config, { singlePage: true, free, signal });
+        ({ estimate, sample, robots, requests } = r);
+        warnings.push(...r.warnings);
         break;
+      }
       case "sitemap":
       case "feed": {
         scope.push(v.type === "sitemap" ? "Saves the pages listed in the sitemap that have not been saved before." : "Saves the items in the feed. Later runs save only new items.");
+        scopeSummary = v.type === "sitemap"
+          ? `Saves the pages listed in the sitemap at ${host}, up to ${n(config.maxPages)} per run. Later runs save only pages that are new.`
+          : `Saves the items in the feed at ${host}, up to ${n(config.maxPages)} per run. Later runs save only new items.`;
         try {
-          const n = v.type === "sitemap"
+          const list = v.type === "sitemap"
             ? (await readSitemap(this.o.fetcher, v.startUrl!, { maxDepth: config.sitemapMaxDepth, signal }))
             : (await readFeed(this.o.fetcher, v.startUrl!, { signal }));
-          const found = "urls" in n ? n.urls.length : n.items.length;
-          if ("warnings" in n) warnings.push(...n.warnings);
+          requests += 1;
+          const found = "urls" in list ? list.urls.length : list.items.length;
+          const firstUrl = "urls" in list ? list.urls[0]?.loc : list.items[0]?.url;
+          if ("warnings" in list) warnings.push(...list.warnings);
           sample = { found, sampledFrom: v.startUrl! };
-          estimate = { pages: { low: Math.min(found, config.maxPages), high: Math.min(found, config.maxPages) }, basis: `${found.toLocaleString("en-GB")} addresses found`, estimate: true };
-          if (found > config.maxPages) warnings.push(`The ${v.type} lists ${found.toLocaleString("en-GB")} addresses but this source is limited to ${config.maxPages.toLocaleString("en-GB")} pages per run.`);
+          const pages = Math.min(found, config.maxPages);
+          let avg = 0;
+          let basis = `${n(found)} addresses found`;
+          if (firstUrl) {
+            // One listed page tells roughly how big they are.
+            try {
+              const one = await this.crawlSample({ ...v, startUrl: firstUrl, type: "single_page" }, config, { singlePage: true, free, signal });
+              requests += one.requests;
+              avg = one.sample.averageBytes;
+              robots = one.robots;
+              warnings.push(...one.warnings.filter((w) => !w.startsWith("The crawl may")));
+              basis += `; page size taken from ${firstUrl.replace(/^https?:\/\//, "").slice(0, 60)}`;
+            } catch { /* the sizes stay unknown */ }
+          }
+          estimate = {
+            estimate: true, label: "Estimate", pages: { low: pages, high: pages },
+            bytes: { low: Math.round(avg * pages * 0.7), high: Math.min(config.maxBytes, Math.round(avg * pages * 2.5)) },
+            basis, confidence: avg > 0 ? "medium" : "low",
+          };
+          if (found > config.maxPages) warnings.push(`The ${v.type} lists ${n(found)} addresses but this source is limited to ${n(config.maxPages)} pages per run.`);
         } catch (e) {
           warnings.push(`The address could not be read now: ${e instanceof Error ? e.message : String(e)}`);
-          estimate = { pages: { low: 0, high: config.maxPages }, basis: "Could not read the address", estimate: true };
+          estimate = { estimate: true, label: "Estimate", pages: { low: 0, high: config.maxPages }, bytes: { low: 0, high: config.maxBytes }, basis: "Could not read the address", confidence: "low" };
         }
         break;
       }
-      default:
+      default: {
         scope.push(
-          v.type === "section" ? `Saves pages under ${config.allowedPaths.join(", ") || "the same folder"}, up to ${config.depth} link${config.depth === 1 ? "" : "s"} deep.`
-            : v.type === "linked_collection" ? `Saves the start page and the pages it links to, ${config.includeExternal ? "including other sites, " : ""}up to ${config.depth} link${config.depth === 1 ? "" : "s"} deep.`
-            : `Saves pages on the same site, up to ${config.depth} link${config.depth === 1 ? "" : "s"} deep.`,
+          v.type === "section" ? `Saves pages under ${config.allowedPaths.join(", ") || "the same folder"}, up to ${links} deep.`
+            : v.type === "linked_collection" ? `Saves the start page and the pages it links to, ${config.includeExternal ? "including other sites, " : ""}up to ${links} deep.`
+            : `Saves pages on the same site, up to ${links} deep.`,
         );
-        estimate = { pages: { low: 1, high: config.maxPages }, basis: `Up to the limit of ${config.maxPages.toLocaleString("en-GB")} pages`, estimate: true };
+        scopeSummary = v.type === "section"
+          ? `Pages under ${config.allowedPaths.join(", ") || "the same folder as the start page"} on ${host}, up to ${links} from the start page, ${n(config.maxPages)} pages at most.`
+          : v.type === "linked_collection"
+            ? `The start page and the pages it links to${config.includeExternal ? `, including other sites up to ${config.externalDepth} link${config.externalDepth === 1 ? "" : "s"} away` : " on the same site"}, up to ${links} deep, ${n(config.maxPages)} pages at most.`
+            : `Pages on ${host}, up to ${links} from the start page, ${n(config.maxPages)} pages at most.`;
+        const r = await this.crawlSample(v, config, { free, signal });
+        ({ estimate, sample, robots, requests } = r);
+        warnings.push(...r.warnings);
+      }
     }
-    return { valid: true, type: v.type, config, scope, estimate, sample, warnings, ceilings };
+    if (!config.respectRobots && !warnings.some((w) => w.includes("ignores robots.txt"))) warnings.push("This source ignores robots.txt. Sites may block you if you crawl them without it.");
+    return { valid: true, type: v.type, config, scope, scopeSummary, estimate, sample, robots, warnings, ceilings, requests };
   }
 
-  /** Marks the outcome of a run from its download jobs; called by the pipeline events and by the scheduler. */
+  private async crawlSample(v: SourceInput, config: SourceConfig, o: { singlePage?: boolean; free?: number; signal?: AbortSignal }) {
+    const mode = v.type === "single_page" ? "explore" : v.strategy === "mirror" ? "mirror" : "explore";
+    const crawlConfig = toCrawlConfig(
+      { mode, seeds: [v.startUrl!], priority: v.priority, requestedBy: "user", config: o.singlePage ? { ...config, depth: 0, maxPages: 1 } : config },
+      this.resourceProfile,
+    );
+    try {
+      return await previewCrawl(
+        { fetcher: this.o.fetcher, robots: this.o.previewRobots },
+        { config: crawlConfig, assets: config.assets, respectRobots: config.respectRobots, singlePage: o.singlePage, signal: o.signal, freeBytes: o.free },
+      );
+    } catch (e) {
+      if (e instanceof AppError) throw e;
+      throw new AppError("internal", "The preview could not be worked out. Try again.", undefined, { cause: e });
+    }
+  }
+
+  /**
+   * Marks the outcome of a run from its download jobs. While any download of the source is still queued or running it stays
+   * "running" (a sitemap run has many); otherwise the newest download decides. The downloads service calls this whenever a
+   * download linked to a source ends, whatever its kind.
+   */
   refreshStatus(rowId: number): void {
-    const last = this.db.get<{ state: string }>("SELECT state FROM download_jobs WHERE source_id = ? ORDER BY id DESC LIMIT 1", [rowId]);
+    const open = this.db.get<{ state: string }>(
+      "SELECT state FROM download_jobs WHERE source_id = ? AND state IN ('queued','running','paused') ORDER BY CASE state WHEN 'paused' THEN 1 ELSE 0 END, id DESC LIMIT 1", [rowId]);
+    const last = open ?? this.db.get<{ state: string }>("SELECT state FROM download_jobs WHERE source_id = ? ORDER BY id DESC LIMIT 1", [rowId]);
     if (!last) return;
     const map: Record<string, string> = { completed: "ok", failed: "failed", running: "running", queued: "running", paused: "paused", cancelled: "cancelled" };
-    this.db.run("UPDATE sources SET last_status = ? WHERE id = ? AND deleted_at IS NULL", [map[last.state] ?? last.state, rowId]);
+    this.db.run("UPDATE sources SET last_status = ? WHERE id = ? AND deleted_at IS NULL AND last_status IS NOT ?", [map[last.state] ?? last.state, rowId, map[last.state] ?? last.state]);
+  }
+
+  /**
+   * Sources whose stored status disagrees with their downloads: still "running" with nothing open, or "never"/"ok" while the newest
+   * download ended differently (an import, a failure inside a pipeline stage, a crash repaired at start). Their status is recomputed.
+   * "failed" set because a run could not start, and "cancelled" and "paused", are left alone. Returns how many were checked.
+   */
+  reconcileStatuses(): number {
+    const stale = this.db.all<{ id: number }>(
+      `SELECT s.id FROM sources s WHERE s.deleted_at IS NULL AND s.last_status IN ('running','never','ok')
+         AND EXISTS (SELECT 1 FROM download_jobs d WHERE d.source_id = s.id)
+         AND (CASE WHEN EXISTS (SELECT 1 FROM download_jobs d WHERE d.source_id = s.id AND d.state IN ('queued','running','paused')) THEN 'running'
+                   ELSE (SELECT CASE d.state WHEN 'completed' THEN 'ok' WHEN 'failed' THEN 'failed' WHEN 'cancelled' THEN 'cancelled' END
+                         FROM download_jobs d WHERE d.source_id = s.id ORDER BY d.id DESC LIMIT 1) END) IS NOT s.last_status`);
+    for (const r of stale) this.refreshStatus(r.id);
+    return stale.length;
   }
 
   linkCapture(pageId: number, sourceId: number, o: { via?: "seed" | "link" | "sitemap" | "feed" | "search" | "manual"; depth?: number; priority?: number }): void {

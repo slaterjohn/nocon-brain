@@ -194,7 +194,10 @@ export function startMockApi(opts: MockOptions): Promise<{ close: () => Promise<
       return json(res, 200, { profile: b.profile });
     }
     if (p === "/api/setup/providers" && method === "POST") return json(res, 200, { ok: true });
-    if (p === "/api/setup/first-source" && method === "POST") return json(res, 200, { ok: true });
+    if (p === "/api/setup/first-source" && method === "POST") {
+      const b = await readBody(req);
+      return json(res, 201, { source: { id: "src_mock", name: String(b.url ?? "").replace(/^https?:\/\//, "").split("/")[0] || "Source", type: b.kind === "website" ? "website" : "single_page" }, ...(b.run ? { downloadIds: ["dl_mock"] } : {}) });
+    }
     if (p === "/api/setup/complete" && method === "POST") {
       state.complete = true;
       return json(res, 200, { complete: true });

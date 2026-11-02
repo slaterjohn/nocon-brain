@@ -1,7 +1,7 @@
 # NoConBrain production stack.
 #   cp .env.example .env     (then set NCB_PROXY_SECRET, see the file)
 #   docker compose up -d --wait
-# Optional services: docker compose --profile searxng up -d --wait
+# Optional services: docker compose --profile searxng up -d --wait   (or --profile renderer, see the renderer service)
 name: ${COMPOSE_PROJECT_NAME:-nocon-brain}
 
 x-logging: &logging
@@ -40,6 +40,10 @@ services:
       NCB_DATA_DIR: /data
       NCB_VOLUMES_ALLOWED_ROOTS: ${NCB_VOLUMES_ALLOWED_ROOTS:-/volumes}
       NCB_TZ: ${NCB_TZ:-UTC}
+      # Renderer (profile `renderer`). Empty means off: no forward proxy is started and nothing is ever rendered.
+      NCB_RENDERER_URL: ${NCB_RENDERER_URL:-}
+      NCB_RENDERER_SECRET: ${NCB_RENDERER_SECRET:-${NCB_PROXY_SECRET:?Set NCB_PROXY_SECRET in .env (openssl rand -hex 32)}}
+      NCB_RENDER_PROXY_PORT: ${NCB_RENDER_PROXY_PORT:-3128}
     ports:
       # The browser loads archived frames from this port directly, so it is published. The API (3001) is not:
       # the web container proxies it over the internal `backend` network.
@@ -55,7 +59,7 @@ services:
     mem_limit: ${NCB_SERVER_MEMORY:-768m}
     cpus: ${NCB_SERVER_CPUS:-2.0}
     pids_limit: 256
-    networks: [backend, egress]
+    networks: [backend, egress, render]
     # The image HEALTHCHECK (GET /api/system/health) applies: migrations ran and the database is writable.
 
   web:
@@ -111,20 +115,45 @@ services:
       retries: 5
       start_period: 30s
 
-  # TODO(Phase 3, C-16): optional renderer (Playwright chromium_headless_shell). The image does not exist yet, so this
-  # block is a placeholder only. When it is built it should have: profile `renderer`, the `render` network only
-  # (internal), a seccomp profile, mem_limit 700m to 1g, pids_limit, read_only with tmpfs /tmp, init: true, and
-  # HTTP(S)_PROXY pointing at the guarded forward proxy inside `server` (server joins `render` too).
-  #
-  # renderer:
-  #   image: nocon-brain/renderer:${NCB_VERSION:-latest}
-  #   profiles: [renderer]
-  #   <<: *hardening
-  #   read_only: true
-  #   tmpfs: ["/tmp:size=256m"]
-  #   mem_limit: ${NCB_RENDERER_MEMORY:-1g}
-  #   pids_limit: 256
-  #   networks: [render]
+  # Optional renderer (task C-16): Playwright with chromium_headless_shell, for pages that are empty until their scripts run.
+  # Off by default, and the stack is complete without it. To turn it on, put these two lines in .env and run `docker compose up -d --wait`:
+  #   COMPOSE_PROFILES=renderer
+  #   NCB_RENDERER_URL=http://renderer:8080
+  # The renderer sits on the internal-only `render` network. Its only way out is the guarded forward proxy that `server` runs on
+  # port 3128 of that network (same SSRF checks as the server's own fetcher), so it cannot reach the internet or the LAN directly.
+  # Chromium's own sandbox needs unprivileged user namespaces and chroot, which Docker's default seccomp profile blocks; docker/renderer/seccomp.json
+  # is Playwright's profile that allows them (with CAP_SYS_CHROOT, the one capability added back). On a host that forbids user namespaces (some hardened Ubuntu settings) the renderer will not start.
+  renderer:
+    image: nocon-brain/renderer:${NCB_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: docker/renderer/Dockerfile
+    profiles: [renderer]
+    <<: *hardening
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/renderer/seccomp.json
+    # Playwright's seccomp profile allows chroot() only for a container that holds CAP_SYS_CHROOT, and Chromium's sandbox calls it.
+    # Everything else stays dropped.
+    cap_add: [SYS_CHROOT]
+    init: true
+    environment:
+      NODE_ENV: production
+      PORT: 8080
+      NCB_RENDER_PROXY_URL: http://server:${NCB_RENDER_PROXY_PORT:-3128}
+      NCB_RENDERER_SECRET: ${NCB_RENDERER_SECRET:-${NCB_PROXY_SECRET:?Set NCB_PROXY_SECRET in .env (openssl rand -hex 32)}}
+      NCB_RENDERER_RESTART_AFTER_PAGES: ${NCB_RENDERER_RESTART_AFTER_PAGES:-50}
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,uid=1000,gid=1000
+    shm_size: 256m
+    # One page at a time. About 130 MB for the idle browser and 80 MB or more for each page; see docs/benchmarks.md.
+    mem_limit: ${NCB_RENDERER_MEMORY:-1g}
+    memswap_limit: ${NCB_RENDERER_MEMORY:-1g}
+    cpus: ${NCB_RENDERER_CPUS:-2.0}
+    pids_limit: 256
+    networks: [render]
+    # The image HEALTHCHECK (GET /health) applies.
 
 networks:
   # web only. It carries web's published port. IP masquerade is off, so web has no route to the internet.
@@ -137,9 +166,9 @@ networks:
   # Normal bridge. server (downloads, online search) and searxng reach the internet through it. It also carries
   # the archive port that server publishes.
   egress: {}
-  # TODO(Phase 3, C-16): internal network for server <-> renderer.
-  # render:
-  #   internal: true
+  # server <-> renderer, and nothing else. Internal: no route to the internet or the LAN. `server` joins it to run the forward proxy.
+  render:
+    internal: true
 
 volumes:
   ncb-data:

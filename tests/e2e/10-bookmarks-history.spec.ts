@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { activeFrame, articleUrl, login, mode, openAddress, savePage, setWorkOffline } from "./helpers";
+import { activeFrame, articleUrl, expectHistory, login, mode, openAddress, openSaved, savePage, setWorkOffline } from "./helpers";
 
 // A-17: bookmarks and history in the UI.
 test.skip(mode() !== "real-server", "needs the real server");
@@ -14,8 +14,7 @@ test.beforeEach(async ({ page }) => {
 test("the star bookmarks a saved page with its copy, and removes the bookmark again", async ({ page }) => {
   const url = articleUrl("/stars");
   await savePage(page, url);
-  await openAddress(page, url);
-  await expect(activeFrame(page)).toBeVisible();
+  await openSaved(page, url);
 
   const star = page.getByTestId("bookmark-toggle");
   await expect(star).toHaveAttribute("aria-pressed", "false");
@@ -64,10 +63,12 @@ test("history records saved and live visits with the marker, can be turned off, 
   const saved = articleUrl("/comets");
   const live = articleUrl("/telescopes");
   await savePage(page, saved);
-  await openAddress(page, saved);
-  await expect(activeFrame(page)).toBeVisible();
+  await openSaved(page, saved);
+  // The visit is written by the server when the saved copy is served; wait for that, not for the page to look ready.
+  await expectHistory(page, saved, "archive");
   await openAddress(page, live);
   await expect(page.getByRole("heading", { name: "This page is not saved" })).toBeVisible();
+  await expectHistory(page, live, "live");
 
   await page.goto("/history");
   await expect(page.getByRole("heading", { level: 1, name: "History" })).toBeVisible();

@@ -209,7 +209,7 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
 
   const recordFrame = (c: Ctx, v: VersionRef, title: string, reader = false) => {
     if (!framed(c)) return;
-    frames.record(c.payload.f, { versionId: v.versionId, pageId: v.pageId, url: v.url, title, state: v.status, reader, at: clock.now() });
+    frames.record(c.payload.f, { versionId: v.versionId, pageId: v.pageId, url: v.url, title, state: v.status, reader, at: clock.now(), userId: Number(c.payload.u) || 0 });
   };
 
   const serveDocument = async (c: Ctx, v: VersionRef): Promise<Out> => {

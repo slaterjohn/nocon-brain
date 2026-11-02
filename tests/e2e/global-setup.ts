@@ -75,6 +75,7 @@ export default async function globalSetup() {
   const fixtures = await startFixtures();
   process.env.E2E_ARTICLE_URL = fixtures.urls.article;
   process.env.E2E_EDGE_URL = fixtures.urls.edge;
+  process.env.E2E_LINKGRAPH_URL = fixtures.urls.linkGraph;
   closers.push(() => fixtures.close());
 
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "ncb-e2e-logs-"));

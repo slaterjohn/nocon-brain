@@ -257,6 +257,20 @@ export class CrawlService {
     return true;
   }
 
+  /** Changes the storage priority of what the crawl saves from now on and the queue priority of its waiting frontier. */
+  setPriority(id: string | number, priority: number): boolean {
+    const row = this.row(id);
+    if (!row || row.finished_at !== null) return false;
+    const { db } = this.d;
+    db.transaction(() => {
+      db.run("UPDATE crawl_jobs SET config_json = json_set(config_json, '$.priority', ?) WHERE id = ?", [priority, row.id]);
+      db.run("UPDATE jobs SET priority = ? WHERE crawl_job_id = ? AND state IN ('queued','held')", [5 - priority, row.id]);
+    });
+    this.cache.delete(row.id);
+    this.publish(row.id);
+    return true;
+  }
+
   // ---- queries -------------------------------------------------------------------------------
 
   get(id: string | number): CrawlStatus | undefined {

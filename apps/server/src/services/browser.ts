@@ -15,13 +15,18 @@ export const FRAME_SANDBOX = "allow-popups allow-popups-to-escape-sandbox";
 export type LinkStateName = "cached" | "partial" | "live_only" | "queued" | "unavailable";
 export type Connectivity = "online" | "offline" | "unknown";
 
+export type PageType = "html" | "pdf" | "markdown" | "text" | "rendered";
+
 export interface PageSummary {
   id: string;
   url: string;
   canonicalUrl: string;
   title: string;
   domain: string;
-  type: "html";
+  /** What the saved copy is: a web page ("html"), a page captured with the browser renderer ("rendered"), or an imported PDF, Markdown or text file. */
+  type: PageType;
+  /** Set for a page made by uploading a file: the page has no web address of its own (`url` is a made-up one). */
+  imported?: { filename: string; sizeBytes: number; pageCount?: number };
   language?: string;
   availability: "archived" | "partial" | "evicted" | "failed";
   effectivePriority: "P1" | "P2" | "P3" | "P4";
@@ -30,6 +35,11 @@ export interface PageSummary {
   firstCapturedAt?: string;
   lastCapturedAt?: string;
   inboundCount: number;
+  /** When a refresh last checked the page for changes (task C-11). */
+  lastCheckedAt?: string;
+  /** Set when a refresh found the page gone (404 or 410). The saved versions are kept. */
+  goneAt?: string;
+  goneStatus?: number;
   /** Extension to docs/api.md: bytes of the latest version, for the library list. */
   totalBytes?: number;
 }
@@ -152,7 +162,15 @@ export interface BrowserServiceOptions {
 export class BrowserService {
   private readonly idempotency = new Map<string, { at: number; value: unknown }>();
 
-  constructor(private readonly o: BrowserServiceOptions) {}
+  constructor(private readonly o: BrowserServiceOptions) {
+    // A visit is written when the listener serves the document, not when a client next asks for the frame's state. A tab that
+    // moves on at once (or a client that never asks) still leaves the visit in History.
+    o.archive?.frames.onRecord((frameId, fs) => {
+      if ((fs.userId ?? 0) > 0 && !fs.interstitial && fs.pageId && fs.url) {
+        this.o.history.recordFromFrame(fs.userId!, frameId, fs.seq ?? fs.at, { url: fs.url, title: fs.title ?? "", pageId: fs.pageId });
+      }
+    });
+  }
 
   // ---- URLs and the archive ------------------------------------------------------------------
 
@@ -178,15 +196,24 @@ export class BrowserService {
   }
 
   pageSummary(p: PageDetail): PageSummary {
-    const bytes = p.latestVersionId ? this.o.db.get<{ n: number | null }>("SELECT total_bytes AS n FROM page_versions WHERE id = ?", [p.latestVersionId])?.n : undefined;
+    const row = p.latestVersionId
+      ? this.o.db.get<{ n: number | null; render_mode: string; kind: PageType | null; filename: string | null; size_bytes: number | null; page_count: number | null }>(
+        `SELECT v.total_bytes AS n, v.render_mode, d.kind, d.filename, d.size_bytes, d.page_count
+         FROM page_versions v LEFT JOIN import_documents d ON d.version_id = v.id WHERE v.id = ?`, [p.latestVersionId])
+      : undefined;
+    const bytes = row?.n;
+    const type: PageType = row?.kind ?? (row?.render_mode === "browser" ? "rendered" : "html");
     return {
-      id: p.publicId, url: p.canonicalUrl, canonicalUrl: p.canonicalUrl, title: p.title ?? p.canonicalUrl, domain: p.host, type: "html",
+      id: p.publicId, url: p.canonicalUrl, canonicalUrl: p.canonicalUrl, title: p.title ?? p.canonicalUrl, domain: p.host, type,
+      ...(row?.filename ? { imported: { filename: row.filename, sizeBytes: row.size_bytes ?? 0, ...(row.page_count != null ? { pageCount: row.page_count } : {}) } } : {}),
       ...(p.language ? { language: p.language } : {}),
       availability: p.availability as PageSummary["availability"], effectivePriority: prio(p.effectivePriority),
       ...(p.latestVersionPublicId ? { latestVersionId: p.latestVersionPublicId } : {}),
       versionCount: p.versionCount, inboundCount: p.inboundCount,
       ...(p.firstCapturedAt ? { firstCapturedAt: isoOrUndef(p.firstCapturedAt) } : {}),
       ...(p.lastCapturedAt ? { lastCapturedAt: isoOrUndef(p.lastCapturedAt) } : {}),
+      ...(p.lastCheckedAt ? { lastCheckedAt: isoOrUndef(p.lastCheckedAt) } : {}),
+      ...(p.goneAt ? { goneAt: isoOrUndef(p.goneAt), goneStatus: p.goneStatus ?? undefined } : {}),
       ...(bytes != null ? { totalBytes: bytes } : {}),
     };
   }

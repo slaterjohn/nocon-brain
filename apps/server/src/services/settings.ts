@@ -26,9 +26,16 @@ export function buildGroupSchemas(config: ResolvedConfig) {
       profile: z.enum(["pi-lite", "standard"]).default(config.resourceProfile),
       maxFetchConcurrency: intIn(config.NCB_MAX_FETCH_CONCURRENCY, 1, 64),
       perHostConcurrency: intIn(config.NCB_PER_HOST_CONCURRENCY, 1, 16),
+      /** A floor for the pause between two requests to one host (0 leaves it to each crawl's own politeness). The profile step sets 1500 (pi-lite) or 1000 (standard). */
+      perHostDelayMs: intIn(0, 0, 60_000),
       extractWorkers: intIn(config.NCB_EXTRACT_WORKERS, 0, 16),
       workerMemoryMb: intIn(config.NCB_WORKER_MEMORY_MB, 16, 16384),
+      /** Pages rendered at once, read live by the renderer (C-16). `NCB_RENDER_CONCURRENCY` is only the default. */
+      renderConcurrency: intIn(config.NCB_RENDER_CONCURRENCY, 0, 8),
+      /** Kilobits per second for all response bodies together. 0 means no limit. */
       bandwidthLimitKbps: intIn(0, 0, 10_000_000).describe("0 means no limit"),
+      /** Slows background work while the event loop lags or the machine is loaded. */
+      cpuThrottle: z.enum(["off", "low", "medium"]).default("low"),
     }),
     privacy: z.object({
       history: z.object({ enabled: bool(true) }).default({ enabled: true }),

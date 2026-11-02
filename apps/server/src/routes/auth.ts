@@ -4,7 +4,8 @@ import { AppError } from "@ncb/shared";
 import type { ServerState, Services } from "../context.js";
 import { clientIp } from "../lib/clientip.js";
 import { admin, clearSessionCookie, setSessionCookie } from "../lib/http.js";
-import type { ZodTypeProvider } from "../lib/zod.js";
+import { RequestValidationError, type ZodTypeProvider } from "../lib/zod.js";
+import { RESOURCE_PRESETS } from "../limits/presets.js";
 
 const usernameSchema = z
   .string()
@@ -14,10 +15,7 @@ const usernameSchema = z
   .regex(/^[A-Za-z0-9_.@-]+$/, "Use letters, numbers and . _ @ - only");
 const passwordSchema = z.string().min(10, "Use at least 10 characters").max(256, "Use at most 256 characters");
 
-const PROFILE_PRESETS = {
-  "pi-lite": { maxFetchConcurrency: 2, perHostConcurrency: 1, extractWorkers: 1, workerMemoryMb: 256 },
-  standard: { maxFetchConcurrency: 4, perHostConcurrency: 2, extractWorkers: 2, workerMemoryMb: 512 },
-} as const;
+const PROFILE_PRESETS = RESOURCE_PRESETS;
 
 function meta(svc: Services, key: string): string | undefined {
   return svc.db.get<{ value: string | null }>("SELECT value FROM app_meta WHERE key = ?", [key])?.value ?? undefined;
@@ -38,7 +36,7 @@ export function setupRoutes(app: FastifyInstance, state: ServerState): void {
       adminExists: svc.auth.hasAdmin(),
       storageConfigured: svc.volumes.list().length > 0,
       profile: meta(svc, "setup.profile") ?? null,
-      firstSourceCreated: false,
+      firstSourceCreated: meta(svc, "setup.first_source") !== undefined,
       complete: meta(svc, "setup.complete") === "1",
     };
   });
@@ -144,9 +142,41 @@ export function setupRoutes(app: FastifyInstance, state: ServerState): void {
     },
   );
 
-  r.post("/api/setup/first-source", { config: { auth: "session" } }, async () => {
-    throw new AppError("not_implemented", "Creating a source arrives with the crawling phase. Skip this step for now.");
-  });
+  r.post(
+    "/api/setup/first-source",
+    {
+      config: { auth: "session" },
+      schema: {
+        body: z.object({
+          url: z.string().trim().min(1, "Enter a web address").max(4096),
+          kind: z.enum(["page", "website"]).default("page"),
+          name: z.string().trim().max(120).optional(),
+          run: z.boolean().default(false),
+        }),
+      },
+    },
+    async (req, reply) => {
+      const svc = state.svc;
+      assertSetupOpen(svc);
+      admin(req);
+      const { url, kind, run } = req.body;
+      const host = (() => { try { return new URL(url).host; } catch { return url.slice(0, 60); } })();
+      let source;
+      try {
+        // The default profile (balanced) and priority (P3) apply; the Human tunes them later in the Library.
+        source = svc.sources.create({ name: req.body.name || host, type: kind === "website" ? "website" : "single_page", startUrl: url });
+      } catch (e) {
+        // The wizard asks for `url`; the sources API calls it `startUrl`.
+        if (e instanceof RequestValidationError) throw new RequestValidationError(e.fields.map((f) => (f.path === "startUrl" ? { ...f, path: "url" } : f)));
+        throw e;
+      }
+      setMeta(svc, "setup.first_source", source.id);
+      let downloadIds: string[] | undefined;
+      if (run) downloadIds = (await svc.sources.run(source.id, { requestedBy: "user" })).downloadIds;
+      void reply.code(201);
+      return { source, ...(downloadIds ? { downloadIds } : {}) };
+    },
+  );
 
   r.post("/api/setup/complete", { config: { auth: "session" } }, async (req) => {
     const svc = state.svc;

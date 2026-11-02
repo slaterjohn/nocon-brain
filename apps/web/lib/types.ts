@@ -110,13 +110,17 @@ export interface ConnectivityInfo {
 
 export type LinkStateName = "cached" | "partial" | "live_only" | "queued" | "unavailable";
 
+export type PageType = "html" | "pdf" | "markdown" | "text" | "rendered";
+
 export interface PageSummary {
   id: string;
   url: string;
   canonicalUrl: string;
   title: string;
   domain: string;
-  type: string;
+  type: PageType;
+  /** Set for a page made by uploading a file. Its `url` is a made-up address that is never shown. */
+  imported?: { filename: string; sizeBytes: number; pageCount?: number };
   language?: string;
   availability: "archived" | "partial" | "evicted" | "failed";
   effectivePriority: Priority;
@@ -234,4 +238,311 @@ export interface BrowserSettings {
   autoCacheOpened: boolean;
   preferCached: boolean;
   quickSavePriority: number;
+}
+
+// ---- Sources, collections and downloads (docs/api.md sections 7 and 8) ----
+
+export type SourceType =
+  | "single_page" | "website" | "section" | "linked_collection" | "sitemap" | "feed"
+  | "saved_search" | "knowledge_package" | "imported_documents";
+export type SourceProfile = "focused" | "balanced" | "comprehensive" | "custom";
+export type SourceStrategy = "capture" | "explore" | "mirror";
+export type SourceStatus = "never" | "running" | "ok" | "failed" | "paused" | "cancelled";
+
+export interface SourceConfig {
+  depth: number;
+  maxPages: number;
+  maxBytes: number;
+  maxDurationSeconds: number;
+  allowedDomains: string[];
+  excludedDomains: string[];
+  allowedPaths: string[];
+  excludedPaths: string[];
+  includeExternal: boolean;
+  externalDepth: number;
+  assets: "all" | "same_origin" | "images_css_only" | "none";
+  concurrency: number;
+  perDomainDelayMs: number;
+  retries: number;
+  queryParamPolicy: "keep_all" | "strip_tracking" | "allowlist" | "drop_all";
+  queryParamAllowlist: string[];
+  respectRobots: boolean;
+  versioning: { mode: "latest_only" | "all" | "last_n" | "period" | "on_change"; n?: number; period?: "day" | "week" | "month" };
+  renderMode: "never" | "auto" | "always";
+  linkWeights: Partial<Record<"main" | "heading" | "related" | "nav" | "footer", number>>;
+  maxLinksPerPage: number;
+  userAgentSuffix?: string;
+  sitemapMaxDepth: number;
+}
+
+export type RetentionSpec =
+  | { mode: "all" }
+  | { mode: "latest"; count: number }
+  | { mode: "time"; days: number; keepLatest?: boolean }
+  | { mode: "budget"; bytes: number }
+  | { mode: "custom"; combine: "union" | "intersection"; rules: Exclude<RetentionSpec, { mode: "custom" }>[] };
+
+export type ScheduleKind = "manual" | "hourly" | "daily" | "weekly" | "cron";
+export type DayName = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+
+export interface DownloadWindow {
+  id: string;
+  sourceId: string | null;
+  name: string;
+  days: DayName[];
+  start: string;
+  end: string;
+  timezone: string;
+  limits: { concurrency?: number; bandwidthKbps?: number } | null;
+  enabled: boolean;
+}
+
+export interface Schedule {
+  id: string;
+  sourceId: string | null;
+  kind: ScheduleKind;
+  minute?: number;
+  time?: string;
+  dayOfWeek?: number;
+  cron?: string;
+  expression: string | null;
+  timezone: string;
+  windowId: string | null;
+  window: DownloadWindow | null;
+  missedRunPolicy: "skip" | "run_once";
+  enabled: boolean;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+}
+
+export interface Source {
+  id: string;
+  name: string;
+  description: string | null;
+  type: SourceType;
+  adapter: string;
+  startUrl: string | null;
+  strategy: SourceStrategy;
+  profile: SourceProfile;
+  config: SourceConfig;
+  configVersion: number;
+  priority: Priority;
+  retention: RetentionSpec;
+  automaticEviction: boolean;
+  storageBudgetBytes: number | null;
+  preferredVolumeId: string | null;
+  discoveryEnabled: boolean;
+  enabled: boolean;
+  paused: boolean;
+  system: boolean;
+  systemKind: "quick_saves" | "browsing_cache" | "imports" | null;
+  collections: string[];
+  schedule: Schedule | null;
+  pageCount: number;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  lastStatus: SourceStatus | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** What the form sends. Mirrors SourceInput in docs/api.md. */
+export interface SourceInput {
+  name: string;
+  description?: string;
+  type: SourceType;
+  startUrl?: string;
+  strategy?: SourceStrategy;
+  profile: SourceProfile;
+  config: Partial<SourceConfig>;
+  priority: Priority;
+  retention?: RetentionSpec;
+  automaticEviction?: boolean;
+  storageBudgetBytes?: number;
+  enabled: boolean;
+  discoveryEnabled?: boolean;
+  schedule?: {
+    kind: ScheduleKind;
+    minute?: number;
+    time?: string;
+    dayOfWeek?: number;
+    cron?: string;
+    timezone: string;
+    missedRunPolicy: "skip" | "run_once";
+    enabled: boolean;
+    /** A download window made together with the schedule. */
+    window?: { name: string; days: DayName[]; start: string; end: string; timezone: string; enabled: boolean };
+  };
+  collections?: string[];
+}
+
+export interface SourceCeilings {
+  depth: number;
+  maxPages: number;
+  maxBytes: number;
+  maxDurationSeconds: number;
+  concurrency: number;
+  retries: number;
+  externalDepth: number;
+  minPerDomainDelayMs: number;
+}
+
+export interface SourcePreview {
+  valid: boolean;
+  type: SourceType;
+  config: SourceConfig;
+  scope: string[];
+  estimate: { pages: { low: number; high: number }; basis: string; estimate: true; label?: string; confidence?: "low" | "medium" | "high"; bytes: { low: number; high: number } };
+  sample?: { found: number; sampledFrom?: string };
+  warnings: string[];
+  ceilings: SourceCeilings;
+}
+
+export interface SourcePageRow {
+  pageId: string;
+  url: string;
+  host: string;
+  title: string | null;
+  availability: PageSummary["availability"];
+  effectivePriority: Priority;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  discoveredVia: string;
+  depth: number | null;
+  priorityOverride: Priority | null;
+}
+
+export interface SourceRun {
+  id: string;
+  kind: string;
+  state: string;
+  requestedBy: string;
+  pagesDone: number;
+  pagesFailed: number;
+  bytesDone: number;
+  createdAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  failure?: { code: string | null; message: string };
+}
+
+export interface SourceStats {
+  pages: number;
+  versions: number;
+  latestBytes: number;
+  byPriority: { priority: Priority; pages: number }[];
+  lastRuns: SourceRun[];
+  failedRuns: number;
+  lastRunAt: string | null;
+  lastStatus: SourceStatus | null;
+}
+
+export interface RunResult {
+  downloadIds: string[];
+  found?: number;
+  newItems?: number;
+  excluded?: number;
+  warnings?: string[];
+}
+
+export type RuleCondition = { field: "domain" | "source" | "title"; value: string };
+export interface CollectionRule { match: "all" | "any"; conditions: RuleCondition[] }
+
+export interface Collection {
+  id: string;
+  name: string;
+  description: string | null;
+  icon: string;
+  kind: "manual" | "auto" | "saved_search" | "favourites";
+  parentId: string | null;
+  rule: CollectionRule | null;
+  priorityFloor: Priority | null;
+  sortOrder: number;
+  itemCount: number;
+  createdAt: string;
+  updatedAt: string;
+  children?: Collection[];
+}
+
+export interface CollectionItem {
+  pageId: string;
+  url: string;
+  host: string;
+  title: string | null;
+  availability: PageSummary["availability"];
+  effectivePriority: Priority;
+  addedBy: "user" | "rule" | "source";
+  addedAt: string;
+}
+
+export type DownloadState = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
+
+export type FailureCode =
+  | "network" | "robots_blocked" | "ssrf_blocked" | "size_cap" | "disk_full" | "timeout" | "http_4xx" | "http_5xx"
+  | "parse_error" | "limit_reached" | "cancelled_by_user" | "internal";
+
+export interface DownloadEstimate {
+  estimate: true;
+  pages?: { low: number; high: number };
+  bytes?: { low: number; high: number };
+  durationSeconds?: { low: number; high: number };
+  basis: string;
+  confidence: "low" | "medium" | "high";
+}
+
+export interface DownloadJob {
+  id: string;
+  kind: string;
+  state: DownloadState;
+  priority: Priority;
+  queueOrder?: number;
+  title: string;
+  sourceId?: string;
+  sourceName?: string;
+  requestedBy: "user" | "schedule" | "discovery" | "search" | "system";
+  requestedUrl?: string;
+  progress: { pagesDone: number; pagesFailed: number; pagesDiscovered?: number; bytesDone: number; percent?: number; label?: string; etaSeconds?: number };
+  estimate?: DownloadEstimate;
+  pause?: { reason: "user" | "window_closed" | "volume_full" | "offline"; automatic: boolean; message: string };
+  failure?: { code: FailureCode | string; message: string; retryable: boolean; hint: string };
+  stop?: { reason: string; message: string };
+  summary?: { checked: number; unchanged: number; changed: number; gone: number; failed: number };
+  attempts?: number;
+  controls?: { pause: boolean; resume: boolean; cancel: boolean; retry: boolean; setPriority: boolean };
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  scheduledFor?: string;
+  updatedAt?: string;
+  crawl?: { mode: string; maxPages?: number; maxBytes?: number; depthReached: number; pagesSkipped: number; deadlineAt?: string; frontier: { queued: number; running: number; held: number } };
+}
+
+export interface QueueSummary {
+  counts: Record<DownloadState, number>;
+  running: DownloadJob[];
+  workers: WorkerStatus[];
+  window: { open: boolean; opensAt?: string; closesAt?: string };
+  limits: Record<string, unknown> & { fetchConcurrency?: number; effectiveFetchConcurrency?: number; profile?: string };
+  throttle: { active: boolean; level: string; reason?: string };
+  disk: { paused: boolean; pausedDownloads: number; volumes: { id: string; name: string; freeBytes: number; reserveFreeBytes: number; low: boolean }[] };
+  connectivity: ConnectivityState;
+  nextScheduled?: { scheduleId: string; sourceId: string; sourceName: string; at: string };
+}
+
+export interface PageDetail {
+  page: PageSummary;
+  versions: (VersionSummary & { publishedAt?: string; renderMode?: string })[];
+  bookmarks: number;
+  sources: PageSourceRef[];
+  collections: { id: string; name: string; kind: string; priorityFloor: Priority | null }[];
+}
+
+export interface PageSourceRef {
+  id: string;
+  name: string;
+  type: string;
+  priority: Priority;
+  discoveredVia: string;
+  system: boolean;
+  systemKind: string | null;
 }

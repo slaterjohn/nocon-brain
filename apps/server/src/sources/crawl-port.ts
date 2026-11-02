@@ -57,18 +57,18 @@ export interface CrawlEngine {
  * Turns a source run into `startCrawl(config)`. The source's stored config becomes a `custom`-profile crawl with explicit limits,
  * so the engine applies exactly the numbers the Human saw. The engine's own hard ceilings are a second check.
  */
-export class EngineCrawlPort implements CrawlPort {
-  constructor(private readonly engine: () => CrawlEngine, private readonly resource: () => "pi-lite" | "standard") {}
+/** The part of a crawl request that does not need a source (a download started from a URL has none). */
+export type CrawlConfigRequest = Omit<CrawlRequest, "sourceId" | "sourcePublicId" | "configId" | "configVersion"> & { sourceId?: number; configId?: number };
 
-  async start(req: CrawlRequest): Promise<{ downloadId: string }> {
+/** Turns a source-style config into the crawl engine's config, with explicit limits, so the engine applies exactly the numbers shown. */
+export function toCrawlConfig(req: CrawlConfigRequest, resource: "pi-lite" | "standard"): CrawlConfig {
     const c = req.config;
-    let config: CrawlConfig;
     try {
-      config = resolveCrawlConfig({
+      return resolveCrawlConfig({
       startUrls: req.seeds,
       mode: req.mode,
       profile: "custom",
-      resource: this.resource(),
+      resource,
       sourceId: req.sourceId,
       configId: req.configId,
       priority: req.priority,
@@ -95,6 +95,13 @@ export class EngineCrawlPort implements CrawlPort {
       }
       throw e;
     }
+}
+
+export class EngineCrawlPort implements CrawlPort {
+  constructor(private readonly engine: () => CrawlEngine, private readonly resource: () => "pi-lite" | "standard") {}
+
+  async start(req: CrawlRequest): Promise<{ downloadId: string }> {
+    const config = toCrawlConfig(req, this.resource());
     return { downloadId: this.engine().startCrawl(config).downloadId };
   }
 }

@@ -12,6 +12,8 @@ import type { VolumeService } from "./services/volumes.js";
 import type { LoginThrottle } from "./lib/throttle.js";
 import type { JobRunner } from "./runtime/runner.js";
 import type { PipelineService } from "./pipeline/service.js";
+import type { ImportService } from "./imports/service.js";
+import type { RenderService } from "./renderer/service.js";
 import type { ArchiveListener } from "./archive/listener.js";
 import type { BrowserService } from "./services/browser.js";
 import type { BookmarksService, HistoryService } from "./services/bookmarks.js";
@@ -21,6 +23,9 @@ import type { SourceService } from "./sources/service.js";
 import type { CollectionService } from "./collections/service.js";
 import type { ScheduleService } from "./schedule/service.js";
 import type { Scheduler } from "./schedule/scheduler.js";
+import type { DownloadService } from "./downloads/service.js";
+import type { RefreshService } from "./refresh/service.js";
+import type { ResourceGovernor } from "./limits/governor.js";
 
 /** Everything that exists once the database is open and migrated. */
 export interface Services {
@@ -39,6 +44,8 @@ export interface Services {
   queue: JobQueue;
   runner: JobRunner;
   pipeline: PipelineService;
+  imports: ImportService;
+  render: RenderService;
   crawl: CrawlService;
   /** The archive listener, when this process runs one: frame state and token minting. */
   archive?: ArchiveListener;
@@ -50,6 +57,9 @@ export interface Services {
   collections: CollectionService;
   schedules: ScheduleService;
   scheduler: Scheduler;
+  downloads: DownloadService;
+  refresh: RefreshService;
+  limits: ResourceGovernor;
   throttle: LoginThrottle;
   /** Returns true when the address may use trusted-LAN read-only access. Null when the mode is off. */
   guestMatcher: ((ip: string) => boolean) | null;

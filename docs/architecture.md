@@ -250,6 +250,7 @@ Full schema: [data-model.md](data-model.md).
 - Chromium does its own DNS, so application-level SSRF checks are not enough. The renderer sits on an **internal-only** Docker network and is launched with `--proxy-server` pointing at a **guarded forward proxy** listener inside `server` (CONNECT and HTTP, same lookup validation and IP-literal checks, internal port, not published). The renderer has no route to the LAN or the internet except through that proxy. This is a design choice made in this plan beyond the owner's "egress-firewalled" requirement; a host `DOCKER-USER` firewall script is the documented fallback.
 - Limits: `mem_limit` 700 MB to 1 GB, `pids_limit`, read-only root, tmpfs `/tmp`, `--init`, seccomp profile instead of `--no-sandbox`, concurrency 1, fresh browser context per page, browser restart every N pages. Evidence: [research/crawling-rendering.md](research/crawling-rendering.md) section 2.2 (about 80 MB per extra simple page above a 129 MB idle browser; script-heavy pages likely 150 to 300 MB).
 - Control plane: `server` calls `POST http://renderer:8080/render`; the renderer never touches the database.
+- **As built (C-16).** Code: `apps/renderer` (engine and HTTP API), `apps/server/src/renderer` (`triggers.ts`, `proxy.ts`, `client.ts`, `service.ts`), `docker/renderer` (Dockerfile and Playwright's seccomp profile). Details in [apps/server/src/renderer/README.md](../apps/server/src/renderer/README.md): the triggers; the `render` job (queue `crawl`, pseudo-host `renderer.internal` so `host_state.max_concurrent` is the render concurrency); the rendered DOM stored as a second version of the page with `render_mode = 'browser'`; the proxy's authentication (shared secret as Basic password), politeness and byte limits; the browser launch flags (`--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE <proxy>`, `<-loopback>` so even localhost goes through the proxy, images, media and fonts not loaded); and how to turn it on (`COMPOSE_PROFILES=renderer` and `NCB_RENDERER_URL=http://renderer:8080`). Measured image size and memory per page are in [benchmarks.md](benchmarks.md).
 
 ### SearXNG
 
@@ -406,6 +407,8 @@ Graceful shutdown (`SIGTERM`): stop claiming jobs, stop accepting new requests, 
 | Offline | `NCB_CONNECTIVITY_PROBE_URL` | empty | Optional active probe |
 | Logging | `NCB_LOG_LEVEL`, `NCB_LOG_FORMAT`, `NCB_ACTIVITY_LOG_RETENTION_DAYS` | `info`, `json`, 30 | |
 | Schedules | `NCB_TZ`, `NCB_SCHEDULER_ENABLED`, `NCB_DOWNLOAD_WINDOW`, `NCB_MAINTENANCE_CRON`, `NCB_BACKUP_CRON` | `UTC`, `true`, empty, `0 3 * * *`, empty | |
+| Renderer | `NCB_RENDERER_URL`, `NCB_RENDERER_SECRET`, `NCB_RENDER_PROXY_PORT`, `NCB_RENDER_CONCURRENCY`, `NCB_RENDER_TIMEOUT_SECONDS`, `NCB_RENDER_NEVER_HOSTS`, `NCB_RENDERER_MEMORY`, `NCB_RENDERER_CPUS` | empty, `NCB_PROXY_SECRET`, 3128, 1, 45, empty, 1g, 2.0 | `NCB_RENDERER_URL` empty means off: no proxy listens and nothing is rendered. With the `renderer` profile set it to `http://renderer:8080` |
+| Import | `NCB_IMPORT_MAX_MB` | 50 | Largest document upload |
 | Profiles | `COMPOSE_PROFILES` | empty | `renderer`, `searxng` |
 
 ### First-run setup

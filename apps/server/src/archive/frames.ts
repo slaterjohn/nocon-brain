@@ -13,6 +13,8 @@ export interface FrameState {
   at: number;
   /** Counts documents served per listener process; two documents in the same millisecond still differ. */
   seq?: number;
+  /** The signed-in user the frame's capability was minted for (0 or absent for a guest). */
+  userId?: number;
 }
 
 /**
@@ -25,10 +27,22 @@ export class FrameStateStore {
 
   private seq = 0;
 
+  private readonly listeners = new Set<(frameId: string, state: FrameState) => void>();
+
+  /** Called after each document is recorded, in the listener's own request, so a visit is known without waiting for a client to ask. */
+  onRecord(fn: (frameId: string, state: FrameState) => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
   record(frameId: string, state: FrameState): void {
     this.map.delete(frameId);
-    this.map.set(frameId, { ...state, seq: ++this.seq });
+    const stored = { ...state, seq: ++this.seq };
+    this.map.set(frameId, stored);
     if (this.map.size > this.max) this.map.delete(this.map.keys().next().value as string);
+    for (const fn of this.listeners) {
+      try { fn(frameId, stored); } catch { /* a subscriber's failure never breaks serving */ }
+    }
   }
 
   get(frameId: string): FrameState | undefined {

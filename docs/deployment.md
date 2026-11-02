@@ -6,10 +6,11 @@ How the Docker Compose stack is put together and how it was checked. The plan is
 
 | File | Purpose |
 |---|---|
-| `compose.yml` | The stack: `server`, `web`, and the optional `searxng` profile. A commented `renderer` placeholder waits for Phase 3 (task C-16) |
+| `compose.yml` | The stack: `server`, `web`, and the optional `searxng` profile. The optional `renderer` profile (task C-16, see below) |
 | `compose.offline.yml` | Override for the offline test: removes the published ports and makes every network internal |
 | `docker/server/Dockerfile` | Server image. Targets `runtime` (default) and `bench` (adds the queue benchmark) |
 | `docker/web/Dockerfile` | Next.js standalone image |
+| `docker/renderer/Dockerfile`, `docker/renderer/seccomp.json` | Renderer image (Playwright `chromium_headless_shell` on `node:24-trixie-slim`) and Playwright's seccomp profile (Apache-2.0, copied from `microsoft/playwright` `utils/docker/seccomp_profile.json` on 2 November 2026) that lets Chromium create its sandbox without `--no-sandbox` (the container adds back only `CAP_SYS_CHROOT`, which the profile requires for `chroot`) |
 | `docker/searxng/settings.yml` | SearXNG settings with the `json` format enabled |
 | `.env.example` | Every setting, grouped and commented |
 | `scripts/build-images.sh` | Builds both images for arm64 and amd64 |
@@ -23,6 +24,7 @@ How the Docker Compose stack is put together and how it was checked. The plan is
 | `web` | `NCB_WEB_PORT` (3000) | `frontend`, `backend` | Proxies `/api/*` to `http://server:3001` and adds the shared `NCB_PROXY_SECRET` |
 | `server` | `NCB_ARCHIVE_PORT` (3002) | `backend`, `egress` | The API on 3001 is not published. The browser loads archived frames from the archive port directly |
 | `searxng` (profile) | none | `backend`, `egress` | Reach it from the server as `http://searxng:8080` |
+| `renderer` (profile) | none | `render` | Internal-only network shared with `server`, which runs the guarded forward proxy on it (port 3128). No route to the internet or the LAN. `server` is on `render` always; the network exists but is empty without the profile |
 
 Differences from the sketch in architecture.md:
 
@@ -59,6 +61,8 @@ Results and timings are in the F-10, F-13 and F-14 report. In short: `docker com
 
 ## Known limits
 
-- The renderer and its networks are placeholders (Phase 3, C-16).
+- The renderer needs unprivileged user namespaces on the host (Chromium's sandbox; Playwright's seccomp profile allows them in Docker's filter). A host that forbids them (for example Ubuntu 24.04 with `kernel.apparmor_restrict_unprivileged_userns=1` in effect for the container) stops Chromium from starting; the `server` then keeps the plain capture and logs that rendering failed.
+- Turning the renderer on needs two lines in `.env` (`COMPOSE_PROFILES=renderer`, `NCB_RENDERER_URL=http://renderer:8080`). Compose cannot set an environment variable on `server` only when another service's profile is active.
+- The forward proxy listens inside `server` on all interfaces of the container, so `web` and `searxng` can reach port 3128 too. It refuses every request without the renderer secret (a Basic password), and the SSRF guard applies to whoever uses it.
 - Jobs fail with `No handler named "fetch"` until the fetch handlers land in Phase 2. That is expected.
 - The API listens on `0.0.0.0` inside the container, so other containers on `egress` (SearXNG) can reach port 3001 without the proxy secret. No credential is exposed by that, but a later phase should bind the API to the `backend` address only or add a check.

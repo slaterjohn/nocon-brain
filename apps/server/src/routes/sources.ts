@@ -52,6 +52,13 @@ export function sourceRoutes(app: FastifyInstance, state: ServerState): void {
     return out;
   });
 
+  r.post("/api/sources/:id/refresh", { config: { auth: "session" }, schema: { params: idParam } }, async (req, reply) => {
+    admin(req);
+    const out = await state.svc.sources.refresh(req.params.id, { requestedBy: "user" });
+    void reply.code(202);
+    return { downloadIds: out.downloadIds, pages: state.svc.refresh.pageCount(state.svc.sources.resolvePublicId(req.params.id)) };
+  });
+
   r.post("/api/sources/:id/pause", { config: { auth: "session" }, schema: { params: idParam } }, async (req) => {
     admin(req);
     return state.svc.sources.setPaused(req.params.id, true);

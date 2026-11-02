@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
-import { activeFrame, articleUrl, login, mode, openAddress, savePage, setWorkOffline } from "./helpers";
+import { activeFrame, articleUrl, expectHistory, login, mode, openAddress, openSaved, savePage, setWorkOffline } from "./helpers";
 
 // A-19: shortcuts, help dialog, indicators, link-state legend, and accessibility of the new screens.
 test.skip(mode() !== "real-server", "needs the real server");
@@ -64,8 +64,7 @@ test("single-key shortcuts can be switched off", async ({ page }) => {
 test("shortcuts: bookmark, save, reader, work offline and tab numbers", async ({ page }) => {
   const url = articleUrl("/mars");
   await savePage(page, url);
-  await openAddress(page, url);
-  await expect(activeFrame(page)).toBeVisible();
+  await openSaved(page, url);
   await page.getByRole("heading", { level: 1 }).first().click({ force: true }).catch(() => {});
 
   await page.keyboard.press("Alt+Shift+KeyD");
@@ -97,8 +96,7 @@ test("indicators: the global one and each tab's change when the connection is fo
   const saved = articleUrl("/jupiter");
   const unsaved = articleUrl("/exoplanets");
   await savePage(page, saved);
-  await openAddress(page, saved);
-  await expect(activeFrame(page)).toBeVisible();
+  await openSaved(page, saved);
   await page.getByRole("button", { name: "New tab", exact: true }).click();
   await openAddress(page, unsaved);
   await expect(page.getByRole("heading", { name: "This page is not saved" })).toBeVisible();
@@ -165,8 +163,7 @@ for (const scheme of ["light", "dark"] as const) {
     test("browser with a saved page, the find bar and the status line", async ({ page }) => {
       const url = articleUrl("/astronomy");
       await savePage(page, url);
-      await openAddress(page, url);
-      await expect(activeFrame(page)).toBeVisible();
+      await openSaved(page, url);
       await page.getByTestId("find-toggle").click();
       await page.getByRole("searchbox", { name: "Find in this page" }).fill("star");
       await expect(page.getByTestId("find-status")).toHaveText(/of \d+ matches/);
