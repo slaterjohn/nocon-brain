@@ -31,6 +31,9 @@ interface BmRow {
  * `browser.bookmarkPriority` at creation: Phase 6 turns it into the page's effective priority.
  */
 export class BookmarksService {
+  /** Discovery's bookmark collector: a bookmark of an address that has no saved copy yet. */
+  onCreated?: (v: { url: string; archived: boolean }) => void;
+
   constructor(private readonly o: { db: Db; clock: Clock; settings: SettingsService; pipeline: PipelineService; onReferencesChanged?: (pageIds: number[]) => void }) {}
 
   /** A bookmark is a reference to its page (Phase 6): refresh the page's cached priority. */
@@ -115,6 +118,7 @@ export class BookmarksService {
       { durable: true },
     );
     this.touch(key);
+    try { this.onCreated?.({ url: normalized, archived: !!page && (page.availability === "archived" || page.availability === "partial") }); } catch { /* discovery never breaks bookmarks */ }
     return { bookmark: this.dto(row), created: true };
   }
 
@@ -153,6 +157,8 @@ interface HRow {
  */
 export class HistoryService {
   private readonly seen = new Set<string>();
+  /** Discovery's visit collector. Called only after a visit was written, so it never fires while history is off. */
+  onRecorded?: (v: { url: string; servedFrom: ServedFrom; archived: boolean }) => void;
 
   constructor(private readonly o: { db: Db; clock: Clock; settings: SettingsService; pipeline: PipelineService }) {}
 
@@ -174,6 +180,7 @@ export class HistoryService {
       `INSERT INTO history_entries (public_id, user_id, url, url_key, title, visited_at, page_id, served_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [newId("hs"), userId, v.url, key, (v.title ?? page?.title ?? "").slice(0, 300), clock.now(), page?.id ?? null, v.servedFrom],
     );
+    try { this.onRecorded?.({ url: v.url, servedFrom: v.servedFrom, archived: !!page && (page.availability === "archived" || page.availability === "partial") }); } catch { /* discovery never breaks history */ }
     return true;
   }
 

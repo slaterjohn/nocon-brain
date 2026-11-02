@@ -58,6 +58,8 @@ export interface OnlineDeps {
   urlKey: (url: string) => string;
   saveUrl: (input: { url: string; priority?: number; queue?: boolean; requestedBy: "search" }) => { downloadId: string; url: string; state: "queued"; held: boolean; priority: number };
   log: { warn(o: unknown, m?: string): void };
+  /** Discovery's search collector: addresses a provider returned that are not in the archive. Never receives titles, snippets or the query. */
+  onOnlineUrls?: (r: { urls: string[]; storage: StorageKind; ttlSeconds: number }) => void;
 }
 
 const MAX_EVENTS = 5000;
@@ -242,6 +244,9 @@ export class OnlineSearch {
     };
     fresh.sort((a, b) => (byKey.get(a.canon)?.rank ?? 1e9) - (byKey.get(b.canon)?.rank ?? 1e9));
     const update = updates.map(({ _canon, _rank, ...u }) => ({ ...u, ...(attrOf(_canon, rt.id) ? { addAttribution: attrOf(_canon, rt.id) } : {}) }));
+    if (fresh.length) {
+      try { this.o.onOnlineUrls?.({ urls: fresh.map((f) => String(f.r.url)), storage: rt.storage.kind, ttlSeconds: rt.storage.ttlSeconds }); } catch (e) { this.o.log.warn({ err: String(e) }, "discovery could not read search results"); }
+    }
     this.emit(s, {
       type: "provider_results", providerId: rt.id, page, hasMore: e.hasMore, tookMs, cached, dropped,
       ...(resp.partial ? { partial: resp.partial } : {}), append: fresh.map((f) => this.fresh(f.r)), update,

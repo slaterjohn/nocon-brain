@@ -658,34 +658,168 @@ Implementation notes (server, Phase 3: C-09). Schedules and windows are implemen
 
 Resource limits are read and written under `/api/settings` (group `resources`, see the C-08 notes above). Change detection (ETag, Last-Modified, content hash, conditional requests) is internal to `refresh` jobs; the result is visible as `VersionSummary` and `activity_log` entries ("unchanged, 304").
 
-## 9. Discovery
+## 9. Discovery (Phase 7, as built)
 
-| Method | Path | Purpose | Auth |
-|---|---|---|---|
-| GET | `/api/discovery` | Overview: settings summary, budget used and remaining today and this month, candidate counts by state, kill-switch state | S |
-| GET | `/api/discovery/candidates` | `state`, `sourceId`, `minScore`, `provenance` | S |
-| GET | `/api/discovery/candidates/{id}` | Detail incl. `scoreComponents` and provenance (why suggested) | S |
-| POST | `/api/discovery/candidates/{id}/approve`, `/dismiss`, `/queue` | Decide or queue now `{ priority?, sourceId?, collectionId? }` | S+C |
-| POST | `/api/discovery/candidates/bulk` | `{ ids, action }` | S+C |
-| GET/PUT | `/api/discovery/settings` | Settings and weights (below) | S , S+C |
-| POST | `/api/discovery/pause`, `/resume` | Kill switch for active discovery | S+C |
+Discovery suggests pages worth saving next (**candidates**), explains why, and, only if the Human allows it, downloads some of them inside hard limits. **Everything is off by default**: with the defaults nothing collects, scores new candidates, downloads or auto-caches, and no discovery code uses the network except the downloads the Human has allowed.
+
+All routes need a signed-in session; writes also need the CSRF header. Errors use the common envelope (`bad_request` with `details.fields`, `not_found`, `conflict`). Candidate IDs are `cand_...`; source, collection and download IDs are the public IDs used elsewhere. Priorities travel as `"P1"` to `"P4"` (the number 1 to 4 is accepted). Sizes are bytes; instants are ISO 8601 strings; a "day" is a UTC calendar day (`YYYY-MM-DD`) and the daily budgets reset at 00:00 UTC.
+
+Terms. A **candidate** is an address that is not saved yet. **Provenance** is the list of reasons it exists (a link on a saved page, a bookmark, a visit, a "not saved yet" page that was shown, a saved-search result, a search result). **Depth** is the number of discovery hops from a page the Human saved (a link on such a page is depth 1; a link on a page that discovery downloaded at depth `d` is `d + 1`). A **request** in the budgets is one page capture: the page plus at most 40 sub-resources. **Lane**: `active` candidates (links, visits, bookmarks, missing links, saved searches) are downloaded by the active runner; `background` candidates (search results and nothing else) and auto-cached pages use the background budget and are filed in the Browsing cache source at P4.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/discovery` | Overview: switches, candidate counts by state, kill-switch state, budget used and remaining today and used this month, runner state |
+| GET | `/api/discovery/candidates` | List, filter and sort (below) |
+| GET | `/api/discovery/candidates/{id}` | Detail: the candidate, score components, a plain-language "why suggested" list and provenance |
+| GET | `/api/discovery/candidates/{id}/explain` | The explanation alone (the explain API) |
+| POST | `/api/discovery/candidates/{id}/approve` | Approve (`{ sourceId?, collectionId? }`): the runner may download it, within the limits |
+| POST | `/api/discovery/candidates/{id}/dismiss` | Dismiss: it is never suggested again |
+| POST | `/api/discovery/candidates/{id}/queue` | Download now (`{ priority?, sourceId?, collectionId? }`), 202. Not counted in the daily budgets |
+| POST | `/api/discovery/candidates/bulk` | `{ ids (1 to 200), action: "approve" \| "dismiss" \| "queue", priority?, sourceId?, collectionId? }` |
+| GET, PUT | `/api/discovery/settings` | Every setting, the limits that are really in force, and the profile maximums |
+| GET | `/api/discovery/budget` | Budget meters |
+| GET | `/api/discovery/ledger` | What each discovery download set aside and used |
+| GET | `/api/discovery/runner` | Runner status and the last pass |
+| POST | `/api/discovery/run` | Do one pass now (it obeys every limit; useful to test settings) |
+| POST | `/api/discovery/pause`, `/resume` | The kill switch |
+
+### Candidates
 
 ```ts
-interface DiscoverySettings {
-  passive: { enabled: boolean; fromLinks: boolean; fromVisits: boolean; fromBookmarks: boolean; fromMissingLinks: boolean; fromSavedSearches: boolean };
-  searchDriven: { searchesInfluenceDiscovery: boolean; autoCacheOpenedOnlinePages: boolean; prioritiseFrequentTopics: boolean;
-                  backgroundBudget: { maxRequestsPerDay: number; maxBytesPerDay: number }; requireApproval: boolean };
-  active: { mode: "off" | "approval" | "automatic"; allowedSourceIds: string[]; maxCandidatesPerRun: number; maxDepth: number; maxQueued: number;
-            maxBytesPerDay: number; maxRequestsPerDay: number; respectSchedule: boolean; onlyWhenOnline: true; perSiteDailyCap: number };
-  weights: { inboundArchivedLinks: number; collectionRelevance: number; searchFrequency: number; bookmarks: number;
-             recentActivity: number; sourcePriority: number; estimatedCost: number; storageHeadroom: number };   // cost and storage are negative contributions
+type CandidateState = "new" | "approved" | "queued" | "archived" | "dismissed" | "expired";
+type ProvenanceKind = "link" | "search_result" | "saved_search" | "visit" | "bookmark" | "missing_link" | "manual";
+
+interface Candidate {
+  id: string; url: string; host: string; title?: string;          // title only when a source that allows storing it supplied one
+  state: CandidateState; score: number; depth: number;
+  lane: "active" | "background";
+  estimatedBytes?: number; attempts: number;                       // a candidate whose downloads failed twice expires
+  provenanceKinds: ProvenanceKind[]; provenanceCount: number;
+  suggestedSource?: { id: string; name: string }; suggestedCollectionId?: string;
+  firstSeenAt: Iso; lastSeenAt: Iso; expiresAt?: Iso; decidedBy?: "user" | "runner"; decidedAt?: Iso;
+  downloadId?: string;                                             // the download started for it
 }
-interface Candidate { id: string; url: string; title?: string; state: "new" | "approved" | "queued" | "archived" | "dismissed" | "expired"; score: number;
-  scoreComponents: { name: keyof DiscoverySettings["weights"]; raw: number; weight: number; contribution: number }[];
-  provenance: { kind: string; detail?: string; pageId?: string; at: Iso }[]; estimatedBytes?: number }
+interface CandidateDetail extends Candidate {
+  scoreComponents: ScoreComponent[]; scoreStored: boolean; why: string[]; provenance: Provenance[];
+}
+interface ScoreComponent { name: WeightName; label: string; raw: number; weight: number; contribution: number; explanation: string }
+interface Provenance { kind: ProvenanceKind; detail?: string; weight?: number; pageId?: string; pageTitle?: string; pageUrl?: string; sourceId?: string; sourceName?: string; at: Iso }
 ```
 
-Scoring is a transparent weighted sum (no AI). Defaults are conservative: `active.mode = "off"`, `searchDriven.*` all false, `requireApproval = true`.
+`GET /api/discovery/candidates` query (all optional): `state` (comma list), `sourceId` (candidates suggested for, or linked from pages of, that source), `minScore`, `maxScore`, `provenance` (comma list of kinds), `q` (substring of the address or title), `host`, `sort` (`score` best first, default; `-score`; `recent` last seen first; `oldest`; `cost` cheapest first; `depth` shallowest first), `limit` (1 to 200, default 50), `cursor`, `includeHidden=true`. Response `{ items: Candidate[], total, counts: Record<CandidateState, number>, nextCursor? }`; `counts` ignores the `state` filter so the UI can show tabs. **Visibility.** A candidate is listed only while at least one of its reasons comes from a collector that is currently switched on (the master switch included): switching a collector off hides what it brought without deleting it, and switching it back on shows it again. `includeHidden=true` lists everything.
+
+**Decisions.** `approve` moves `new`, `expired` or `dismissed` to `approved` and records `sourceId` / `collectionId` as the suggested source and collection (the page joins that collection once it is saved). Approving a `queued` or `archived` candidate changes nothing. `dismiss` answers 409 for a `queued` or `archived` candidate. `queue` saves the page now through the normal capture path (admission control, robots and per-host politeness still apply; offline, the capture is held until the connection returns) and answers 202 with the candidate plus `held`. `bulk` answers `{ results: { id, ok, error? }[], done, failed }` and never stops at the first failure.
+
+### Scoring and "why suggested"
+
+The score is a transparent weighted sum, with no AI: `score = sum over the eight components of raw x weight`. `raw` is a number from 0 to 1 worked out from facts in the database; `weight` is the setting (negative for cost and storage); `contribution = raw x weight`, rounded to six decimals, and `score` is the sum of the rounded contributions, so the components shown always add up to the score.
+
+| Component | `raw` (0 to 1) |
+|---|---|
+| `inboundArchivedLinks` | `n / (n + 3)` for `n` distinct saved pages that link to it |
+| `collectionRelevance` | share of those linking pages that are in a collection |
+| `searchFrequency` | `d / (d + 3)` for `d` days it appeared in search results; 0 unless `searchesInfluenceDiscovery` and `prioritiseFrequentTopics` are both on |
+| `bookmarks` | `b / (b + 1)` for bookmarks of it or of a page that links to it |
+| `recentActivity` | halves every 7 days since it was last seen |
+| `sourcePriority` | best source behind it: P1 = 1, P2 = 0.75, P3 = 0.5, P4 = 0.25, none = 0 |
+| `estimatedCost` | estimated bytes / 5 MiB, at most 1 |
+| `storageHeadroom` | how full the emptiest online volume is (0 empty, 1 full) |
+
+`GET /api/discovery/candidates/{id}/explain` answers `{ id, url, score, scoreStored, components: ScoreComponent[], summary: string[], provenance: Provenance[], weights }`. It is always worked out from the current settings; `scoreStored` says whether the same components are also stored on the candidate row (`false` for a candidate from a search provider whose storage policy allows no components to be kept: those are recomputed on demand). `summary` has one plain sentence per contributing component, largest first. Provenance never carries text from a search provider; a `link` reason names the page and the region of the page the link was in.
+
+### Settings
+
+`GET /api/discovery/settings` answers `{ settings: DiscoverySettings, effective: EffectiveLimits, profile, profileMaximums }`. `PUT` takes any part of `DiscoverySettings` (nested objects merge), validates the whole result and answers the same shape. The same group is `discovery` in `/api/settings`. Errors name the field (`active.maxDepth`, `ceilings.maxBytesPerDay`, ...).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | Master switch. While off nothing collects, scores new candidates, runs or auto-caches |
+| `passive.fromLinks` | `false` | Links on saved pages become candidates (pipeline stage 14; at most `pool.maxLinksPerPage` per page; navigation and footer links, `nofollow` links and addresses that look like logins, resets or tokens are skipped) |
+| `passive.fromVisits` | `false` | Pages opened live that are not saved become candidates. Needs `privacy.history.enabled`; with history off no visit candidate is ever created |
+| `passive.fromBookmarks` | `false` | A bookmark of an address with no saved copy becomes a candidate |
+| `passive.fromMissingLinks` | `false` | An address for which the "not saved yet" page was shown becomes a candidate |
+| `passive.fromSavedSearches` | `false` | Results of saved-search sources show in the discovery list and may be downloaded by the runner |
+| `searchDriven.searchesInfluenceDiscovery` | `false` | Online results that are not saved become candidates (providers that allow no storage, such as Brave, are skipped) and search frequency counts towards the score. No search text is stored: only the address and a count of days |
+| `searchDriven.autoCacheOpenedOnlinePages` | `false` | A page the Human opens live is kept in the Browsing cache (P4). Only that page: nothing it links to |
+| `searchDriven.prioritiseFrequentTopics` | `false` | Search frequency counts in the score |
+| `searchDriven.requireApproval` | `true` | Search-driven candidates are downloaded only after the Human approves them |
+| `searchDriven.backgroundBudget.maxRequestsPerDay` | `50` | Requests a day shared by search-driven downloads and the auto-cache |
+| `searchDriven.backgroundBudget.maxBytesPerDay` | `104857600` (100 MiB) | Bytes a day, same budget |
+| `active.mode` | `"off"` | `off`: the runner downloads nothing. `approval`: only candidates the Human approved. `automatic`: also new candidates that are in scope and score at least `minScore`. Switching to `automatic` needs `"acknowledged": true` in the request |
+| `active.allowedSourceIds` | `[]` | Sources whose pages' links automatic mode may follow (at most 50). Empty means none. Approval mode ignores it: approving is the decision |
+| `active.maxCandidatesPerRun` | `10` | Downloads started per pass |
+| `active.maxDepth` | `1` | Deepest candidate that is created or downloaded (1 or more) |
+| `active.maxQueued` | `20` | Discovery downloads queued or running at once |
+| `active.maxRequestsPerDay` | `50` | Requests a day for the active runner |
+| `active.maxBytesPerDay` | `104857600` | Bytes a day for the active runner |
+| `active.perSiteDailyCap` | `10` | Discovery downloads per site a day, all lanes together |
+| `active.respectSchedule` | `true` | Discovery downloads only while the global download windows are open |
+| `active.onlyWhenOnline` | `true` | Fixed. Nothing is downloaded while the server is working offline or cannot reach the internet |
+| `active.minScore` | `10` | Automatic (and unapproved search-driven) downloads need at least this score |
+| `active.automaticAcknowledgedAt` | `null` | Set by the server when `automatic` was confirmed |
+| `pool.maxCandidates` | `500` | New and approved candidates kept at once; a full pool refuses newcomers |
+| `pool.expireAfterDays` | `30` | An unused candidate expires after this |
+| `pool.maxLinksPerPage` | `25` | Most links one saved page may add |
+| `ceilings.maxDepth` | `3` | The global ceiling for depth |
+| `ceilings.maxQueued` | `100` | The global ceiling for queue length (also bounds `maxCandidatesPerRun`) |
+| `ceilings.maxRequestsPerDay` | `200` | The global ceiling for requests a day (also bounds the per-site cap and the background budget) |
+| `ceilings.maxBytesPerDay` | `536870912` (512 MiB) | The global ceiling for bytes a day |
+| `weights.inboundArchivedLinks` | `30` | Each weight is -100 to 100 |
+| `weights.collectionRelevance` | `20` | |
+| `weights.searchFrequency` | `10` | |
+| `weights.bookmarks` | `25` | |
+| `weights.recentActivity` | `10` | |
+| `weights.sourcePriority` | `10` | |
+| `weights.estimatedCost` | `-10` | Negative: a bigger download scores lower |
+| `weights.storageHeadroom` | `-15` | Negative: the fuller the storage, the lower the score |
+
+**The global ceiling.** `ceilings.*` cannot be set above the resource profile's maximum, which is the crawl engine's hard ceiling (`HARD_CEILINGS` in `packages/crawl/src/profiles.ts`): depth is `maxDepth` (pi-lite 10, standard 20), queue length and the candidate pool are `maxFrontier` (50,000 / 200,000), requests a day are `maxPages` (10,000 / 100,000) and bytes a day are `maxBytes` (2 GiB / 20 GiB). Everything under the ceiling (`active.*`, `searchDriven.backgroundBudget.*`) cannot exceed the ceiling. A request that breaks either rule answers 400 and nothing is saved. `effective` is what is really in force, the smallest of the setting, the ceiling and the profile maximum, so a later change to `resources.profile` lowers the limits at once: `{ maxDepth, maxQueued, maxCandidatesPerRun, maxCandidates, active: { maxRequestsPerDay, maxBytesPerDay }, background: { maxRequestsPerDay, maxBytesPerDay }, perSiteDailyCap }`.
+
+### Budget meters and ledger
+
+`GET /api/discovery/budget`:
+
+```ts
+{ day: string; resetsAt: Iso;
+  active: Lane; background: Lane;                       // background = search-driven downloads + auto-cache
+  month: { requests: number; bytes: number };            // used this calendar month, no limit
+  perSite: { cap: number; top: { host: string; requests: number }[] };
+  queue: { inFlight: number; limit: number }; pool: { candidates: number; limit: number } }
+type Lane = { requests: { used; limit; remaining }; bytes: { used; limit; remaining } }
+```
+
+`bytes.used` is the bytes finished downloads really took plus the allotments of running ones. Before a download starts the runner sets aside a byte **allotment** (about twice the estimate, between 512 KiB and 20 MiB, never more than what is left today, in the volume, or in the source's storage budget) and hands the same number to the capture as its size cap, so a discovery download cannot take more than it was given. When the download ends the entry is settled with the real bytes. A download cancelled before it started gives its request back.
+
+`GET /api/discovery/ledger` (`day`, `lane`, `limit` 1 to 200 default 50, `cursor`) answers `{ items, nextCursor? }`, newest first, each `{ id, at, day, lane: "active" | "background" | "auto_cache", host, requests, reservedBytes, bytes?, state: "reserved" | "settled", outcome?: "archived" | "unchanged" | "failed" | "cancelled", candidateId?, downloadId?, settledAt? }`. Entries older than 90 days are removed.
+
+### Kill switch and runner status
+
+`POST /api/discovery/pause` answers `{ paused: true, cancelled }`: no discovery download starts after it returns, discovery downloads still waiting are cancelled, and one that is already running finishes (so discovery stops within one job). It covers both lanes and the auto-cache and survives a restart. `POST /api/discovery/resume` answers `{ paused: false }`.
+
+`GET /api/discovery/runner` answers:
+
+```ts
+{ state: "off" | "idle" | "blocked" | "paused"; mode: "off" | "approval" | "automatic";
+  blockedBy: ("disabled" | "kill_switch" | "offline" | "window_closed" | "resources")[];
+  killSwitch: { paused: boolean; since?: Iso; by?: string };
+  inFlight: number; timerSeconds: number;
+  gates: { enabled; online; windowOpen; resourcesOk; storageRoomBytes };
+  lastPass?: { at: Iso; trigger: "timer" | "manual";
+               active: PassLane; background: PassLane } }
+type PassLane = { eligible: number; started: number; skipped: Partial<Record<"depth" | "run_cap" | "queue_full" | "requests" | "bytes" | "site_cap" | "storage" | "source_budget" | "archived" | "in_progress", number>>;
+                  blockedBy: ("disabled" | "mode_off" | "kill_switch" | "offline" | "window_closed" | "resources" | "storage_full" | "search_driven_off")[] }
+```
+
+`POST /api/discovery/run` does one pass now and answers the pass report (`{ at, trigger, active: PassLane, background: PassLane }`). A pass runs every `timerSeconds` seconds (30 by default), and only while no gate blocks it.
+
+### Rules the server keeps
+
+- **Limits, each applied on its own.** A pass starts nothing when any gate is shut (switched off, `mode` off, kill switch, offline or unreachable, schedule window closed, disk guard paused). Otherwise it picks eligible candidates best first and starts at most: `maxCandidatesPerRun`; as many as keep queued plus running within `maxQueued`; the requests left today; as many bytes as are left today (allotments); `perSiteDailyCap` per host a day; those whose depth is within `maxDepth`; those that fit the free room in the best volume and the source's storage budget. The arithmetic is a pure function (`apps/server/src/discovery/planner.ts`) with property tests.
+- **Approval mode downloads nothing without approval. Offline mode downloads nothing**, and neither does an expired or dismissed candidate. A candidate that is already saved, being downloaded, or excluded (`url_exclusions`) is never downloaded again.
+- **Downloads are ordinary captures** (priority P4, `requestedBy: "discovery"`): storage admission control, robots.txt, per-host politeness and the download windows all apply. Remote favicons are never fetched.
+- **Privacy.** Passive collectors use no network. With `privacy.history.enabled` off no visit candidate is created. No search text is stored by discovery in any case: candidates keep an address and counts, never a query. A candidate from a search provider whose storage policy is `none` (Brave) is stored only after the Human approves it, with no title and no components, and is forgotten if dismissed (the rules of section 6.2 stand).
+- **Auto-cache** keeps only an address the Human opened live (`POST /api/browser/resolve` answered `live`), inside the background budget, never an address that looks like a login or carries a token, and never anything that page links to.
+- **Collectors.** Pipeline stage 14 (`candidates`) is recorded as `skipped` while link collection is off.
 
 ## 10. Storage (Phase 6, as built)
 

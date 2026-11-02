@@ -160,6 +160,9 @@ export interface BrowserServiceOptions {
  * already knows. Archive tokens are minted here, so the listener never needs a database.
  */
 export class BrowserService {
+  /** Discovery's missing-link collector: the "not saved yet" page was shown for an address. */
+  onMissingLink?: (url: string) => void;
+
   private readonly idempotency = new Map<string, { at: number; value: unknown }>();
 
   constructor(private readonly o: BrowserServiceOptions) {
@@ -354,6 +357,7 @@ export class BrowserService {
     const conn = this.connectivityState();
     const queued = this.queuedFor(this.key(n));
     const archived = !!this.findUsable(n);
+    if (!archived) { try { this.onMissingLink?.(n); } catch { /* discovery never breaks browsing */ } }
     return {
       url: n, connectivity: conn, archived, canQueue: true, ...(queued ? { queued } : {}),
       reason: this.o.connectivity.forced ? "forced_offline" : conn === "offline" ? "offline" : "not_archived",

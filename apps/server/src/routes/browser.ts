@@ -47,7 +47,11 @@ export function browserRoutes(app: FastifyInstance, state: ServerState, o: { pro
       });
       const rs = res.resolution;
       // Archived visits are recorded when the listener serves the page (frame-state); the rest are recorded here.
-      if (rs.kind === "live") svc.history.record(user.userId, { url: rs.url, servedFrom: "live" });
+      if (rs.kind === "live") {
+        svc.history.record(user.userId, { url: rs.url, servedFrom: "live" });
+        // The Human opened this page live: the auto-cache (off by default) may keep it. Only this page, nothing it links to.
+        svc.discovery.onOpened(rs.url);
+      }
       else if (rs.kind === "offline") svc.history.record(user.userId, { url: rs.url, servedFrom: "offline" });
       return res;
     },

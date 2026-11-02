@@ -54,6 +54,7 @@ import { ConnectivityGuardedFetcher, isNetworkError, NotImplementedFetcher, type
 import { SettingsService } from "./services/settings.js";
 import { GIB, VolumeService, type VolumeProbes } from "./services/volumes.js";
 import { StorageService } from "./storage/service.js";
+import { DiscoveryService } from "./discovery/service.js";
 
 export { buildApp } from "./app.js";
 export * from "./archive/index.js";
@@ -79,6 +80,11 @@ export { ScheduleService } from "./schedule/service.js";
 export { Scheduler } from "./schedule/scheduler.js";
 export * from "./sources/crawl-port.js";
 export { StorageService } from "./storage/service.js";
+export { DiscoveryService } from "./discovery/service.js";
+export * as discoveryPlanner from "./discovery/planner.js";
+export * from "./discovery/settings.js";
+export { score as scoreCandidate, rawValues as scoreRawValues } from "./discovery/scoring.js";
+export type { Signals as ScoreSignals, ScoreComponent } from "./discovery/scoring.js";
 export type { FaultHook, FaultPoint } from "./storage/executor.js";
 export { AdmissionDenied } from "./storage/admission.js";
 export { linkPageSource, sourceReferences } from "./sources/references.js";
@@ -132,6 +138,8 @@ export interface ServerOptions extends BuildOptions {
   search?: Partial<Pick<SearchServiceOptions, "searchWorkerFile" | "indexWorkerFile" | "workerExecArgv" | "pollMs" | "batch" | "testFlags" | "autoRebuild">>;
   /** Online search providers (Phase 5). Tests shorten the retry pause. */
   online?: { retryDelayMs?: [number, number] };
+  /** Discovery (Phase 7). `tickMs` is how often the runner looks for work (default 30 s); 0 turns the timer off so a test drives passes itself. */
+  discovery?: { tickMs?: number };
 }
 
 export interface NcbServer {
@@ -179,6 +187,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
   let maintenanceTimer: NodeJS.Timeout | undefined;
   let renderProxy: GuardedProxy | undefined;
   let onlineCloser: (() => Promise<void>) | undefined;
+  let discoveryRef: DiscoveryService | undefined;
 
   const server: NcbServer = {
     get renderProxy() {
@@ -441,7 +450,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       crawlRef = crawl;
       const runner = new JobRunner({
         queue, pool, activity, events, clock, log: app.log, pollMs: opts.runnerPollMs, leaseMs: opts.leaseMs,
-        mainHandlers: { ...crawl.mainHandlers({ ...pipeline.handlers, ...refresh.handlers }), ...render.handlers }, periodic: () => { scheduler.tick(); },
+        mainHandlers: { ...crawl.mainHandlers({ ...pipeline.handlers, ...refresh.handlers }), ...render.handlers }, periodic: () => { scheduler.tick(); discoveryRef?.tick(); },
         mainConcurrency: () => limits.fetchConcurrency(),
       });
       const search = new SearchService({
@@ -461,13 +470,14 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       const online = new OnlineSearch({
         db, clock, settings, providers, runner: providerRunner, isOffline: netOffline, urlKey: (u) => pipeline.urlKey(u), log: app.log,
         saveUrl: (i) => browser.save(i),
+        onOnlineUrls: (r) => discoveryRef?.onSearchResults(r),
       });
       search.online = online;
       onlineCloser = () => providerHttp.close();
       const coverage = new CoverageService({
         db, clock, online, sources, collections, pipeline, activity, startCrawl: (cfg) => crawl.startCrawl(cfg), profile: () => settings.internal("resources").profile, isOffline: netOffline,
       });
-      const savedSources = new SavedSearchSources({ db, clock, providers, runner: providerRunner, sources, pipeline, activity, isOffline: netOffline });
+      const savedSources = new SavedSearchSources({ db, clock, providers, runner: providerRunner, sources, pipeline, activity, isOffline: netOffline, onCandidate: (id) => discoveryRef?.onSavedSearchCandidate(id) });
       sources.attachSavedSearchRunner((src, o) => savedSources.run(src, o));
       const downloads = new DownloadService({
         db, clock, queue, events, activity, crawl, pipeline, refresh, sources, scheduler, schedules, connectivity, governor: limits, settings, admission: storage.admission,
@@ -475,9 +485,52 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         buildCrawl: (a) => crawlConfigForDownload(a, settings.internal("resources").profile),
       });
 
+      // Discovery (Phase 7). Everything is off until switched on; the collectors below never use the network.
+      const roomOf = () => Math.max(0, ...volumes.list().filter((v) => v.state === "online").map((v) => volumes.availableFor(v)));
+      const discovery = new DiscoveryService({
+        db, clock, settings, activity, log: app.log, urlKey: (u) => pipeline.urlKey(u),
+        captureUrl: (url, o) => pipeline.captureUrl(url, o),
+        saveNow: (i) => {
+          const r = browser.save({ url: i.url, priority: i.priority, queue: true, requestedBy: "user", ...(i.sourceId !== undefined ? { sourceId: i.sourceId } : {}) });
+          return { downloadId: r.downloadId, held: r.held };
+        },
+        cancelDownload: (id) => { downloads.cancel(id); },
+        gates: {
+          assertOnline: () => connectivity.assertCanReachInternet({ background: true }),
+          windowOpen: () => scheduler.isOpen(null, "discovery").open,
+          resourcesPaused: () => limits.diskStatus().paused,
+          storageRoom: roomOf,
+          sourceRoom: (sid) => {
+            const b = db.get<{ storage_budget_bytes: number | null }>("SELECT storage_budget_bytes FROM sources WHERE id = ?", [sid])?.storage_budget_bytes;
+            return b == null ? undefined : Math.max(0, b - storage.usage.sourceBytes(sid));
+          },
+        },
+        storagePressure: () => {
+          const online = volumes.list().filter((v) => v.state === "online");
+          if (!online.length) return 1;
+          const frac = online.map((v) => {
+            const used = volumes.usedBytes(v.id);
+            const capacity = v.quotaBytes ?? used + Math.max(0, (v.statFree ?? 0) - v.reserveFreeBytes);
+            return capacity > 0 ? Math.min(1, used / capacity) : 1;
+          });
+          return Math.min(...frac);
+        },
+        estimateBytes: (sid) => storage.admission.estimateBytes(sid),
+        browsingCacheSourceId: () => sources.systemId("browsing_cache"),
+        collections,
+        pageIdOf: (key) => db.get<{ public_id: string }>("SELECT p.public_id FROM pages p WHERE p.url_key = ? OR p.id IN (SELECT page_id FROM page_aliases WHERE url_key = ?) LIMIT 1", [key, key])?.public_id,
+        historyEnabled: () => (settings.internal("privacy") as { history: { enabled: boolean } }).history.enabled,
+      });
+      discovery.tickMs = opts.discovery?.tickMs ?? 30_000;
+      discoveryRef = discovery;
+      deps.discovery = { fromVersion: (id) => discovery.fromVersion(id) };
+      history.onRecorded = (v) => { discovery.onVisit(v); };
+      bookmarks.onCreated = (v) => { discovery.onBookmark(v); };
+      browser.onMissingLink = (url) => { discovery.onMissingLink(url); };
+
       svc = {
         config, clock, main, db, activity, auth, settings, volumes, blobs, storage, connectivity, fetcher, events, queue, runner, pipeline, imports, render, crawl,
-        archive, browser, bookmarks, history, library, sources, collections, schedules, scheduler, downloads, refresh, limits, search, providers, providerRunner, coverage, savedSources, throttle: new LoginThrottle(clock), guestMatcher,
+        archive, browser, bookmarks, history, library, sources, collections, schedules, scheduler, downloads, refresh, limits, search, providers, providerRunner, coverage, savedSources, discovery, throttle: new LoginThrottle(clock), guestMatcher,
       };
       state.attach(svc);
 
@@ -494,6 +547,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       connectivity.start();
       runner.start(); // recoverOnStartup runs first, then the workers start
       crawl.start(); // finishes crawls whose last job ended before a crash; watches deadlines
+      discovery.start(); // fills in candidate hosts, closes budget entries a crash left open
       downloads.start(); // closes downloads whose work all ended; publishes download.update
       limits.start(); // CPU and disk guards
       storage.start(opts.storageTickMs ?? 300_000); // evict above the threshold, prune, collect garbage, scrub

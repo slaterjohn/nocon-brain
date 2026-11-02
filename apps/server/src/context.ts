@@ -32,6 +32,7 @@ import type { CoverageService } from "./online/coverage.js";
 import type { SavedSearchSources } from "./online/saved-source.js";
 import type { ProviderRunner } from "./online/runner.js";
 import type { StorageService } from "./storage/service.js";
+import type { DiscoveryService } from "./discovery/service.js";
 
 /** Everything that exists once the database is open and migrated. */
 export interface Services {
@@ -73,6 +74,8 @@ export interface Services {
   providerRunner: ProviderRunner;
   coverage: CoverageService;
   savedSources: SavedSearchSources;
+  /** Discovery (Phase 7): candidates, scoring, collectors, the active runner and the auto-cache. Off until switched on. */
+  discovery: DiscoveryService;
   throttle: LoginThrottle;
   /** Returns true when the address may use trusted-LAN read-only access. Null when the mode is off. */
   guestMatcher: ((ip: string) => boolean) | null;

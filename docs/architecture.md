@@ -82,13 +82,14 @@ tests/fixtures           local fixture websites (no real network in any test)
 docker/                  server, web, renderer Dockerfiles; searxng settings.yml
 ```
 
-## 3. The five areas and where they live
+## 3. The six areas and where they live
 
 | Area | What it contains | Main API resources |
 |---|---|---|
 | Browser | Tabs, address bar (URL or search), back/forward, reload, find-in-page, bookmarks, history, reader mode, original-site mode, archived/live switch, save actions, offline indicators | `/api/browser/*`, `/api/bookmarks`, `/api/history`, archive listener |
 | Library | Pages, versions, sources, collections, saved searches, ZIM packages | `/api/archive/*`, `/api/sources`, `/api/collections`, `/api/zim/*` |
-| Downloads | Queue, schedules, windows, resource limits, discovery candidates | `/api/downloads`, `/api/schedules`, `/api/discovery/*` |
+| Downloads | Queue, schedules, windows, resource limits | `/api/downloads`, `/api/schedules` |
+| Discovery | Suggested pages with "why suggested", approve/dismiss, daily budget and ledger, runner and kill switch, discovery settings | `/api/discovery/*` |
 | Search | Homepage, combined results, filters, coverage, "improve offline coverage" | `/api/search/*` |
 | Storage and settings | Volumes, usage, forecast, eviction, index status, providers, privacy, resource profile, admin dashboard, logs, maintenance | `/api/storage/*`, `/api/index/*`, `/api/settings`, `/api/system/*` |
 

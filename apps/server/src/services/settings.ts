@@ -4,6 +4,7 @@ import type { Db } from "@ncb/db";
 import { AppError } from "@ncb/shared";
 import { decryptSecret, encryptSecret } from "../lib/secrets.js";
 import { RequestValidationError, type FieldIssue } from "../lib/zod.js";
+import { buildDiscoverySchema, validateDiscoverySettings } from "../discovery/settings.js";
 
 export const DISCLOSURE_TEXT =
   "Online search sends the words you type to the search providers you enable. Those providers can see the query and your server's IP address. " +
@@ -81,10 +82,8 @@ export function buildGroupSchemas(config: ResolvedConfig) {
       onlineDeadlineMs: intIn(10_000, 1000, 60_000),
       zimSearchBudgetMs: intIn(800, 100, 10_000),
     }),
-    discovery: z.object({
-      enabled: bool(false),
-      passiveCandidates: bool(true),
-    }),
+    /** Phase 7 (docs/api.md "Discovery (Phase 7, as built)"). Everything is off by default. */
+    discovery: buildDiscoverySchema(),
     storage: z.object({
       /** Lets automatic eviction reclaim Important (P2) content, last. Protected (P1) content is never evicted, whatever this says. */
       permitImportantEviction: bool(false),
@@ -264,6 +263,24 @@ export class SettingsService {
           }
           if (ack === true) online.acknowledgedAt = new Date(this.o.clock.now()).toISOString();
         }
+      }
+
+      if (g === "discovery") {
+        const profile = ((next.get("resources") ?? this.load("resources")).profile as "pi-lite" | "standard") ?? "standard";
+        const d = value as unknown as ReturnType<typeof buildDiscoverySchema>["_output"];
+        for (const i of validateDiscoverySettings(d, profile)) fields.push({ in: "body", path: `discovery.${i.path}`, message: i.message });
+        const prev = previous.active as { mode: string; automaticAcknowledgedAt?: string | null };
+        // The confirmation time is the server's to set: a request cannot supply it.
+        d.active.automaticAcknowledgedAt = prev.automaticAcknowledgedAt ?? null;
+        if (d.active.mode === "automatic" && prev.mode !== "automatic") {
+          if (patch.acknowledged !== true) {
+            fields.push({ in: "body", path: "discovery.acknowledged", message: "Automatic mode downloads pages without asking each time. Confirm that before turning it on." });
+            continue;
+          }
+          if (patch.acknowledged === true) d.active.automaticAcknowledgedAt = new Date(this.o.clock.now()).toISOString();
+        }
+        if (d.active.mode !== "automatic") d.active.automaticAcknowledgedAt = null;
+        if (fields.length) continue;
       }
 
       if (g === "storage") {

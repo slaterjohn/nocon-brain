@@ -17,6 +17,7 @@ import { browserRoutes } from "./routes/browser.js";
 import { collectionRoutes } from "./routes/collections.js";
 import { downloadRoutes } from "./routes/downloads.js";
 import { scheduleRoutes } from "./routes/schedules.js";
+import { discoveryRoutes } from "./routes/discovery.js";
 import { searchRoutes } from "./routes/search.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { sourceRoutes } from "./routes/sources.js";
@@ -248,6 +249,7 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
     searchRoutes(a, state, { sseHeartbeatMs });
     downloadRoutes(a, state);
     scheduleRoutes(a, state);
+    discoveryRoutes(a, state);
   });
 
   return app;

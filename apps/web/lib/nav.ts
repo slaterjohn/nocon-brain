@@ -1,4 +1,4 @@
-import { Compass, Download, HardDrive, Library, Search, type LucideIcon } from "lucide-react";
+import { Compass, Download, HardDrive, Library, Search, Telescope, type LucideIcon } from "lucide-react";
 
 export interface NavItem {
   href: string;
@@ -8,11 +8,12 @@ export interface NavItem {
   also?: string[];
 }
 
-// The five areas. Browser is the default landing page.
+// The six areas. Browser is the default landing page.
 export const areas: NavItem[] = [
   { href: "/", label: "Browser", icon: Compass, also: ["/bookmarks", "/history", "/save"] },
   { href: "/library", label: "Library", icon: Library },
   { href: "/downloads", label: "Downloads", icon: Download },
+  { href: "/discovery", label: "Discovery", icon: Telescope },
   { href: "/search", label: "Search", icon: Search },
   { href: "/storage", label: "Storage and settings", icon: HardDrive },
 ];

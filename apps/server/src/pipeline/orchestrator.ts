@@ -8,16 +8,32 @@ import { DEFAULT_CAPS, StageFailure, type CaptureCaps, type PipelineDeps, type S
 import { DEFAULT_VERSIONING } from "./policy.js";
 import { publishCapture } from "./progress.js";
 
+/** Stage 14: passive discovery candidates from the page's links (docs/api.md "Discovery (Phase 7, as built)"). Never touches the network. */
+export const candidates: StageFn = (ctx) => {
+  const hook = ctx.deps.discovery;
+  if (!hook) return { detail: { skipped: "discovery is not available" } };
+  try {
+    return { detail: hook.fromVersion(ctx.versionId) };
+  } catch (e) {
+    // Discovery is a bonus: a problem here must never fail the capture.
+    ctx.deps.log.warn({ err: String(e), versionId: ctx.versionId }, "discovery could not read the links of a page");
+    return { detail: { skipped: "error" } };
+  }
+};
+
 export const BUILTIN_STAGES: Record<PipelineStage, StageFn> = {
   validate, store_original: storeOriginal, assets, metadata, readable, sections, links, normalise, dedup, reader,
   render_prep: renderPrep,
   index: indexStage,
   link_graph: skippedStage("link graph resolution beyond rows arrives in phase 4"),
-  candidates: skippedStage("discovery candidates arrive in phase 7 (D-02)"),
+  candidates,
   status,
 };
-/** Stages 13 and 14 are registered as `skipped` until their phases. */
-export const STUB_STAGES: ReadonlySet<PipelineStage> = new Set(["link_graph", "candidates"]);
+/**
+ * Stage 13 is registered as `skipped` until link-graph resolution beyond rows arrives. Stage 14 (candidates, task D-02) is real: it is
+ * recorded as `skipped` when discovery is off (nothing is collected) and `done` when it ran.
+ */
+export const STUB_STAGES: ReadonlySet<PipelineStage> = new Set(["link_graph"]);
 
 export type RunOutcome = { kind: "done"; status: string } | { kind: "unchanged"; reason: string } | { kind: "failed"; stage: PipelineStage; message: string };
 
@@ -65,7 +81,7 @@ export async function runPipeline(deps: PipelineDeps, versionId: number, opts: R
           discardAsUnchanged(ctx, versionId, String(res.detail?.reason ?? "unchanged"));
           return { kind: "unchanged", reason: String(res.detail?.reason ?? "unchanged") };
         }
-        const state = STUB_STAGES.has(stage) ? "skipped" : "done";
+        const state = STUB_STAGES.has(stage) || (stage === "candidates" && res && res.detail && "skipped" in res.detail) ? "skipped" : "done";
         db.run(
           "UPDATE pipeline_stage_runs SET state = ?, finished_at = ?, last_error = NULL, detail_json = COALESCE(?, detail_json) WHERE version_id = ? AND stage = ?",
           [state, clock.now(), res && res.detail ? JSON.stringify(res.detail) : null, versionId, stage],

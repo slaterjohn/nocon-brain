@@ -22,11 +22,15 @@ const createBody = z.object({
 const idsBody = z.object({ ids: z.array(z.string().min(1).max(64)).min(1).max(100), priority: priorityInput.optional() });
 const TRANSIENT_TTL_MS = 24 * 3600_000;
 
+const hostOf = (url: string): string | null => { try { return new URL(url).hostname.toLowerCase(); } catch { return null; } };
+
 interface Transient { id: string; url: string; key: string; seenAt: number; priority?: number }
 
 export interface SavedSourceDeps {
   db: Db; clock: Clock; providers: ProviderService; runner: ProviderRunner; sources: SourceService; pipeline: PipelineService; activity: ActivityLog;
   isOffline: () => boolean;
+  /** Discovery (Phase 7): called with the row id of a candidate this source stored, so it can be scored. */
+  onCandidate?: (candidateId: number) => void;
 }
 
 /**
@@ -102,15 +106,24 @@ export class SavedSearchSources {
       const exists = this.db.get<{ id: number }>("SELECT id FROM discovery_candidates WHERE url_key = ?", [urlKey]);
       if (exists) { this.db.run("UPDATE discovery_candidates SET last_seen_at = ? WHERE id = ?", [now, exists.id]); continue; }
       const res = this.db.run(
-        `INSERT INTO discovery_candidates (public_id, url, url_key, title_hint, state, score, suggested_source_id, origin_storage, first_seen_at, last_seen_at, expires_at)
-         VALUES (?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?)`,
-        [newId("cand"), info.url, urlKey, info.storage === "unrestricted" ? info.title.slice(0, 300) : null, Number(f.score.toFixed(6)), src.id, info.storage, now, now, ttl ? now + ttl * 1000 : null]);
-      this.db.run("INSERT INTO candidate_provenance (candidate_id, kind, ref_source_id, weight, seen_at) VALUES (?, 'saved_search', ?, ?, ?)", [Number(res.lastInsertRowid), src.id, f.score, now]);
+        `INSERT INTO discovery_candidates (public_id, url, url_key, host, title_hint, state, score, suggested_source_id, origin_storage, first_seen_at, last_seen_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?)`,
+        [newId("cand"), info.url, urlKey, hostOf(info.url), info.storage === "unrestricted" ? info.title.slice(0, 300) : null, Number(f.score.toFixed(6)), src.id, info.storage, now, now, ttl ? now + ttl * 1000 : null]);
+      this.db.run("INSERT INTO candidate_provenance (candidate_id, kind, ref_source_id, weight, seen_at) VALUES (?, 'saved_search', ?, ?, ?) ON CONFLICT DO NOTHING", [Number(res.lastInsertRowid), src.id, f.score, now]);
+      try { this.o.onCandidate?.(Number(res.lastInsertRowid)); } catch { /* scoring never breaks a saved-search run */ }
       fresh++;
     }
     this.transient.set(String(src.id), memory);
     if (memory.length && s.on_result === "downloads") warnings.push("Results from a provider that allows no storage are held for approval instead of being saved automatically.");
     return { downloadIds, found: fused.length, newItems: fresh, warnings };
+  }
+
+  /** Ties the candidate to the download it started, so discovery can follow it to the end (Phase 7). */
+  private link(candidateId: number, downloadPublicId: string): void {
+    const dj = this.db.get<{ id: number }>("SELECT id FROM download_jobs WHERE public_id = ?", [downloadPublicId]);
+    if (!dj) return;
+    this.db.run("UPDATE discovery_candidates SET download_job_id = ? WHERE id = ?", [dj.id, candidateId]);
+    this.db.run("UPDATE download_jobs SET candidate_id = ? WHERE id = ?", [candidateId, dj.id]);
   }
 
   private sweepExpired(): void {
@@ -152,20 +165,32 @@ export class SavedSearchSources {
       const t = mem.find((x) => x.id === id);
       if (t) {
         // The Human approved this address: it is stored now, without a title or any provider text.
+        let cid: number | undefined;
         const res = this.db.run(
           `INSERT INTO discovery_candidates (public_id, url, url_key, title_hint, state, suggested_source_id, origin_storage, first_seen_at, last_seen_at, decided_by, decided_at)
            VALUES (?, ?, ?, NULL, 'queued', ?, 'none', ?, ?, 'user', ?) ON CONFLICT(url_key) DO UPDATE SET state = 'queued', decided_by = 'user', decided_at = excluded.decided_at`,
           [newId("cand"), t.url, t.key, sid, t.seenAt, now, now]);
         void res;
-        downloadIds.push(this.o.pipeline.captureUrl(t.url, { priority: prio, requestedBy: "search", userInitiated: false, sourceId: sid, discoveredVia: "search", depth: 0 }).downloadId);
+        cid = this.db.get<{ id: number }>("SELECT id FROM discovery_candidates WHERE url_key = ?", [t.key])?.id;
+        // Provenance (no provider text) and a score, so the approved address shows in the discovery list.
+        if (cid !== undefined) {
+          this.db.run("INSERT INTO candidate_provenance (candidate_id, kind, ref_source_id, seen_at) VALUES (?, 'saved_search', ?, ?) ON CONFLICT DO NOTHING", [cid, sid, now]);
+          this.db.run("UPDATE discovery_candidates SET host = COALESCE(host, ?) WHERE id = ?", [hostOf(t.url), cid]);
+          try { this.o.onCandidate?.(cid); } catch { /* scoring never breaks an approval */ }
+        }
+        const dlId = this.o.pipeline.captureUrl(t.url, { priority: prio, requestedBy: "search", userInitiated: false, sourceId: sid, discoveredVia: "search", depth: 0 }).downloadId;
+        downloadIds.push(dlId);
+        if (cid !== undefined) this.link(cid, dlId);
         this.transient.set(String(sid), (this.transient.get(String(sid)) ?? []).filter((x) => x.id !== id));
         continue;
       }
       const c = this.db.get<{ id: number; url: string; state: string }>("SELECT id, url, state FROM discovery_candidates WHERE public_id = ? AND suggested_source_id = ?", [id, sid]);
       if (!c) throw new AppError("not_found", "One of those candidates does not exist any more.");
       if (c.state === "queued" || c.state === "archived") continue;
-      downloadIds.push(this.o.pipeline.captureUrl(c.url, { priority: prio, requestedBy: "search", userInitiated: false, sourceId: sid, discoveredVia: "search", depth: 0 }).downloadId);
+      const dlId = this.o.pipeline.captureUrl(c.url, { priority: prio, requestedBy: "search", userInitiated: false, sourceId: sid, discoveredVia: "search", depth: 0 }).downloadId;
+      downloadIds.push(dlId);
       this.db.run("UPDATE discovery_candidates SET state = 'queued', decided_by = 'user', decided_at = ? WHERE id = ?", [now, c.id]);
+      this.link(c.id, dlId);
     }
     return { queued: downloadIds.length, downloadIds };
   }

@@ -32,6 +32,18 @@ export default defineConfig({
           fileParallelism: false,
         },
       },
+      {
+        // The named discovery suite (task D-08): limits, offline behaviour, privacy, provenance, scoring, the kill switch and property tests of
+        // "random settings never produce unbounded work".
+        test: {
+          name: "discovery",
+          include: ["tests/discovery/**/*.test.ts"],
+          environment: "node",
+          testTimeout: 180_000,
+          hookTimeout: 120_000,
+          fileParallelism: false,
+        },
+      },
     ],
   },
 });

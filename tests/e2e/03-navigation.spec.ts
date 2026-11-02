@@ -5,10 +5,10 @@ test.beforeEach(async ({ page }) => {
   await login(page);
 });
 
-test("Browser is the landing page, with the five areas in the navigation", async ({ page }) => {
+test("Browser is the landing page, with the six areas in the navigation", async ({ page }) => {
   await expect(page).toHaveURL(/\/$/);
   const nav = page.getByRole("navigation", { name: "Areas" });
-  await expect(nav.getByRole("link")).toHaveText(["Browser", "Library", "Downloads", "Search", "Storage and settings"]);
+  await expect(nav.getByRole("link")).toHaveText(["Browser", "Library", "Downloads", "Discovery", "Search", "Storage and settings"]);
   await expect(nav.getByRole("link", { name: "Browser" })).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("NoConBrain");
   await expect(page.getByRole("combobox", { name: /Search your archive/ })).toBeVisible();

@@ -173,6 +173,12 @@ export const discoveryCandidates = sqliteTable(
     expiresAt: integer("expires_at"),
     decidedBy: text("decided_by"),
     decidedAt: integer("decided_at"),
+    // Phase 7 (migration 0013)
+    host: text("host"),
+    depth: integer("depth").notNull().default(0),
+    attempts: integer("attempts").notNull().default(0),
+    scoredAt: integer("scored_at"),
+    downloadJobId: integer("download_job_id"),
   },
   (t) => [index("discovery_candidates_state_idx").on(t.state, t.score), index("discovery_candidates_expires_idx").on(t.expiresAt)],
 );

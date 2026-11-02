@@ -150,6 +150,8 @@ export interface PipelineDeps {
    * capture. The renderer uses it to decide whether the page needs a rendered copy. Must not throw into the pipeline.
    */
   onVersionDone?(versionId: number, options: CaptureOptions): void;
+  /** Discovery (Phase 7): stage 14 hands it the version whose links may become candidates. Must not use the network. */
+  discovery?: { fromVersion(versionId: number): Record<string, unknown> };
   faults?: PipelineFaults;
   /** Replaces a built-in stage. The rendering code registers `render_prep` here. */
   stageOverrides?: Partial<Record<PipelineStage, StageFn>>;

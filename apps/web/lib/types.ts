@@ -231,11 +231,14 @@ export interface DeletePreview {
   requiresConfirmation: boolean;
 }
 
+/**
+ * `browser.autoCacheOpened` is left out on purpose: it was never read, and `discovery.searchDriven.autoCacheOpenedOnlinePages` replaces it
+ * (docs/api.md section 9). The UI never shows it.
+ */
 export interface BrowserSettings {
   showLinkStates: boolean;
   liveFrames: boolean;
   bookmarkPriority: number;
-  autoCacheOpened: boolean;
   preferCached: boolean;
   quickSavePriority: number;
 }

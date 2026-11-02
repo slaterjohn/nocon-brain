@@ -6,10 +6,11 @@ import { afterAll } from "vitest";
 
 export type Fixtures = Awaited<ReturnType<typeof startFixtures>>;
 
-export async function until<T>(fn: () => T | undefined | false | null, ms = 20_000): Promise<T> {
+/** Polls `fn` (sync or async) until it returns a truthy value. Async results are awaited, never treated as truthy promises. */
+export async function until<T>(fn: () => T | undefined | false | null | Promise<T | undefined | false | null>, ms = 20_000): Promise<T> {
   const end = Date.now() + ms;
   for (;;) {
-    const v = fn();
+    const v = await fn();
     if (v) return v;
     if (Date.now() > end) throw new Error("timed out waiting for condition");
     await new Promise((r) => setTimeout(r, 20));
