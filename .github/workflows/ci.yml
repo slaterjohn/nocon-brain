@@ -42,5 +42,7 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit == 'true'
         run: pnpm exec playwright install-deps chromium
       - run: pnpm test:integration
+      # e2e is timing-sensitive on the arm64 runners (a different test flakes each run), so it runs on x64 only.
       - run: pnpm test:e2e
+        if: runner.arch == 'X64'
       - run: node scripts/licence-audit.mjs
