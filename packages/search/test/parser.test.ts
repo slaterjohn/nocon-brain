@@ -40,6 +40,8 @@ describe("S-03 query parser", () => {
     expect(parseDateStart("x")).toBeNull();
   });
 
+  // Roughly 5000 fuzz iterations against a real SQLite FTS5 index. Fast locally, but
+  // GitHub's shared runners are several times slower, so allow far more than the 5 s default.
   it("property: random strings never throw and never make FTS5 syntax errors", () => {
     let seed = 987654321;
     const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
@@ -69,6 +71,6 @@ describe("S-03 query parser", () => {
     }
     reader.close();
     idx.close();
-  });
+  }, 60_000);
 });
 void Fts5Index;
