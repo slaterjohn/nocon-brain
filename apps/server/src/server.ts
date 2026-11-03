@@ -59,6 +59,7 @@ import { ZimService } from "./zim/service.js";
 import { ZimContent } from "./zim/content.js";
 import { ZimSearch } from "./zim/search.js";
 import { DiscoveryService } from "./discovery/service.js";
+import { WikipediaClient, WikipediaRoutedFetcher, WikipediaService, WikipediaZim } from "./wikipedia/index.js";
 
 export { buildApp } from "./app.js";
 export * from "./archive/index.js";
@@ -85,6 +86,7 @@ export { Scheduler } from "./schedule/scheduler.js";
 export * from "./sources/crawl-port.js";
 export { StorageService } from "./storage/service.js";
 export * from "./zim/index.js";
+export * from "./wikipedia/index.js";
 export { DiscoveryService } from "./discovery/service.js";
 export * as discoveryPlanner from "./discovery/planner.js";
 export * from "./discovery/settings.js";
@@ -141,6 +143,11 @@ export interface ServerOptions extends BuildOptions {
   archiveStore?: CaptureStore;
   /** Knowledge-package (ZIM) readers (Phase 8). Tests shorten the hang watchdog and enable the crash and hang hooks. */
   zim?: { workerFile?: string | URL; workerExecArgv?: string[]; hangGraceMs?: number; callTimeoutMs?: number; testHooks?: boolean };
+  /**
+   * Wikipedia (tasks Z-07, Z-08). `origin` replaces `https://<lang>.wikipedia.org` (the end-to-end suite points it at a local fake); the other fields
+   * shorten the waits the client keeps to, so a test does not need to sit through them. The one-request-at-a-time rule is never relaxed.
+   */
+  wikipedia?: { origin?: string; minIntervalMs?: number; minBackoffMs?: number; maxAttempts?: number; maxInlineWaitMs?: number; breaker?: { failures: number; openMs: number }; fetch?: typeof fetch };
   /** Search workers and test flags (task S-01). */
   search?: Partial<Pick<SearchServiceOptions, "searchWorkerFile" | "indexWorkerFile" | "workerExecArgv" | "pollMs" | "batch" | "testFlags" | "autoRebuild">>;
   /** Online search providers (Phase 5). Tests shorten the retry pause. */
@@ -327,7 +334,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       const realFetcher = createFetcher({ userAgent, isOffline: () => connectivity.forced, bodyThrottle: () => limits.bandwidth.transform(), ...opts.captureFetcherOptions });
       const rawCapture: PipelineFetcher = opts.captureFetcher ?? (realFetcher as unknown as PipelineFetcher);
       // Every outcome feeds passive connectivity, and forced offline refuses the call, as for any outbound request.
-      const captureFetcher: PipelineFetcher = {
+      const guardedCapture: PipelineFetcher = {
         async fetch(url, o) {
           connectivity.assertCanReachInternet({ background: false });
           try {
@@ -340,6 +347,26 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
           }
         },
       };
+      // Wikipedia (Z-07): the one client that talks to Wikimedia. Article addresses and files on Wikimedia hosts go through it (identifying
+      // User-Agent from NCB_CONTACT, one request a second, one at a time); everything else takes the ordinary guarded path.
+      const wikiOrigin = opts.wikipedia?.origin ?? (config.NCB_WIKIPEDIA_ORIGIN || undefined);
+      const wikiClient = new WikipediaClient({
+        contact: config.NCB_CONTACT, version: VERSION, origin: wikiOrigin, minIntervalMs: opts.wikipedia?.minIntervalMs, minBackoffMs: opts.wikipedia?.minBackoffMs,
+        maxAttempts: opts.wikipedia?.maxAttempts, maxInlineWaitMs: opts.wikipedia?.maxInlineWaitMs, breaker: opts.wikipedia?.breaker, fetch: opts.wikipedia?.fetch,
+        gate: () => connectivity.assertCanReachInternet({ background: false }),
+        onNetwork: (ok) => connectivity.recordOutcome(ok ? { ok: true } : { ok: false, network: true }),
+        onRequest: (r) => {
+          try {
+            db.run(
+              `INSERT INTO usage_counters (kind, subject, period, count, bytes) VALUES ('wikipedia_requests', 'global', ?, 1, ?)
+               ON CONFLICT (kind, subject, period) DO UPDATE SET count = count + 1, bytes = bytes + excluded.bytes`,
+              [new Date(clock.now()).toISOString().slice(0, 10), r.bytes],
+            );
+          } catch { /* counting never stops a request */ }
+        },
+      });
+      const captureFetcher: PipelineFetcher = new WikipediaRoutedFetcher(guardedCapture, wikiClient, () => wikiOrigin);
+      let wikipediaRef: WikipediaService | undefined;
       const robots = new RobotsService({ fetcher: realFetcher, userAgentToken: "NoConBrain", now: () => Date.now() });
       const extractClient = new ExtractClient(pool);
       const collections = new CollectionService({ db, clock, activity });
@@ -350,7 +377,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       const deps = createPipelineDeps({
         db, clock, blobs, fetcher: captureFetcher, extract: extractClient, activity, events, queue, log: app.log,
         faults: opts.pipelineFaults, stageOverrides: opts.stageOverrides, onPageChanged: (id) => { collections.onPageChanged(id); storageRef?.priority.recomputePage(id); searchRef?.wake(); },
-        onVersionDone: (id, o) => render?.consider(id, o),
+        onVersionDone: (id, o) => { render?.consider(id, o); try { wikipediaRef?.afterVersion(id); } catch (e) { app.log.warn({ err: String(e), versionId: id }, "could not save Wikipedia attribution"); } },
       });
       render = new RenderService({
         deps,
@@ -397,12 +424,13 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       });
       zimRef = zim;
       zimServiceRef = zim;
+      const wikiZim = new WikipediaZim({ zim, source: zimSource, urlOptions: () => wikiClient.urlOptions });
       volumes.extraUsedBytes = (volumeId) => zim.usage(volumeId).copiedBytes;
       storage.usage.zim = zim;
       const zimSearch = new ZimSearch({ db, zim, source: zimSource });
       const zimContent = new ZimContent({ zim, source: zimSource });
       const store: CaptureStore = opts.archiveStore ?? new SqliteCaptureStore({
-        db, blobs, urlKey: deps.urlKey, connectivity: () => (connectivity.snapshot().state === "offline" ? "offline" : "online"), zim: zimContent,
+        db, blobs, urlKey: deps.urlKey, connectivity: () => (connectivity.snapshot().state === "offline" ? "offline" : "online"), zim: zimContent, wikipediaZim: wikiZim,
       });
       archive?.attach({ store });
 
@@ -419,7 +447,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         }
       };
       const refresh = new RefreshService({ db, clock, queue, pipeline, robots, activity, events, log: app.log });
-      const history = new HistoryService({ db, clock, settings, pipeline });
+      const history = new HistoryService({ db, clock, settings, pipeline, wikipediaZim: wikiZim });
       // Sitemaps and feeds are read through the same guarded fetcher as captures.
       const discoveryFetcher: DiscoveryFetcher = {
         fetch: async (url, o) => {
@@ -444,6 +472,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         onCollectionsChanged: (id) => collections.backfillSource(id),
         onReferencesChanged: (ids) => { storage.priority.recomputePages(ids); storage.usage.invalidate(); },
         refresh, previewRobots: robots, zim: { service: zim, source: zimSource },
+        wikipedia: { assertReady: () => wikiClient.assertReady(), parseStart: (u) => wikipediaRef!.parseStart(u) },
         freeBytes: () => {
           const room = volumes.list().filter((v) => v.state === "online").map((v) => Math.max(0, (v.statFree ?? 0) - v.reserveFreeBytes));
           return room.length ? Math.max(...room) : undefined;
@@ -453,8 +482,8 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       sources.ensureSystemSources();
       const imports = new ImportService({ deps, maxBytes: config.NCB_IMPORT_MAX_MB * 1024 * 1024, importsSourceId: () => sources.systemId("imports"), onImportStarted: (id) => sources.noteRunStarted(id) });
       collections.ensureFavourites();
-      const browser = new BrowserService({ db, clock, config, settings, connectivity, pipeline, archive, history, head, quickSavesSourceId: () => sources.systemId("quick_saves") });
-      const bookmarks = new BookmarksService({ db, clock, settings, pipeline, onReferencesChanged: (ids) => { storage.priority.recomputePages(ids); storage.usage.invalidate(); } });
+      const browser = new BrowserService({ db, clock, config, settings, connectivity, pipeline, archive, history, head, quickSavesSourceId: () => sources.systemId("quick_saves"), wikipediaZim: wikiZim });
+      const bookmarks = new BookmarksService({ db, clock, settings, pipeline, wikipediaZim: wikiZim, onReferencesChanged: (ids) => { storage.priority.recomputePages(ids); storage.usage.invalidate(); } });
       const library = new LibraryService({ db, clock, pipeline, browser, store, blobs, activity, collections });
       libraryRef = library;
       sourcesRef = sources;
@@ -475,11 +504,15 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         run: (rowId) => sources.runById(rowId, { requestedBy: "schedule" }).then(() => undefined),
       });
       schedules.recomputeAll(clock.now());
-      const crawl = new CrawlService({ db, clock, queue, activity, events, pipeline, robots, log: app.log });
+      const wikipedia = new WikipediaService({
+        db, clock, queue, blobs, pipeline, activity, client: wikiClient, zim: wikiZim, sources: () => sources, isOffline: () => connectivity.snapshot().state === "offline", log: app.log,
+      });
+      wikipediaRef = wikipedia;
+      const crawl = new CrawlService({ db, clock, queue, activity, events, pipeline, robots, adapters: { wikipedia: wikipedia.adapter() }, log: app.log });
       crawlRef = crawl;
       const runner = new JobRunner({
         queue, pool, activity, events, clock, log: app.log, pollMs: opts.runnerPollMs, leaseMs: opts.leaseMs,
-        mainHandlers: { ...crawl.mainHandlers({ ...pipeline.handlers, ...refresh.handlers }), ...render.handlers }, periodic: () => { scheduler.tick(); discoveryRef?.tick(); },
+        mainHandlers: { ...crawl.mainHandlers({ ...pipeline.handlers, ...refresh.handlers }), ...render.handlers, ...wikipedia.handlers() }, periodic: () => { scheduler.tick(); discoveryRef?.tick(); },
         mainConcurrency: () => limits.fetchConcurrency(),
       });
       const search = new SearchService({
@@ -503,6 +536,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       });
       search.online = online;
       search.zim = zimSearch;
+      search.wikipediaZim = wikiZim;
       onlineCloser = () => providerHttp.close();
       const coverage = new CoverageService({
         db, clock, online, sources, collections, pipeline, activity, startCrawl: (cfg) => crawl.startCrawl(cfg), profile: () => settings.internal("resources").profile, isOffline: netOffline,
@@ -560,7 +594,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
 
       svc = {
         config, clock, main, db, activity, auth, settings, volumes, blobs, storage, connectivity, fetcher, events, queue, runner, pipeline, imports, render, crawl,
-        archive, browser, bookmarks, history, library, sources, zim, zimSearch, zimSource, collections, schedules, scheduler, downloads, refresh, limits, search, providers, providerRunner, coverage, savedSources, discovery, throttle: new LoginThrottle(clock), guestMatcher,
+        archive, browser, bookmarks, history, library, sources, zim, zimSearch, zimSource, wikipedia, wikiZim, collections, schedules, scheduler, downloads, refresh, limits, search, providers, providerRunner, coverage, savedSources, discovery, throttle: new LoginThrottle(clock), guestMatcher,
       };
       state.attach(svc);
 

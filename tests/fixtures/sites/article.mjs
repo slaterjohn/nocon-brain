@@ -181,6 +181,14 @@ export async function startArticle({ appApiUrl = 'http://127.0.0.1:3000/api/evil
         body: `<main><h1>All articles</h1><ul>${ARTICLES.map((a) => `<li><a href="/${a.slug}">${esc(a.title)}</a> <small>${a.published.slice(0, 10)}</small></li>`).join('')}</ul></main>`,
       }));
     }
+    // A page that cites Wikipedia articles in several address forms (task Z-06: the links open the package copy offline).
+    if (p === '/cites-wikipedia') {
+      return html(res, layout(origin, {
+        title: 'Reading list: aromatic chemistry',
+        canonical: `${origin}/cites-wikipedia`,
+        body: `<main><h1>Reading list: aromatic chemistry</h1><p>Start with <a id="w-benzene" href="https://en.wikipedia.org/wiki/Benzene">Benzene</a>, then <a id="w-toluene" href="https://en.m.wikipedia.org/wiki/Toluene">Toluene</a> on a phone address, and <a id="w-index" href="https://en.wikipedia.org/w/index.php?title=Aromaticity">Aromaticity</a> by title. Not in any package: <a id="w-missing" href="https://en.wikipedia.org/wiki/Zirconium">Zirconium</a>.</p></main>`,
+      }));
+    }
     if (p === '/about') {
       return html(res, layout(origin, { title: 'About', canonical: `${origin}/about`, body: '<main><h1>About</h1><p>Fixture Gazette is not a real publication.</p></main>' }));
     }

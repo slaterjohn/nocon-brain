@@ -48,7 +48,25 @@ export interface SourceConfig {
   userAgentSuffix?: string;
   /** Sitemap and feed sources: how deep a sitemap index may nest. */
   sitemapMaxDepth: number;
+  /** Wikipedia sources (`adapter: "wikipedia"`, task Z-08): the language, images, link depth and the ZIM-first rule. */
+  wikipedia?: WikipediaSettings;
 }
+
+export interface WikipediaSettings {
+  language: string;
+  images: boolean;
+  /** How many links deep from the start article the crawl goes. Same number as `depth`. At most 3. */
+  linkedExpansionDepth: number;
+  preferZim: boolean;
+  skipDisambiguation: boolean;
+  skipLists: boolean;
+  skipYears: boolean;
+}
+
+/** Hard limits of a Wikipedia crawl, whatever the profile: more than this is better served by a downloaded package (docs/api.md 15.2). */
+export const WIKIPEDIA_MAX_DEPTH = 3;
+export const WIKIPEDIA_MAX_PAGES = 2000;
+export const WIKIPEDIA_DEFAULT_PAGES = 200;
 
 const versioning = z
   .object({
@@ -88,6 +106,15 @@ export const configInputSchema = z.object({
   maxLinksPerPage: num("Links per page", 1).max(5000).optional(),
   userAgentSuffix: z.string().trim().max(60).regex(/^[\w .\-/]*$/, "Use letters, numbers and . - / only").optional(),
   sitemapMaxDepth: num("Sitemap nesting", 0).max(5).optional(),
+  wikipedia: z.object({
+    language: z.string().trim().toLowerCase().regex(/^[a-z]{2,3}(?:-[a-z0-9]+)*$/, "Use a language code such as en or de").max(12).default("en"),
+    images: z.boolean().default(true),
+    linkedExpansionDepth: num("Link depth", 0).max(WIKIPEDIA_MAX_DEPTH, `Link depth can be at most ${WIKIPEDIA_MAX_DEPTH} for Wikipedia`).optional(),
+    preferZim: z.boolean().default(true),
+    skipDisambiguation: z.boolean().default(true),
+    skipLists: z.boolean().default(true),
+    skipYears: z.boolean().default(true),
+  }).optional(),
 });
 export type ConfigInput = z.infer<typeof configInputSchema>;
 
@@ -127,7 +154,7 @@ export interface SourceInput {
   name: string;
   description?: string;
   type: SourceType;
-  adapter: "http";
+  adapter: "http" | "wikipedia" | "import";
   startUrl?: string;
   strategy?: "capture" | "explore" | "mirror";
   profile: SourceProfile;
@@ -196,8 +223,14 @@ const sourceFields = {
 /** Checks that apply to a whole source (create, or the merged result of a patch). */
 export function refineSource(v: { type: string; adapter?: string; startUrl?: string; config: ConfigInput }, ctx: z.RefinementCtx, profile: ResourceProfile): void {
   if (LATER[v.type]) ctx.addIssue({ code: "custom", path: ["type"], message: LATER[v.type]! });
-  const adapterOk = !v.adapter || v.adapter === "http" || (v.type === "imported_documents" && v.adapter === "import");
-  if (!adapterOk) ctx.addIssue({ code: "custom", path: ["adapter"], message: "Only the web adapter is available in this release" });
+  const wikipedia = v.adapter === "wikipedia";
+  const adapterOk = !v.adapter || v.adapter === "http" || (v.type === "imported_documents" && v.adapter === "import") || (wikipedia && (v.type === "linked_collection" || v.type === "website"));
+  if (!adapterOk) ctx.addIssue({ code: "custom", path: ["adapter"], message: wikipedia ? "A Wikipedia source is a linked collection" : "Only the web and Wikipedia adapters are available in this release" });
+  if (wikipedia && !v.config.wikipedia) ctx.addIssue({ code: "custom", path: ["config", "wikipedia"], message: "Say which language to use, and whether to save images" });
+  if (wikipedia) {
+    if ((v.config.depth ?? 0) > WIKIPEDIA_MAX_DEPTH) ctx.addIssue({ code: "custom", path: ["config", "depth"], message: `Depth can be at most ${WIKIPEDIA_MAX_DEPTH} for Wikipedia. Pages multiply with every level; a downloaded Wikipedia package is the better way to keep more.` });
+    if ((v.config.maxPages ?? 0) > WIKIPEDIA_MAX_PAGES) ctx.addIssue({ code: "custom", path: ["config", "maxPages"], message: `Maximum pages can be at most ${WIKIPEDIA_MAX_PAGES.toLocaleString("en-GB")} for Wikipedia. For more, add a Wikipedia knowledge package instead.` });
+  }
   if (v.type === "imported_documents" && v.startUrl) ctx.addIssue({ code: "custom", path: ["startUrl"], message: "Imported-document sources take uploaded files, not a web address" });
   if (WEB_TYPES.has(v.type)) {
     if (!v.startUrl) ctx.addIssue({ code: "custom", path: ["startUrl"], message: "Enter the address to start from" });
@@ -290,6 +323,21 @@ export function resolveConfig(input: ConfigInput, type: SourceType, profile: Sou
     } catch {
       /* the URL was validated before this point */
     }
+  }
+  if (input.wikipedia) {
+    // A Wikipedia crawl: a few levels of article links from one article. Depth and the link-depth setting are one number.
+    const w = input.wikipedia;
+    c.depth = Math.min(input.depth ?? w.linkedExpansionDepth ?? 1, WIKIPEDIA_MAX_DEPTH);
+    c.maxPages = Math.min(input.maxPages ?? WIKIPEDIA_DEFAULT_PAGES, WIKIPEDIA_MAX_PAGES);
+    c.maxBytes = input.maxBytes ?? Math.min(c.maxBytes, 512 * 1024 * 1024);
+    c.includeExternal = false;
+    c.externalDepth = 0;
+    c.assets = w.images ? "same_origin" : "none";
+    // The pace of requests to Wikipedia is kept by the Wikipedia client (one a second, one at a time), not by the per-site delay.
+    c.perDomainDelayMs = input.perDomainDelayMs ?? 0;
+    c.respectRobots = true;
+    c.maxLinksPerPage = Math.min(input.maxLinksPerPage ?? c.maxPages * 2, 2000);
+    c.wikipedia = { language: w.language, images: w.images, linkedExpansionDepth: c.depth, preferZim: w.preferZim, skipDisambiguation: w.skipDisambiguation, skipLists: w.skipLists, skipYears: w.skipYears };
   }
   // A preset is clamped to the ceilings; explicit values were already refused above them.
   c.depth = Math.min(c.depth, ceilings.depth);

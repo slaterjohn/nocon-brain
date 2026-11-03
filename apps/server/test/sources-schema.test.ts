@@ -49,8 +49,23 @@ describe("C-06 source validation", () => {
     }
   });
 
-  it("refuses non-http adapters until they exist", () => {
-    expect(fieldsOf(sourceInputSchema("standard"), { ...base, adapter: "wikipedia" }).map((f) => f.path)).toContain("adapter");
+  it("refuses adapters that do not fit the source", () => {
+    // Wikipedia is for linked collections and needs its own settings; zim is created through knowledge-package sources.
+    expect(fieldsOf(sourceInputSchema("standard"), { ...base, type: "sitemap", adapter: "wikipedia" }).map((f) => f.path)).toContain("adapter");
+    expect(fieldsOf(sourceInputSchema("standard"), { ...base, adapter: "zim" }).map((f) => f.path)).toContain("adapter");
+    const wiki = { name: "W", type: "linked_collection", adapter: "wikipedia", startUrl: "https://en.wikipedia.org/wiki/Benzene", config: { wikipedia: { language: "en" } } };
+    expect(fieldsOf(sourceInputSchema("standard"), wiki)).toEqual([]);
+    expect(fieldsOf(sourceInputSchema("standard"), { ...wiki, config: {} }).map((f) => f.path)).toContain("config.wikipedia");
+  });
+
+  it("holds a Wikipedia source to depth 3 and 2,000 pages", () => {
+    const wiki = { name: "W", type: "linked_collection", adapter: "wikipedia", startUrl: "https://en.wikipedia.org/wiki/Benzene" };
+    const w = { language: "en" };
+    expect(fieldsOf(sourceInputSchema("standard"), { ...wiki, config: { depth: 4, wikipedia: w } }).map((f) => f.path)).toEqual(["config.depth"]);
+    expect(fieldsOf(sourceInputSchema("standard"), { ...wiki, config: { maxPages: 2001, wikipedia: w } }).map((f) => f.path)).toEqual(["config.maxPages"]);
+    expect(fieldsOf(sourceInputSchema("standard"), { ...wiki, config: { depth: 3, maxPages: 2000, wikipedia: w } })).toEqual([]);
+    const c = resolveConfig({ wikipedia: { language: "de", images: false, linkedExpansionDepth: 2, preferZim: true, skipDisambiguation: true, skipLists: true, skipYears: true } }, "linked_collection", "custom", "standard", "https://de.wikipedia.org/wiki/Benzol");
+    expect(c).toMatchObject({ depth: 2, maxPages: 200, includeExternal: false, assets: "none", wikipedia: { language: "de", images: false, linkedExpansionDepth: 2 } });
   });
 
   it("gives one field message per bad value", () => {

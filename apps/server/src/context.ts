@@ -36,6 +36,7 @@ import type { DiscoveryService } from "./discovery/service.js";
 import type { ZimService } from "./zim/service.js";
 import type { ZimSearch } from "./zim/search.js";
 import type { WorkerZimSource } from "./zim/source.js";
+import type { WikipediaService, WikipediaZim } from "./wikipedia/index.js";
 
 /** Everything that exists once the database is open and migrated. */
 export interface Services {
@@ -70,6 +71,9 @@ export interface Services {
   zim: ZimService;
   zimSearch: ZimSearch;
   zimSource: WorkerZimSource;
+  /** Wikipedia (tasks Z-06 to Z-08): the client, the crawl adapter and attribution; and the map from Wikipedia articles to package entries. */
+  wikipedia: WikipediaService;
+  wikiZim: WikipediaZim;
   collections: CollectionService;
   schedules: ScheduleService;
   scheduler: Scheduler;

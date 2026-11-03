@@ -19,6 +19,7 @@ import { downloadRoutes } from "./routes/downloads.js";
 import { scheduleRoutes } from "./routes/schedules.js";
 import { discoveryRoutes } from "./routes/discovery.js";
 import { zimRoutes } from "./routes/zim.js";
+import { wikipediaRoutes } from "./routes/wikipedia.js";
 import { searchRoutes } from "./routes/search.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { sourceRoutes } from "./routes/sources.js";
@@ -252,6 +253,7 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
     scheduleRoutes(a, state);
     discoveryRoutes(a, state);
     zimRoutes(a, state);
+    wikipediaRoutes(a, state);
   });
 
   return app;

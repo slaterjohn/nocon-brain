@@ -1,7 +1,8 @@
 import { Readable } from "node:stream";
 import { decodeHtml } from "@ncb/content";
 import type { Db } from "@ncb/db";
-import type { AssetHandle, CaptureStore, DocumentBody, LinkTarget, ReaderBody, ResourceRef, VersionRef, ZimEntry, ZimPackageRef } from "../archive/store.js";
+import type { AssetHandle, CaptureStore, DocumentBody, LinkTarget, PageAttribution, ReaderBody, ResourceRef, VersionRef, ZimEntry, ZimPackageRef } from "../archive/store.js";
+import type { WikipediaZim } from "../wikipedia/zim-map.js";
 import type { ZimContent } from "../zim/content.js";
 import type { BlobStore } from "../services/blobs.js";
 
@@ -13,6 +14,8 @@ export interface SqliteCaptureStoreOptions {
   connectivity(): "online" | "offline";
   /** Knowledge packages (Phase 8). Without it the listener answers every `z/` URL with its "not available" page. */
   zim?: ZimContent;
+  /** Maps Wikipedia addresses to entries of an enabled Wikipedia package (task Z-06): a link to an article that is not archived opens the package copy. */
+  wikipediaZim?: WikipediaZim;
 }
 
 interface VRow {
@@ -23,6 +26,29 @@ interface VRow {
   headers_json: string | null;
   id: number;
   title: string | null;
+}
+
+function fileLabel(pageUrl: string): string {
+  const tail = pageUrl.replace(/^.*\/wiki\//, "");
+  try { return decodeURIComponent(tail).replace(/_/g, " "); } catch { return tail.replace(/_/g, " "); }
+}
+
+/** The attribution of a version (licence, source, history, revision, date and the credits of its images), or null when it has none. */
+export function readAttribution(db: Db, versionId: string): PageAttribution | null {
+    const a = db.get<{ id: number; license_name: string | null; license_url: string | null; source_url: string | null; revision_id: string | null; history_url: string | null; credit_text: string | null; fetched_at: number }>(
+      `SELECT v.id, a.license_name, a.license_url, a.source_url, a.revision_id, a.history_url, a.credit_text, v.fetched_at
+       FROM page_versions v JOIN page_attributions a ON a.version_id = v.id WHERE v.public_id = ?`, [versionId]);
+    if (!a) return null;
+    const images = db.all<{ url: string; author: string | null; license_name: string | null; license_url: string | null; source_page_url: string | null }>(
+      `SELECT vr.url, aa.author, aa.license_name, aa.license_url, aa.source_page_url FROM version_resources vr JOIN asset_attributions aa ON aa.asset_id = vr.asset_id
+       WHERE vr.version_id = ? AND vr.status = 'ok' ORDER BY vr.id LIMIT 200`, [a.id]);
+    return {
+      licenseName: a.license_name, licenseUrl: a.license_url, sourceUrl: a.source_url, revisionId: a.revision_id, historyUrl: a.history_url, creditText: a.credit_text, retrievedAt: a.fetched_at,
+      images: images.map((i) => ({
+        file: i.source_page_url ? fileLabel(i.source_page_url) : null, url: i.url, author: i.author, licenseName: i.license_name,
+        licenseUrl: i.license_url, sourcePageUrl: i.source_page_url,
+      })),
+    };
 }
 
 const VERSION_SQL = `SELECT v.id, v.public_id, p.public_id AS page_pid, v.status, v.final_url, v.headers_json, v.title
@@ -107,6 +133,8 @@ export class SqliteCaptureStore implements CaptureStore {
   async lookupLinks(urls: string[]): Promise<Map<string, LinkTarget>> {
     const out = new Map<string, LinkTarget>();
     const { db } = this.o;
+    // One look for the whole batch: without a Wikipedia package nothing below touches the package map.
+    const wz = this.o.wikipediaZim?.hasAny() ? this.o.wikipediaZim : undefined;
     for (const u of urls) {
       let key: string;
       try {
@@ -121,11 +149,21 @@ export class SqliteCaptureStore implements CaptureStore {
         out.set(u, { kind: "page", pageId: p.public_id, status: p.status });
         continue;
       }
+      // Not archived: a Wikipedia article that an enabled package holds opens the package copy.
+      const z = wz ? await wz.findUrl(u) : undefined;
+      if (z) {
+        out.set(u, { kind: "zim", zimId: z.zimId, path: z.path });
+        continue;
+      }
       const queued = db.get<{ n: number }>("SELECT COUNT(*) AS n FROM jobs WHERE type = 'fetch' AND url_key = ? AND state IN ('queued','running','held')", [key])!.n;
       if (queued > 0) out.set(u, { kind: "queued" });
       else if (p) out.set(u, { kind: "unavailable" });
     }
     return out;
+  }
+
+  async readAttribution(versionId: string): Promise<PageAttribution | null> {
+    return readAttribution(this.o.db, versionId);
   }
 
   connectivity(): "online" | "offline" {

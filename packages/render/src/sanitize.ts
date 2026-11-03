@@ -20,7 +20,7 @@ export interface SanitizeOptions extends RewriteCallbacks {
   baseUrl: string;
   maxDataUriBytes?: number;
   /** Trusted markup added after sanitising: `head` at the end of `<head>`, `bodyStart` at the start of `<body>`. */
-  inject?: { head?: string; bodyStart?: string };
+  inject?: { head?: string; bodyStart?: string; /** After the last child of `<body>`: a page's attribution footer. */ bodyEnd?: string };
   /** Return only the children of `<body>` (for reader content that is wrapped by the caller). */
   bodyOnly?: boolean;
   /** Re-parse the output and check it contains no script-capable construct (default true). */
@@ -506,6 +506,7 @@ export function sanitizeHtml(input: string, opts: SanitizeOptions): SanitizeResu
   if (hits > 0 && head) injectMarkup(head, `<style data-ncb="hl">${HIGHLIGHT_CSS}</style>`, false);
   if (opts.inject?.head && head) injectMarkup(head, opts.inject.head, false);
   if (opts.inject?.bodyStart && body) injectMarkup(body, opts.inject.bodyStart, true);
+  if (opts.inject?.bodyEnd && body) injectMarkup(body, opts.inject.bodyEnd, false);
 
   // A parser-built tree does not always survive serialise-then-parse (misnested <p> in tables, forms and so on).
   // Re-parse until the markup is a fixpoint, so what the browser builds is what was checked.

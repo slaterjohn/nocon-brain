@@ -1,7 +1,7 @@
 import type { Db } from "@ncb/db";
 import type { Clock, PriorityNumber } from "@ncb/shared";
 import { newId } from "@ncb/shared";
-import { CrawlConfigError, resolveCrawlConfig, type CrawlConfig } from "@ncb/crawl";
+import { CrawlConfigError, LINK_REGIONS, NO_MIN_SCORE, resolveCrawlConfig, type CrawlConfig } from "@ncb/crawl";
 import { AppError } from "@ncb/shared";
 import type { SourceConfig } from "./schema.js";
 
@@ -63,6 +63,7 @@ export type CrawlConfigRequest = Omit<CrawlRequest, "sourceId" | "sourcePublicId
 /** Turns a source-style config into the crawl engine's config, with explicit limits, so the engine applies exactly the numbers shown. */
 export function toCrawlConfig(req: CrawlConfigRequest, resource: "pi-lite" | "standard"): CrawlConfig {
     const c = req.config;
+    const w = c.wikipedia;
     try {
       return resolveCrawlConfig({
       startUrls: req.seeds,
@@ -73,15 +74,20 @@ export function toCrawlConfig(req: CrawlConfigRequest, resource: "pi-lite" | "st
       configId: req.configId,
       priority: req.priority,
       requestedBy: req.requestedBy,
-      capture: { priority: req.priority, versioning: c.versioning },
+      capture: { priority: req.priority, versioning: c.versioning, ...(w ? { caps: { maxImages: w.images ? 1_000_000 : 0 } } : {}) },
+      ...(w ? { wikipedia: { language: w.language, images: w.images, preferZim: w.preferZim, skipDisambiguation: w.skipDisambiguation, skipLists: w.skipLists, skipYears: w.skipYears } } : {}),
       overrides: {
         limits: { maxPages: c.maxPages, maxBytes: c.maxBytes, maxDurationMs: c.maxDurationSeconds * 1000 },
         scope: {
           maxDepth: c.depth, externalDepth: c.includeExternal ? c.externalDepth : 0,
-          allowedDomains: c.allowedDomains, excludedDomains: c.excludedDomains, allowedPaths: c.allowedPaths, excludedPaths: c.excludedPaths,
+          allowedDomains: c.allowedDomains, excludedDomains: c.excludedDomains, allowedPaths: w ? ["/wiki"] : c.allowedPaths, excludedPaths: c.excludedPaths,
+          ...(w ? { internal: "host" as const, maxQueryParams: 6 } : {}),
         },
-        query: { policy: c.queryParamPolicy, allowParams: c.queryParamAllowlist },
+        // Wikipedia: the articles of one site, every link region (the lead section is ranked first by the adapter), and queries kept so that
+        // edit and red links are recognised and skipped rather than folded onto the article.
+        query: w ? { policy: "keep_all", allowParams: [] } : { policy: c.queryParamPolicy, allowParams: c.queryParamAllowlist },
         links: {
+          ...(w ? { regions: [...LINK_REGIONS], minScore: NO_MIN_SCORE } : {}),
           maxLinksPerPage: c.maxLinksPerPage,
           weights: { region: Object.fromEntries(Object.entries(c.linkWeights).map(([k, v]) => [k === "main" ? "content" : k, v])) },
         },

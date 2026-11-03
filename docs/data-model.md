@@ -630,6 +630,19 @@ Code: `apps/server/src/zim` (reader protocol and process, `ZimSource`, registry 
 - **Search.** Packages are not in `index.db`; their lists are fetched per search and fused in memory (api.md 6.3).
 - **Activity log.** Area `zim`.
 
+### 5.10 Unified browsing and Wikipedia (tasks Z-06 to Z-08; no new migration)
+
+Code: `apps/server/src/wikipedia` (URL rules, Parsoid link and image extraction, the client, the routed fetcher, the package map, the service and the crawl adapter), `apps/server/src/routes/wikipedia.ts`. The contract is [api.md section 15.2](api.md#152-wikipedia-phase-8-as-built-tasks-z-07-and-z-08) and [section 3](api.md#3-browser). Existing tables carry all of it:
+
+- **Pages.** A saved Wikipedia article is an ordinary `pages` row: `canonical_url` is `https://<lang>.wikipedia.org/wiki/<Title>` (the address the Human types, so browsing, bookmarks and search see one page), `origin = 'wikipedia'` and `language` are set when the first version finishes. `page_versions.headers_json` keeps `x-ncb-source: wikipedia`, `x-revision-id` and the REST `ETag`, which is what a refresh sends back (`etag`/`last_modified` columns are filled as for any page).
+- **`page_attributions`** (one row per version): `license_name` `CC BY-SA 4.0`, `license_url`, `source_url` (the article), `revision_id`, `history_url` (`/w/index.php?title=...&action=history`), `credit_text`. The listener footer and `GET /api/archive/versions/{id}` read it. Written when the version's pipeline finishes (`onVersionDone`), also on a refresh that stores a new version.
+- **`asset_attributions`** (one row per image asset): `author`, `license_name`, `license_url`, `source_page_url` (the file page), from `imageinfo` extmetadata. Written by a `wikipedia_fetch` job (queue `crawl`, `version_id` set, no host: the client's limiter is the throttle; idempotency key `wikipedia_images:<version>`), which is enqueued only for versions that saved images. Assets are shared by content, so the row belongs to the image, not to one page.
+- **Sources.** A topic crawl is `sources.adapter = 'wikipedia'`, `type = 'linked_collection'`; its settings are `config_json.wikipedia = { language, images, linkedExpansionDepth, preferZim, skipDisambiguation, skipLists, skipYears }`. The run is a `download_jobs` row of kind `explore` plus a `crawl_jobs` row whose `config_json.wikipedia` makes the engine use the Wikipedia adapter. Skips by reason are in `crawl_skips` (`wikipedia:in_zim`, `wikipedia:disambiguation`, `wikipedia:list`, `wikipedia:year`, `wikipedia:not_article`, `wikipedia:other_language`). Capture caps gain `maxImages` (0 keeps a page text-only; images are recorded as skipped assets with `error_code = 'images_off'`).
+- **Bookmarks.** `bookmarks.zim_package_id` (the package's row id) and `zim_path` are now written: for a Wikipedia address held by an enabled package, and for `{ zimId, zimPath }` bookmarks. `url_key` of a package-only bookmark is `zim:<zimId>:<path>` and `original_url` is `zim://<zimId>/<path>`; one live bookmark per user and key still holds.
+- **History.** `history_entries.zim_package_id` and `served_from = 'zim'` are written for a visit to a package entry. The entry path is not a column: it is the title of the Wikipedia address in `url`, or the path in a `zim://<zimId>/<path>` address, and `GET /api/history` returns it as `zim.path`.
+- **`usage_counters`** (`wikipedia_requests`, subject `global`, period `YYYY-MM-DD`): requests that left the machine for Wikimedia, and their bytes.
+- **Not stored:** the mapping from a Wikipedia address to a package entry. It is looked up when asked (`hasEntry` on the package's reader process) and cached in memory by package and path, because a ZIM never changes.
+
 ## 6. Search index database (`index.db`)
 
 Derived entirely from `main.db` content. Opened by two worker threads only: `index` (writer) and `search` (read-only). Path `${NCB_DATA_DIR}/index/index.db`.

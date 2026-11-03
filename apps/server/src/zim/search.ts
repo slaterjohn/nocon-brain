@@ -22,6 +22,8 @@ export interface ZimHit {
   snippet: string;
   /** 1-based position in the package's own list. */
   rank: number;
+  /** Public id of the archived page that is the same Wikipedia article (task Z-06). In a mixed list the archived copy stands for it and this hit is left out. */
+  archivedAs?: string;
 }
 
 export interface ZimGroup {

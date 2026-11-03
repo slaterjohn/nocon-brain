@@ -8,6 +8,7 @@ import type { PageDetail, PipelineService, VersionDetail } from "../pipeline/ser
 import type { ConnectivityService } from "./connectivity.js";
 import type { SettingsService } from "./settings.js";
 import type { HistoryService } from "./bookmarks.js";
+import type { WikipediaZim } from "../wikipedia/zim-map.js";
 
 /** The `sandbox` attribute value for the archived-content iframe. No `allow-scripts`, no `allow-same-origin` (A-14). */
 export const FRAME_SANDBOX = "allow-popups allow-popups-to-escape-sandbox";
@@ -64,9 +65,18 @@ export interface FrameInfo {
   sandbox: string;
 }
 
+/** The knowledge package that holds an entry (docs/api.md section 15). */
+export interface ZimSummary {
+  id: string;
+  title: string;
+  language: string | null;
+}
+
 export type Resolution =
   | { kind: "search"; query: string }
   | { kind: "archive"; page: PageSummary; version: ApiVersionSummary; mode: "original" | "reader"; frame: FrameInfo }
+  /** A Wikipedia article address that an enabled Wikipedia package holds (task Z-06): opened from the package, offline. */
+  | { kind: "zim"; zim: ZimSummary; path: string; title: string; frame: FrameInfo }
   | { kind: "live"; url: string; frameable: boolean | "unknown"; canSave: true; queued?: { downloadId: string } }
   | {
       kind: "offline"; url: string; reason: "offline" | "forced_offline" | "blocked" | "not_archived"; canQueue: boolean;
@@ -155,6 +165,8 @@ export interface BrowserServiceOptions {
   quickSavesSourceId?: () => number;
   /** A guarded `HEAD`; the server wires `@ncb/fetch` through the connectivity guard. */
   head(url: string, signal?: AbortSignal): Promise<Pick<FetchResult, "status" | "finalUrl" | "headers">>;
+  /** Maps a Wikipedia article address to an entry of an enabled Wikipedia package (task Z-06). */
+  wikipediaZim?: WikipediaZim;
 }
 
 /**
@@ -174,6 +186,8 @@ export class BrowserService {
     o.archive?.frames.onRecord((frameId, fs) => {
       if ((fs.userId ?? 0) > 0 && !fs.interstitial && fs.pageId && fs.url) {
         this.o.history.recordFromFrame(fs.userId!, frameId, fs.seq ?? fs.at, { url: fs.url, title: fs.title ?? "", pageId: fs.pageId });
+      } else if ((fs.userId ?? 0) > 0 && fs.state === "zim" && fs.zimId && fs.zimPath !== undefined && fs.url) {
+        this.o.history.recordZimFromFrame(fs.userId!, frameId, fs.seq ?? fs.at, { url: fs.url, title: fs.title ?? "", zimId: fs.zimId, path: fs.zimPath });
       }
     });
   }
@@ -286,13 +300,13 @@ export class BrowserService {
 
   // ---- resolve -------------------------------------------------------------------------------
 
-  resolve(input: {
+  async resolve(input: {
     userId: number;
     input: string;
-    prefer?: "archive" | "live" | "reader";
+    prefer?: "archive" | "live" | "reader" | "zim";
     versionId?: string;
     forwardedHost?: string;
-  }): ResolveResponse {
+  }): Promise<ResolveResponse> {
     const conn = this.connectivityState();
     const kind = classifyInput(input.input);
     if (kind.kind === "unsupported") {
@@ -329,17 +343,31 @@ export class BrowserService {
     const preferCached = (this.o.settings.internal("browser") as { preferCached?: boolean }).preferCached !== false;
     const wantLive = input.prefer === "live" || (input.prefer === undefined && !preferCached);
 
+    // The same article in an enabled Wikipedia package (task Z-06). Only Wikipedia addresses are looked up, and only when a package is installed.
+    const zim = this.o.wikipediaZim?.hasAny() ? await this.o.wikipediaZim.findUrl(display).catch(() => undefined) : undefined;
+
     const alternatives: ResolveResponse["alternatives"] = [];
     if (usable) alternatives.push("archive", "reader");
+    if (zim) alternatives.push("zim");
     if (online) alternatives.push("live");
 
-    // 3. Cached: open the archived copy, unless the Human asked for the live site and it can be reached.
-    if (usable && !(wantLive && online)) {
+    // 3. Cached: open the archived copy, unless the Human asked for the live site and it can be reached (or asked for the package copy).
+    if (usable && !(wantLive && online) && !(zim && input.prefer === "zim")) {
       const mode = input.prefer === "reader" && usable.version.content.readerSha256 ? "reader" : "original";
       const frame = this.mintFrame({ userId: input.userId, pageId: usable.page.publicId, versionId: input.versionId ? usable.version.publicId : undefined, mode, forwardedHost: input.forwardedHost });
       return {
         normalizedUrl: display, urlKey, connectivity: conn, alternatives,
         resolution: { kind: "archive", page: this.pageSummary(usable.page), version: this.versionSummary(usable.version), mode, frame },
+      };
+    }
+
+    // 3b. The package copy of a Wikipedia article: offline it is the answer; online it wins over the live site unless the Human asked for that.
+    if (zim && !(wantLive && online)) {
+      const frame = this.mintFrame({ userId: input.userId, zimId: zim.zimId, zimPath: zim.path, forwardedHost: input.forwardedHost });
+      const pkg = this.o.db.get<{ title: string; language: string | null }>("SELECT title, language FROM zim_packages WHERE public_id = ?", [zim.zimId]);
+      return {
+        normalizedUrl: display, urlKey, connectivity: conn, alternatives,
+        resolution: { kind: "zim", zim: { id: zim.zimId, title: pkg?.title ?? zim.title, language: pkg?.language ?? zim.language }, path: zim.path, title: zim.target.title.replace(/_/g, " "), frame },
       };
     }
 
@@ -424,6 +452,8 @@ export class BrowserService {
       raw === "zim" ? "zim" : raw === "ready" ? "cached" : raw === "partial" ? "partial" : raw === "live-only" ? "live_only" : raw === "queued" ? "queued" : "unavailable";
     if (userId > 0 && !fs.interstitial && fs.pageId) {
       this.o.history.recordFromFrame(userId, frameId, fs.seq ?? fs.at, { url: fs.url, title: fs.title ?? "", pageId: fs.pageId });
+    } else if (userId > 0 && raw === "zim" && fs.zimId && fs.zimPath !== undefined) {
+      this.o.history.recordZimFromFrame(userId, frameId, fs.seq ?? fs.at, { url: fs.url, title: fs.title ?? "", zimId: fs.zimId, path: fs.zimPath });
     }
     return {
       frameId, url: fs.url, ...(fs.title ? { title: fs.title } : {}), state,

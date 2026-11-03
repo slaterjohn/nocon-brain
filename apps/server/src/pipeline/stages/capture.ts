@@ -102,6 +102,7 @@ export const assets: StageFn = async (ctx) => {
   const existing = db.all<{ referenced_url: string; asset_id: number }>("SELECT referenced_url, asset_id FROM asset_references WHERE version_id = ? AND role <> 'document'", [v.id]);
   for (const e of existing) done.set(e.referenced_url, e.asset_id);
   let attempted = done.size;
+  let images = 0;
   let totalBytes = db.get<{ n: number }>(
     "SELECT COALESCE(SUM(a.size_bytes), 0) AS n FROM asset_references r JOIN assets a ON a.id = r.asset_id WHERE r.version_id = ? AND r.role <> 'document'", [v.id])!.n;
   const stats = { fetched: 0, reused: existing.length, failed: 0, blocked: 0, skipped: 0, capHit: false as boolean | string };
@@ -134,7 +135,13 @@ export const assets: StageFn = async (ctx) => {
       done.set(p.url, recordAsset(ctx, { url: p.url, urlKey: key, role: p.role, viaAssetId: p.viaAssetId, status: "skipped", errorCode: "cap", errorMessage: `per-capture ${stats.capHit} cap reached` }, p.url));
       return;
     }
+    if (p.role === "image" && images >= caps.maxImages) {
+      stats.skipped++;
+      done.set(p.url, recordAsset(ctx, { url: p.url, urlKey: key, role: p.role, viaAssetId: p.viaAssetId, status: "skipped", errorCode: "images_off", errorMessage: "images are not saved for this capture" }, p.url));
+      return;
+    }
     attempted++;
+    if (p.role === "image") images++;
     try {
       const res = await fetcher.fetch(p.url, { maxBytes: Math.min(caps.maxAssetBytes, caps.maxTotalAssetBytes - totalBytes), accept: ["*/*"], signal: ctx.signal });
       if (res.status < 200 || res.status > 299) {

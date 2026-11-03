@@ -146,7 +146,7 @@ Atomic finalisation: stages 1 to 14 write only to the new `page_versions` row (s
  normalise (WHATWG URL, tracking strip, fragment strip) -> url_key
       |
       +-> 1 archive  : page with ready/partial version, any non-cache source
-      +-> 2 zim      : URL maps to an enabled ZIM entry (e.g. Wikipedia)
+      +-> 2 zim      : URL maps to an enabled ZIM entry (a Wikipedia address and a Wikipedia package of that language; api.md section 3)
       +-> 3 cache    : page held only by the "Browsing cache" system source (P4)
       +-> 4 live     : connectivity online -> "Open live" (new tab) or optional frame
       +-> 5 offline  : static offline page; offer "Queue for download"
@@ -401,7 +401,8 @@ Graceful shutdown (`SIGTERM`): stop claiming jobs, stop accepting new requests, 
 | Resources | `NCB_RESOURCE_PROFILE` | `pi-lite` on ARM64, else `standard` | Preset for the next group |
 | | `NCB_MAX_FETCH_CONCURRENCY`, `NCB_PER_HOST_CONCURRENCY`, `NCB_EXTRACT_WORKERS`, `NCB_WORKER_MEMORY_MB`, `NCB_BANDWIDTH_LIMIT_KBPS` | profile | Overrides |
 | | `NCB_SERVER_MEMORY`, `NCB_WEB_MEMORY`, `NCB_SERVER_CPUS` | profile | Compose limits |
-| Crawl | `NCB_CONTACT` | required for Wikipedia and polite UA | Contact string in the User-Agent (`NoConBrain/<ver> (+<repo>; <contact>)`) |
+| Crawl | `NCB_CONTACT` | none; required for Wikipedia | A web address or an email address of the person who runs the server. Wikipedia and Wikimedia requests carry it in the User-Agent (`NoConBrain/<ver> (<contact>; <repo>)`); without it there are no Wikipedia requests (api.md 15.2) |
+| | `NCB_WIKIPEDIA_ORIGIN` | empty | Replaces `https://<language>.wikipedia.org` (a mirror, or the fake server of the tests). The pace and the contact rule still apply |
 | | `NCB_CRAWL_DEFAULT_DELAY_MS`, `NCB_CRAWL_MAX_PAGES`, `NCB_CRAWL_MAX_DEPTH`, `NCB_CRAWL_MAX_BYTES_PER_CAPTURE`, `NCB_RESPECT_ROBOTS` | profile | Defaults for new sources |
 | | `NCB_PRIVATE_NETWORK_ALLOWLIST` | empty | Operator allowlist for intentional LAN crawling; off by default |
 | Providers | `NCB_SEARXNG_URL`, `NCB_BRAVE_API_KEY`, `NCB_MOJEEK_API_KEY` | empty | Seed provider rows on first start only; the app works with none |

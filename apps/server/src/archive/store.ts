@@ -69,6 +69,21 @@ export interface ZimPackageRef {
   language?: string | null;
   licenseName?: string | null;
   attribution?: string | null;
+  /** For a Wikipedia package: the web address of an entry (`https://en.wikipedia.org/wiki/Benzene`), shown in the address bar and kept in History. */
+  webUrl?(path: string): string | null;
+}
+
+/** The credit a page carries (CC BY-SA and similar): where the text came from, under which licence, and who made each image. */
+export interface PageAttribution {
+  licenseName: string | null;
+  licenseUrl: string | null;
+  sourceUrl: string | null;
+  revisionId: string | null;
+  historyUrl: string | null;
+  creditText: string | null;
+  /** When the copy was made (the version's fetch time, ms). */
+  retrievedAt: number;
+  images: { file: string | null; url: string | null; author: string | null; licenseName: string | null; licenseUrl: string | null; sourcePageUrl: string | null }[];
 }
 
 export interface CaptureStore {
@@ -86,6 +101,8 @@ export interface CaptureStore {
   connectivity(): "online" | "offline";
   /** Called in batches with the version ids served since the last flush (`last_accessed_at`). */
   touchVersions(versionIds: string[], atMs: number): Promise<void> | void;
+  /** The attribution footer data of a version, when it has any (Wikipedia pages do). */
+  readAttribution?(versionId: string): Promise<PageAttribution | null>;
   getZimEntry?(zimId: string, path: string): Promise<ZimEntry | null>;
   /** The package behind a `z/{zimId}` URL, or null when it is unknown, not ready or not open. */
   zimPackage?(zimId: string): Promise<ZimPackageRef | null>;

@@ -17,6 +17,11 @@ import type { OnlineSearch } from "../online/session.js";
 import { fuse, type RankedList } from "../online/rrf.js";
 import type { ZimSearch, ZimGroup, ZimHit, ZimSearchOutput } from "../zim/search.js";
 import { zimUrl } from "../zim/search.js";
+import { twoLetterLanguage } from "../zim/languages.js";
+import type { WikipediaZim } from "../wikipedia/zim-map.js";
+import { isWikipediaPackage } from "../wikipedia/zim-map.js";
+import { articleUrl } from "../wikipedia/url.js";
+import { normaliseUrl } from "@ncb/fetch";
 import type { CheckReport, FromIndexWorker, FromSearchWorker, IndexCommand, IndexStatusReply, IndexWorkerData, SearchReply, SearchRequest, SearchWorkerData } from "./protocol.js";
 
 const iso = (n: number | null | undefined): string | undefined => (n == null ? undefined : new Date(n).toISOString());
@@ -136,6 +141,8 @@ export class SearchService {
   online?: OnlineSearch;
   /** Set by the server: federated search over knowledge packages (Phase 8). */
   zim?: ZimSearch;
+  /** Set by the server: tells which package hits are Wikipedia articles, so an archived copy of the same article is not listed twice (Z-06). */
+  wikipediaZim?: WikipediaZim;
 
   constructor(private readonly o: SearchServiceOptions) {}
 
@@ -487,13 +494,40 @@ export class SearchService {
     if (!this.zim) return undefined;
     const set = this.o.settings.internal("search") as unknown as Record<string, number>;
     try {
-      return await this.zim.search(
+      const out = await this.zim.search(
         { query: b.query, languages: b.filters.languages, packages: b.zimIds, budgetMs: set.zimSearchBudgetMs!, maxPackages: set.zimMaxPackagesPerSearch!, hitsPerPackage: set.zimHitsPerPackage! },
         b.zim === "federated" ? "federated" : "unified",
       );
+      this.markArchivedWikipedia(out);
+      return out;
     } catch (e) {
       this.o.log.warn({ err: String(e) }, "package search failed");
       return undefined;
+    }
+  }
+
+  /**
+   * A Wikipedia package hit whose article is also archived (a saved Wikipedia page of the same language) is marked `archivedAs`. One indexed
+   * lookup per hit, only for Wikipedia packages, so it costs nothing when there are none.
+   */
+  private markArchivedWikipedia(zo: ZimSearchOutput): void {
+    const wz = this.wikipediaZim;
+    if (!wz) return;
+    for (const g of zo.groups) {
+      const lang = twoLetterLanguage(g.language);
+      if (!lang || g.hits.length === 0) continue;
+      const row = this.db.get<{ name: string; title: string; creator: string | null; publisher: string | null; source_url: string | null }>(
+        "SELECT name, title, creator, publisher, source_url FROM zim_packages WHERE public_id = ?", [g.zimId]);
+      if (!row || !isWikipediaPackage(row)) continue;
+      for (const h of g.hits) {
+        try {
+          const key = normaliseUrl(articleUrl({ lang, title: h.path }, wz.urlOptions()), { queryPolicy: "strip_tracking" }).key;
+          const p = this.db.get<{ public_id: string }>(
+            `SELECT p.public_id FROM pages p JOIN page_versions v ON v.id = p.latest_version_id WHERE v.status IN ('ready','partial')
+             AND p.id = COALESCE((SELECT id FROM pages WHERE url_key = ?), (SELECT page_id FROM page_aliases WHERE url_key = ?))`, [key, key]);
+          if (p) h.archivedAs = p.public_id;
+        } catch { /* a title that is not an address is simply not matched */ }
+      }
     }
   }
 
@@ -506,6 +540,7 @@ export class SearchService {
       fusedRank: fused?.rank ?? h.rank, fusedScore: fused ? Number(fused.score.toFixed(6)) : 0, storage: "persist" as const,
       actions: { open: url, saveForOffline: false },
       faviconUrl: this.zimIllustration(h.zimId), sourceName: g.title, collections: [],
+      ...(h.archivedAs ? { archivedAs: h.archivedAs } : {}),
     };
   }
 
@@ -523,11 +558,13 @@ export class SearchService {
     const wZim = set.rrfZimWeight!;
     const lists: RankedList[] = [];
     if (b.scope !== "zim") lists.push({ kind: "local", id: "archive", name: "Archive", weight: set.rrfLocalWeight!, keys: local.map((r) => String(r.key)) });
-    for (const g of zo.groups) if (g.hits.length) lists.push({ kind: "zim", id: g.zimId, name: g.title, weight: wZim, keys: g.hits.map((h) => h.key) });
+    // A package hit whose article is archived too is represented by the archived copy in a mixed list (not in the package-only view).
+    const dupe = (h: ZimHit) => !!h.archivedAs && b.scope !== "zim";
+    for (const g of zo.groups) if (g.hits.some((h) => !dupe(h))) lists.push({ kind: "zim", id: g.zimId, name: g.title, weight: wZim, keys: g.hits.filter((h) => !dupe(h)).map((h) => h.key) });
     const fused = fuse(lists, { k: set.rrfK!, topN: Math.max(set.onlineTopN!, set.zimHitsPerPackage!) });
     const byKey = new Map(fused.map((f) => [f.key, f]));
     const hitOf = new Map<string, { h: ZimHit; g: ZimGroup }>();
-    for (const g of zo.groups) for (const h of g.hits) hitOf.set(h.key, { h, g });
+    for (const g of zo.groups) for (const h of g.hits) if (!dupe(h)) hitOf.set(h.key, { h, g });
     const groups = zo.groups.map((g) => ({
       zimId: g.zimId, title: g.title, language: g.language, flavour: g.flavour, mode: g.mode, state: g.state, ...(g.message ? { message: g.message } : {}),
       estimatedMatches: g.estimatedMatches, tookMs: g.tookMs,
@@ -555,7 +592,7 @@ export class SearchService {
       results = picked;
     }
     const block = { state: zo.state, mode: b.zim === "federated" && b.scope !== "zim" ? "federated" : "unified", scope: b.scope === "zim" ? "zim" : "mixed", budgetMs: zo.budgetMs, tookMs: zo.tookMs, shown, groups, skipped: zo.skipped };
-    return { results, block, lists: (b.zim === "federated" && b.scope !== "zim" ? [] : zo.groups.filter((g) => g.hits.length).map((g) => ({ kind: "zim" as const, id: g.zimId, name: g.title, weight: wZim, keys: g.hits.map((h) => `zim:${zimUrl(h.zimId, h.path)}`) }))).map((l) => ({ id: l.id, name: l.name, weight: l.weight, keys: l.keys })) };
+    return { results, block, lists: (b.zim === "federated" && b.scope !== "zim" ? [] : zo.groups.filter((g) => g.hits.some((h) => !dupe(h))).map((g) => ({ kind: "zim" as const, id: g.zimId, name: g.title, weight: wZim, keys: g.hits.filter((h) => !dupe(h)).map((h) => `zim:${zimUrl(h.zimId, h.path)}`) }))).map((l) => ({ id: l.id, name: l.name, weight: l.weight, keys: l.keys })) };
   }
 
   private docsHint = 0;

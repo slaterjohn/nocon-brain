@@ -6,6 +6,7 @@
 // Produces in outDir (default tests/fixtures/zim/.cache):
 //   chem.zim       new namespace scheme, full-text index, title index, images, CSS, a script, links between entries, redirects
 //   notitle.zim    no full-text index (title-suggestion fallback), otherwise like chem.zim but tiny
+//   wiki.zim       looks like a Wikipedia build (name wikipedia_en_fixture, articles keyed by title, source en.wikipedia.org)
 //   bad.zim        not a ZIM file (corrupt header), to prove validation
 // The files are reproducible apart from the creation timestamp; the UUIDs are fixed so tests can assert on them.
 import fs from "node:fs";
@@ -31,7 +32,8 @@ export const CHEM_UUID = hexUuid("ncb-fixture-chem");
 export const NOTITLE_UUID = hexUuid("ncb-fixture-note");
 export const OTHER_UUID = hexUuid("ncb-fixture-cuis");
 export const BIG_UUID = hexUuid("ncb-fixture-bigg");
-const RAW = { [CHEM_UUID]: "ncb-fixture-chem", [NOTITLE_UUID]: "ncb-fixture-note", [OTHER_UUID]: "ncb-fixture-cuis", [BIG_UUID]: "ncb-fixture-bigg" };
+export const WIKI_UUID = hexUuid("ncb-fixture-wiki");
+const RAW = { [CHEM_UUID]: "ncb-fixture-chem", [NOTITLE_UUID]: "ncb-fixture-note", [OTHER_UUID]: "ncb-fixture-cuis", [BIG_UUID]: "ncb-fixture-bigg", [WIKI_UUID]: "ncb-fixture-wiki" };
 
 /**
  * Snippet payload. libzim strips real tags when it builds a snippet, but text that was written as escaped markup comes back as live
@@ -57,6 +59,19 @@ const CHEM_ARTICLES = [
   ["Butane", "Butane", `<p>Butane is an alkane hydrocarbon, C4H10.</p>`],
   ["Pentane", "Pentane", `<p>Pentane is an alkane hydrocarbon, C5H12.</p>`],
   ["Zeolite", "Zeolite", `<p>Zeolite is a microporous aluminosilicate mineral.</p>`],
+];
+
+/**
+ * A small package that looks like a Kiwix Wikipedia build (task Z-06): named `wikipedia_en_fixture`, English, articles keyed by their Wikipedia title
+ * (`Benzene`, `Black_hole`), a redirect, and links between articles. Text is written for this project; the licence is stated as CC BY-SA 4.0 like a real one.
+ */
+const WIKI_ARTICLES = [
+  ["Benzene", "Benzene", `<p><b>Benzene</b> is an aromatic hydrocarbon with the formula C6H6. See <a href="Toluene">toluene</a>, <a href="Aromaticity">aromaticity</a> and <a href="Moon">the Moon</a>.</p><p>Elsewhere: <a href="https://en.wikipedia.org/wiki/Zirconium">Zirconium</a> is not in this package. This copy is the package copy.</p><img src="I/benzene.png" alt="ring">`],
+  ["Toluene", "Toluene", `<p><b>Toluene</b> is methylbenzene, an aromatic solvent related to <a href="Benzene">benzene</a>.</p>`],
+  ["Aromaticity", "Aromaticity", `<p><b>Aromaticity</b> describes the stability of a ring with delocalised electrons, as in <a href="Benzene">benzene</a>.</p>`],
+  ["Moon", "Moon", `<p>The <b>Moon</b> is Earth's only natural satellite. It orbits the <a href="Sun">Sun</a> with the Earth.</p>`],
+  ["Sun", "Sun", `<p>The <b>Sun</b> is the star at the centre of the Solar System.</p>`],
+  ["Black_hole", "Black hole", `<p>A <b>black hole</b> is a region of spacetime where gravity is so strong that nothing escapes.</p>`],
 ];
 
 async function build(file, { uuid, title, fulltext, articles, language = "eng", flavour = "maxi", extraMeta = {}, redirects = true, extraItems = [] }) {
@@ -88,7 +103,7 @@ async function build(file, { uuid, title, fulltext, articles, language = "eng", 
 /** Builds every fixture into `outDir` (skipping files that already exist unless `force`). Returns their paths. */
 export async function buildFixtures(outDir = path.join(here, ".cache"), { force = false } = {}) {
   fs.mkdirSync(outDir, { recursive: true });
-  const out = { big: path.join(outDir, "big.zim"), chem: path.join(outDir, "chem.zim"), notitle: path.join(outDir, "notitle.zim"), other: path.join(outDir, "other.zim"), bad: path.join(outDir, "bad.zim") };
+  const out = { wiki: path.join(outDir, "wiki.zim"), big: path.join(outDir, "big.zim"), chem: path.join(outDir, "chem.zim"), notitle: path.join(outDir, "notitle.zim"), other: path.join(outDir, "other.zim"), bad: path.join(outDir, "bad.zim") };
   if (force || !fs.existsSync(out.chem)) await build(out.chem, { uuid: CHEM_UUID, title: "Chemistry (fixture)", fulltext: true, articles: CHEM_ARTICLES });
   if (force || !fs.existsSync(out.notitle)) {
     await build(out.notitle, {
@@ -109,6 +124,12 @@ export async function buildFixtures(outDir = path.join(here, ".cache"), { force 
       uuid: BIG_UUID, title: "Large package (fixture)", fulltext: false, flavour: "maxi", redirects: false,
       articles: [["Big_article", "Big article", `<p>Large package.</p><img src="I/blob0.bin">`]],
       extraItems: Array.from({ length: 6 }, (_, i) => [`I/blob${i}.bin`, "application/octet-stream", `blob${i}`, randomBytes(4 * 1024 * 1024)]),
+    });
+  }
+  if (force || !fs.existsSync(out.wiki)) {
+    await build(out.wiki, {
+      uuid: WIKI_UUID, title: "Wikipedia (fixture)", fulltext: true, language: "eng", flavour: "mini", articles: WIKI_ARTICLES,
+      extraMeta: { Creator: "Wikipedia", Publisher: "Wikimedia", Source: "https://en.wikipedia.org", Description: "Fixture package that looks like a Wikipedia build." },
     });
   }
   if (force || !fs.existsSync(out.bad)) fs.writeFileSync(out.bad, Buffer.concat([Buffer.from("not a zim file at all"), Buffer.alloc(4096, 7)]));

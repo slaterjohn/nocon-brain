@@ -32,7 +32,8 @@ export type FetchStoreOutcome =
 
 export type MainHandler = (job: Job, ctx: { signal: AbortSignal }) => Promise<void>;
 
-const HEADER_ALLOW = ["content-type", "last-modified", "etag", "link", "content-language"];
+/** `x-revision-id` and `x-ncb-source` are written by the Wikipedia fetcher (task Z-07); they tell the attribution step what the document is. */
+const HEADER_ALLOW = ["content-type", "last-modified", "etag", "link", "content-language", "x-revision-id", "x-ncb-source"];
 
 export interface VersionSummary {
   id: number; publicId: string; versionNo: number; status: string; partialReason: string | null; title: string | null;

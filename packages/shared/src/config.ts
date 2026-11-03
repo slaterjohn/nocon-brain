@@ -55,6 +55,11 @@ export const envSchema = z.object({
   /** Time budget for one knowledge package in a combined search, in milliseconds (task Z-05). Default of the `search.zimSearchBudgetMs` setting. */
   NCB_ZIM_SEARCH_BUDGET_MS: int(800, 100, 10_000),
   NCB_CONTACT: z.string().optional(),
+  /**
+   * Replaces `https://<language>.wikipedia.org` for every Wikipedia request (task Z-07): a mirror, or the local fake the tests use. The
+   * Wikimedia rules (identifying User-Agent, 1 request a second) still apply. Empty: the real Wikipedia.
+   */
+  NCB_WIKIPEDIA_ORIGIN: z.union([z.literal(""), z.url({ error: "must be empty or an absolute URL" })]).default(""),
   NCB_CONNECTIVITY_PROBE_URL: z.union([z.literal(""), z.url({ error: "must be empty or an absolute URL" })]).default(""),
   NCB_LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   NCB_LOG_FORMAT: z.enum(["json", "pretty"]).default("json"),

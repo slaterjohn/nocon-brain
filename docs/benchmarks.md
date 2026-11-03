@@ -169,3 +169,20 @@ Tolerances (a failure means a ranking or matching regression; they are written i
 | Latency (single term p95 under 50 ms) | informational: printed, never failing |
 
 After an intended change in ranking, regenerate the golden lists with `UPDATE_GOLDEN=1 pnpm test` and review the diff of `quality/golden.json` and the changed queries in the commit.
+
+## Wikipedia client against the real service (Z-07)
+
+Manual smoke test, run once on 2 November 2026 from a home connection with `NCB_CONTACT=https://github.com/slaterjohn/nocon-brain` (a web address, no email): `node --import tsx scripts/manual-wikipedia-check.ts` (default article `Ethylbenzene`, language `en`). It makes two requests, one second apart, through the same `WikipediaClient` the server uses; it is not part of any suite.
+
+| Request | Result |
+|---|---|
+| `GET https://en.wikipedia.org/w/rest.php/v1/page/Ethylbenzene/html` with `User-Agent: NoConBrain/0.1.0 (https://github.com/slaterjohn/nocon-brain)` | 200 in 1,027 ms, 154,967 bytes (Parsoid HTML). `ETag: W/"1380098400/eb76eda4-d416-11f1-a716-434a25102701/view+lang:und"`, `Last-Modified` present, `Content-Language: en`. No `X-Revision-Id` header: the revision (1380098400) is read from the start of the `ETag`, and equals the one in the document (`about=".../Special:Redirect/revision/1380098400"`). Page id 1730352, namespace 0, `dc:modified` 2026-10-13T19:46:18Z |
+| Link extraction on that body | 267 distinct `mw:WikiLink` article links, 60 of them in the lead section (the infobox is part of the lead), 11 images with a file page |
+| `GET /w/api.php?action=query&prop=imageinfo&iiprop=url\|extmetadata&titles=File:Ethylbenzene-2D-skeletal.svg&maxlag=5&format=json&formatversion=2` | 200 in 338 ms |
+
+Findings:
+
+- The conditional-request validator is the `ETag`; its first number is the revision id, which is what `revisionFromEtag` reads.
+- The first run returned no image credits although the answer held them. The file lives on Commons, and for such a file the wiki reports the page as `missing: true` (with `imagerepository: "shared"`) while still giving `imageinfo`. The client skipped pages marked missing. Fixed to look at `imageinfo` only, and covered by a unit test built from that response shape. Not re-run against the real service, to stay within the two requests agreed for the smoke test.
+- The client state afterwards: 2 requests, 0 retries, 0 rate-limit answers, breaker closed.
+- Not measured: behaviour under a real 429 or `maxlag` answer (the fake Wikimedia server covers both), and a crawl of more than one page.

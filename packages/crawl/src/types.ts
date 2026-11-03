@@ -101,6 +101,18 @@ export interface CrawlLimits {
   maxDurationMs: number;
 }
 
+/** A crawl of Wikipedia articles (task Z-08): the engine asks the Wikipedia adapter which links to skip and which to try first. */
+export interface WikipediaCrawlOptions {
+  language: string;
+  /** Save the images of each article, with their licence details. */
+  images: boolean;
+  /** An article that an enabled knowledge package already holds is linked to the package copy, not fetched. */
+  preferZim: boolean;
+  skipDisambiguation: boolean;
+  skipLists: boolean;
+  skipYears: boolean;
+}
+
 /** What `startCrawl` takes: a fully resolved crawl. Build it with `resolveCrawlConfig`. */
 export interface CrawlConfig {
   startUrls: string[];
@@ -120,6 +132,8 @@ export interface CrawlConfig {
   requestedBy?: "user" | "schedule" | "discovery" | "search" | "system";
   /** Download queue priority 1 (protected) to 4. Default 3. */
   priority?: 1 | 2 | 3 | 4;
+  /** Set for a Wikipedia crawl: the engine then uses the Wikipedia adapter (skip rules, lead-first ranking, no robots.txt for the API). */
+  wikipedia?: WikipediaCrawlOptions;
 }
 
 export type StopReason = "completed" | "max_pages" | "max_bytes" | "max_depth" | "deadline" | "source_budget" | "volume_full" | "cancelled";

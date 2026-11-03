@@ -22,3 +22,12 @@ export function languageMatches(zimLanguage: string | null | undefined, wanted: 
   const have = new Set((zimLanguage ?? "").split(/[,;\s]+/).filter(Boolean).flatMap((c) => languageForms(c)));
   return wanted.some((w) => languageForms(w).some((f) => have.has(f)));
 }
+
+/** The ISO 639-1 code of a package's language field (`eng` and `eng,fra` give `en`), or undefined when it has none or the code is not known. */
+export function twoLetterLanguage(zimLanguage: string | null | undefined): string | undefined {
+  for (const c of (zimLanguage ?? "").split(/[,;\s]+/).filter(Boolean)) {
+    const f = languageForms(c).find((x) => x.length === 2);
+    if (f) return f;
+  }
+  return undefined;
+}

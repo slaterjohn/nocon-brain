@@ -9,7 +9,7 @@ import {
 import { createHash } from "node:crypto";
 import { archiveHeaders, originOf } from "./headers.js";
 import { AccessBatcher, FrameStateStore } from "./frames.js";
-import { BufferAsset, MemoryCaptureStore, type AssetHandle, type CaptureStore, type LinkTarget, type VersionRef, type ZimPackageRef } from "./store.js";
+import { BufferAsset, MemoryCaptureStore, type AssetHandle, type CaptureStore, type LinkTarget, type PageAttribution, type VersionRef, type ZimPackageRef } from "./store.js";
 import { ArchiveTokenService, type TokenPayload } from "./tokens.js";
 
 /**
@@ -219,9 +219,10 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
     const { link, resource } = await linkTools(c, v, doc.baseUrl, doc.html);
     const head = showStates() ? linkStateStyleBlock() : "";
     const banner = v.status === "partial" ? partialBannerHtml(v.missingResources, routes.downloadRest(v.pageId)) : "";
+    const footer = attributionFooter(await store.readAttribution?.(v.versionId));
     // `?hl=` marks matches for the shell's find bar (A-18). The same function counts them for /api/archive/versions/{id}/find.
     const term = normaliseTerm(c.url.searchParams.get("hl"));
-    const r = sanitizeHtml(doc.html, { baseUrl: doc.baseUrl, link, resource, inject: { head, bodyStart: banner }, ...(term ? { highlight: { term } } : {}) });
+    const r = sanitizeHtml(doc.html, { baseUrl: doc.baseUrl, link, resource, inject: { head, bodyStart: banner, ...(footer ? { bodyEnd: footer } : {}) }, ...(term ? { highlight: { term } } : {}) });
     batcher.touch(v.versionId);
     // A highlighted copy is the same document with marks added: the address bar does not move for it (A-18).
     if (!term) recordFrame(c, v, r.title);
@@ -232,7 +233,7 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
     const rd = await store.readReader(v);
     if (!rd) return page(404, "No reader view", "There is no reader view for this page.");
     const { link, resource } = await linkTools(c, v, v.url, rd.html);
-    const clean = sanitizeHtml(rd.html, { baseUrl: v.url, link, resource, bodyOnly: true }).html;
+    const clean = sanitizeHtml(rd.html, { baseUrl: v.url, link, resource, bodyOnly: true }).html + attributionFooter(await store.readAttribution?.(v.versionId));
     const prefs = parseReaderPrefs(c.url.searchParams);
     batcher.touch(v.versionId);
     recordFrame(c, v, rd.title, true);
@@ -412,7 +413,7 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
       // Link states depend on what is archived right now, so the document is revalidated each time rather than cached.
       const headers = { etag, "cache-control": "private, no-cache" };
       if (c.req.headers["if-none-match"] === etag) return { status: 304, headers };
-      if (framed(c)) frames.record(c.payload.f, { url: zimPseudoUrl(zimId, rawPath), title: r.title || rawPath, state: "zim", zimId, zimPath: rawPath, at: clock.now(), userId: Number(c.payload.u) || 0 });
+      if (framed(c)) frames.record(c.payload.f, { url: pkg.webUrl?.(rawPath) ?? zimPseudoUrl(zimId, rawPath), title: r.title || rawPath, state: "zim", zimId, zimPath: rawPath, at: clock.now(), userId: Number(c.payload.u) || 0 });
       return { status: 200, type: "text/html; charset=utf-8", body: r.html, headers };
     }
 
@@ -429,6 +430,30 @@ export function createArchiveListener(opts: ArchiveListenerOptions): ArchiveList
       return svg === null ? notFound() : { status: 200, type: "image/svg+xml; charset=utf-8", headers: immutable, body: svg };
     }
     return serveBytes(c, new BufferAsset(entry.contentType, entry.body), entry.contentType, etag);
+  };
+
+  /**
+   * The credit CC BY-SA asks for, at the foot of a page that carries one (task Z-08): the licence and where the text came from, the article and
+   * its history, the revision, the date, and the author and licence of each image. Static markup; every link opens in a new tab.
+   */
+  const attributionFooter = (a: PageAttribution | null | undefined): string => {
+    if (!a) return "";
+    const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const http = (u: string | null) => (u && /^https?:\/\//i.test(u) ? esc(u) : null);
+    const link = (u: string | null, label: string) => (http(u) ? `<a href="${http(u)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>` : esc(label));
+    const when = new Date(a.retrievedAt).toISOString().slice(0, 10);
+    const lic = a.licenseName ? link(a.licenseUrl, a.licenseName) : "its licence";
+    const parts = [
+      `Text from Wikipedia, licensed under ${lic}.`,
+      a.sourceUrl ? `Article: ${link(a.sourceUrl, a.sourceUrl)}.` : "",
+      a.historyUrl ? `Authors: ${link(a.historyUrl, "see the article history")}.` : "",
+      `Archived on ${when}${a.revisionId ? `, revision ${esc(a.revisionId)}` : ""}.`,
+    ].filter(Boolean).join(" ");
+    const images = a.images.length
+      ? `<details style="margin-top:6px"><summary>Image credits (${a.images.length})</summary><ul style="margin:4px 0 0 18px;padding:0">${a.images.map((i) =>
+        `<li>${i.sourcePageUrl ? link(i.sourcePageUrl, i.file ?? "Image") : esc(i.file ?? "Image")}${i.author ? ` by ${esc(i.author)}` : ""}${i.licenseName ? `, ${i.licenseUrl ? link(i.licenseUrl, i.licenseName) : esc(i.licenseName)}` : ""}</li>`).join("")}</ul></details>`
+      : "";
+    return `<footer data-ncb-attribution style="font:12px/1.5 system-ui,sans-serif;margin:24px 0 0;padding:10px 12px;background:#f4f4f4;color:#333;border-top:1px solid #ddd">${parts}${images}</footer>`;
   };
 
   /** A thin bar above a package's pages: where the text comes from and under which licence (CC BY-SA asks for it). */

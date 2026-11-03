@@ -1,6 +1,9 @@
 import type { ZimEntry, ZimPackageRef } from "../archive/store.js";
 import type { ZimService } from "./service.js";
 import type { ZimSource } from "./source.js";
+import { twoLetterLanguage } from "./languages.js";
+import { articleUrl } from "../wikipedia/url.js";
+import { isWikipediaPackage } from "../wikipedia/zim-map.js";
 
 /** The listener's view of the packages (task Z-04): reads one entry at a time through the `zim` worker, never touching the database per request beyond one lookup. */
 export class ZimContent {
@@ -20,9 +23,11 @@ export class ZimContent {
   async package(zimId: string): Promise<ZimPackageRef | null> {
     const r = await this.ready(zimId);
     if (!r) return null;
+    const lang = isWikipediaPackage(r) ? twoLetterLanguage(r.language) : undefined;
     return {
       zimId, title: r.title, uuid: r.uuid, newNamespaceScheme: r.new_namespace_scheme === 1, mainPath: r.main_path, language: r.language,
       licenseName: r.license_name, attribution: r.attribution_text,
+      ...(lang ? { webUrl: (p: string) => (/[?#]/.test(p) ? null : articleUrl({ lang, title: p })) } : {}),
     };
   }
 

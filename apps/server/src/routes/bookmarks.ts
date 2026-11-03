@@ -24,11 +24,17 @@ export function bookmarkRoutes(app: FastifyInstance, state: ServerState): void {
     "/api/bookmarks",
     {
       config: { auth: "session" },
-      schema: { body: z.object({ url: z.string().min(1).max(4096), title: z.string().max(300).optional(), collectionId: z.string().optional(), versionId: z.string().max(64).optional() }) },
+      schema: {
+        body: z.object({
+          url: z.string().min(1).max(4096).optional(), title: z.string().max(300).optional(), collectionId: z.string().optional(), versionId: z.string().max(64).optional(),
+          /** An entry of a knowledge package (`zim_` id and path), for entries that have no web address of their own. */
+          zimId: z.string().max(64).optional(), zimPath: z.string().min(1).max(2000).optional(),
+        }).refine((b) => !!b.url || (!!b.zimId && !!b.zimPath), { message: "Give an address, or a package and an entry", path: ["url"] }),
+      },
     },
     async (req, reply) => {
       const user = admin(req);
-      const { bookmark, created } = state.svc.bookmarks.create(user.userId, req.body);
+      const { bookmark, created } = await state.svc.bookmarks.create(user.userId, req.body);
       void reply.code(created ? 201 : 200);
       return bookmark;
     },

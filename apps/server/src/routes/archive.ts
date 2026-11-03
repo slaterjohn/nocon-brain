@@ -4,6 +4,7 @@ import { AppError } from "@ncb/shared";
 import type { ServerState } from "../context.js";
 import { admin } from "../lib/http.js";
 import { captureEvent } from "../pipeline/progress.js";
+import { readAttribution } from "../pipeline/capture-store.js";
 import type { ZodTypeProvider } from "../lib/zod.js";
 
 const bool = z.preprocess((v) => (v === "true" || v === true ? true : v === "false" || v === false ? false : v), z.boolean());
@@ -101,7 +102,11 @@ export function archiveRoutes(app: FastifyInstance, state: ServerState, o: { pro
     const svc = state.svc;
     const v = svc.pipeline.getVersion(req.params.id);
     if (!v) throw new AppError("not_found", "That saved copy does not exist.");
-    return { ...svc.browser.versionSummary(v), title: v.title, url: v.finalUrl, stages: v.stages, failureMessage: v.failureMessage };
+    const attribution = readAttribution(svc.db, v.publicId);
+    return {
+      ...svc.browser.versionSummary(v), title: v.title, url: v.finalUrl, stages: v.stages, failureMessage: v.failureMessage,
+      ...(attribution ? { attribution: { ...attribution, retrievedAt: new Date(attribution.retrievedAt).toISOString() } } : {}),
+    };
   });
 
   r.get(

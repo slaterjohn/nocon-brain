@@ -14,6 +14,21 @@ import type { ActivityLog } from "../services/activity.js";
 import type { EventBus } from "../services/events.js";
 import { DbTrapStore, tallySkip } from "./store.js";
 
+/** What an adapter decides about the links of one stored page (tasks Z-08): which to drop before they are queued, and which to try first. */
+export interface LinkJudge {
+  /** A skip reason such as `wikipedia:in_zim`, or null to keep the link. */
+  skip(url: string): string | null;
+  /** Added to the link's score (higher is fetched sooner). */
+  boost(url: string): number;
+}
+
+/** Site-specific rules the engine asks for. Only the Wikipedia adapter exists. */
+export interface CrawlAdapter {
+  /** The adapter's own rules replace robots.txt (Wikipedia's API etiquette governs requests to the API, not the crawler rules of its HTML pages). */
+  skipsRobots?: boolean;
+  judge?(a: { versionId: number; config: CrawlConfig }): Promise<LinkJudge>;
+}
+
 export interface CrawlServiceDeps {
   db: Db;
   clock: Clock;
@@ -22,6 +37,7 @@ export interface CrawlServiceDeps {
   events: EventBus;
   pipeline: PipelineService;
   robots?: Pick<RobotsService, "check">;
+  adapters?: { wikipedia?: CrawlAdapter };
   log?: { warn(o: unknown, m?: string): void };
 }
 
@@ -498,7 +514,8 @@ export class CrawlService {
       if (!d.allow && d.reason !== "scope:depth") throw new OutOfScopeRedirect(d.reason, url);
     }
     const host = hostOf(url);
-    if (this.d.robots) {
+    if (c.config.wikipedia && this.d.adapters?.wikipedia?.skipsRobots) this.ensureHost(host, c.config);
+    else if (this.d.robots) {
       const dec = await this.d.robots.check(url, { bypass: false });
       if (!dec.allowed) {
         if (dec.reason === "robots_unreachable_disallow") throw new RobotsUnreachable(`robots.txt for ${host} could not be fetched; waiting before trying again.`);
@@ -604,7 +621,10 @@ export class CrawlService {
         linkVersion = out.versionId;
         dup = this.versionBelongsToCrawl(linkVersion, c);
       }
-      this.completePage(c, job, payload, linkVersion, added, dup);
+      const judge = c.config.wikipedia && linkVersion !== null
+        ? await this.d.adapters?.wikipedia?.judge?.({ versionId: linkVersion, config: c.config }).catch((err) => { this.d.log?.warn({ err: String(err) }, "wikipedia link judge failed"); return undefined; })
+        : undefined;
+      this.completePage(c, job, payload, linkVersion, added, dup, judge);
     } catch (e) {
       if (runnerSignal.aborted) throw e; // shutdown: the runner puts the job back
       if (ctrl.signal.aborted) return; // cancelled
@@ -720,7 +740,7 @@ export class CrawlService {
    * Counts the page, then turns its stored links into frontier rows in one transaction: scope, then the region/score filters,
    * then the trap rules, then the per-page and frontier caps. Rows are inserted best first so ids follow the priority order.
    */
-  private completePage(c: Loaded, job: Job, payload: FrontierPayload, versionId: number | null, bytes: number, dup: boolean): void {
+  private completePage(c: Loaded, job: Job, payload: FrontierPayload, versionId: number | null, bytes: number, dup: boolean, judge?: LinkJudge): void {
     const { db, queue } = this.d;
     const cfg = c.config;
     const skips = new Map<string, { n: number; sample: string }>();
@@ -761,12 +781,22 @@ export class CrawlService {
           skip("filter:download", r.to_url);
           continue;
         }
+        const verdict = judge?.skip(d.fetchUrl);
+        if (verdict) {
+          skip(verdict, r.to_url);
+          continue;
+        }
         cands.push({
           url: r.to_url, region: r.region, score: r.score, features, position: r.position ?? 0, isInternal: d.internal, relNofollow: r.rel_nofollow === 1,
           anchorText: r.anchor_text ?? undefined, decision: d,
         });
       }
       const ranked = rankLinks(cands, job.depth + 1, (l) => !l.isInternal, cfg.links.weights);
+      if (judge) {
+        // Adapter boosts (a Wikipedia article's lead links first), then the same stable order as `rankLinks`.
+        for (const x of ranked) x.priority = { ...x.priority, total: Math.round((x.priority.total + judge.boost(x.link.decision.fetchUrl)) * 1000) / 1000 };
+        ranked.sort((a, b) => b.priority.total - a.priority.total || a.link.position - b.link.position || (a.link.url < b.link.url ? -1 : a.link.url > b.link.url ? 1 : 0));
+      }
       const { follow, dropped } = selectLinks(ranked, cfg.links);
       for (const x of dropped) skip(x.reason, x.item.link.url);
 

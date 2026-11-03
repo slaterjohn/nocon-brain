@@ -32,7 +32,7 @@ export function browserRoutes(app: FastifyInstance, state: ServerState, o: { pro
         body: z.object({
           input: z.string().min(1, "Enter a web address or some search terms").max(4096),
           tabId: z.string().max(64).optional(),
-          prefer: z.enum(["archive", "live", "reader"]).optional(),
+          prefer: z.enum(["archive", "live", "reader", "zim"]).optional(),
           versionId: z.string().max(64).optional(),
           frame: z.object({ appOrigin: z.string().max(300) }).optional(),
         }),
@@ -41,7 +41,7 @@ export function browserRoutes(app: FastifyInstance, state: ServerState, o: { pro
     async (req) => {
       const svc = state.svc;
       const user = admin(req);
-      const res = svc.browser.resolve({
+      const res = await svc.browser.resolve({
         userId: user.userId, input: req.body.input, prefer: req.body.prefer, versionId: req.body.versionId,
         forwardedHost: forwardedHost(req, o.proxyVerified),
       });

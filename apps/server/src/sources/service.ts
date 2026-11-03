@@ -111,6 +111,8 @@ export interface SourceServiceOptions {
   /** Runs a saved-search source (Phase 5, task O-11): the search, then candidates or downloads. */
   /** Knowledge packages (Phase 8), for `knowledge_package` sources: browse, statistics and priority. */
   zim?: { service: ZimService; source: ZimSource };
+  /** Wikipedia sources (Phase 8, task Z-08). Without it a Wikipedia source cannot be created or run. */
+  wikipedia?: { assertReady(): void; parseStart(url: string): { lang: string; title: string; url: string } };
   runSavedSearch?: (source: { id: number; publicId: string; priority: PriorityNumber }, o: { requestedBy: "user" | "schedule" | "system"; signal?: AbortSignal }) => Promise<RunResult>;
 }
 
@@ -350,6 +352,14 @@ export class SourceService {
     const v = parseOrThrow(sourceInputSchema(this.resourceProfile), body) as unknown as SourceInput;
     const now = this.o.clock.now();
     const strategy = v.strategy ?? defaultStrategy(v.type);
+    if (v.adapter === "wikipedia") {
+      // A Wikipedia source needs a contact in the User-Agent and a start address that is an article; the address names the language.
+      if (!this.o.wikipedia) throw new AppError("not_implemented", "Wikipedia sources are not available in this build.");
+      this.o.wikipedia.assertReady();
+      const start = this.o.wikipedia.parseStart(v.startUrl ?? "");
+      v.startUrl = start.url;
+      v.config.wikipedia = { ...v.config.wikipedia!, language: start.lang };
+    }
     const config = resolveConfig(v.config, v.type, v.profile, this.resourceProfile, v.startUrl);
     const retention = v.retention ?? defaultRetention(config);
     const evict = v.automaticEviction ?? v.priority >= 3;
@@ -360,8 +370,8 @@ export class SourceService {
       const res = this.db.run(
         `INSERT INTO sources (public_id, name, description, type, adapter, start_url, strategy, profile, priority, retention_mode, retention_json, automatic_eviction,
            storage_budget_bytes, preferred_volume_id, discovery_enabled, enabled, last_status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'http', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'never', ?, ?)`,
-        [newId("src"), v.name, v.description ?? null, v.type, v.startUrl ?? null, strategy, v.profile, v.priority, mode, JSON.stringify(retentionRest), evict ? 1 : 0,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'never', ?, ?)`,
+        [newId("src"), v.name, v.description ?? null, v.type, v.adapter === "wikipedia" ? "wikipedia" : v.adapter === "import" ? "import" : "http", v.startUrl ?? null, strategy, v.profile, v.priority, mode, JSON.stringify(retentionRest), evict ? 1 : 0,
           v.storageBudgetBytes ?? null, vol, v.discoveryEnabled ? 1 : 0, v.enabled ? 1 : 0, now, now],
       );
       const sid = Number(res.lastInsertRowid);
@@ -612,6 +622,11 @@ export class SourceService {
       }
     }
     if (!WEB_TYPES.has(r.type) || !r.start_url) throw new AppError("not_implemented", "This kind of source cannot be run yet.");
+    if (r.adapter === "wikipedia") {
+      // Refused before anything is queued: no request leaves without a contact.
+      if (!this.o.wikipedia) throw new AppError("not_implemented", "Wikipedia sources are not available in this build.");
+      this.o.wikipedia.assertReady();
+    }
     const { config, version } = this.config(r);
     const now = this.o.clock.now();
     const priority = r.priority as PriorityNumber;
@@ -721,6 +736,7 @@ export class SourceService {
    */
   async preview(body: unknown, signal?: AbortSignal) {
     const v = parseOrThrow(sourceInputSchema(this.resourceProfile), body) as unknown as SourceInput;
+    if (v.adapter === "wikipedia") throw new AppError("conflict", "A Wikipedia source is previewed with POST /api/wikipedia/preview, which counts links per level and applies Wikipedia's own limits.");
     const config = resolveConfig(v.config, v.type, v.profile, this.resourceProfile, v.startUrl);
     const warnings: string[] = [];
     const ceilings = ceilingsFor(this.resourceProfile);

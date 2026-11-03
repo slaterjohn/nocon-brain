@@ -2,7 +2,7 @@ import { DEFAULT_WEIGHTS } from "./priority.js";
 import { DEFAULT_TRAPS } from "./traps.js";
 import {
   CrawlConfigError, LINK_REGIONS, type ConfigIssue, type CrawlConfig, type CrawlMode, type LinkPolicy, type LinkRegion, type ProfileName,
-  type ResourceProfile, type ScopeConfig, type TrapConfig,
+  type ResourceProfile, type ScopeConfig, type TrapConfig, type WikipediaCrawlOptions,
 } from "./types.js";
 
 const MIB = 1024 * 1024;
@@ -81,6 +81,7 @@ export interface CrawlRequest {
   configId?: number;
   requestedBy?: CrawlConfig["requestedBy"];
   priority?: CrawlConfig["priority"];
+  wikipedia?: WikipediaCrawlOptions;
 }
 
 function sectionPrefix(startUrl: string): string {
@@ -164,6 +165,7 @@ export function resolveCrawlConfig(req: CrawlRequest): CrawlConfig {
     ...(req.configId !== undefined ? { configId: req.configId } : {}),
     ...(req.requestedBy ? { requestedBy: req.requestedBy } : {}),
     ...(req.priority ? { priority: req.priority } : {}),
+    ...(req.wikipedia ? { wikipedia: req.wikipedia } : {}),
   };
   issues.push(...validateCrawlConfig(config));
   if (issues.length) throw new CrawlConfigError(issues);

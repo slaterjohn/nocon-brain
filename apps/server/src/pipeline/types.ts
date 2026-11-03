@@ -56,6 +56,8 @@ export interface CaptureCaps {
   maxCssDepth: number;
   /** Parallel sub-resource fetches. Default 4. */
   assetConcurrency: number;
+  /** Most images (`role: "image"`) fetched for one capture; later ones are recorded as skipped. 0 keeps a page text-only. Default: no limit. */
+  maxImages: number;
 }
 
 export const DEFAULT_CAPS: CaptureCaps = {
@@ -65,6 +67,7 @@ export const DEFAULT_CAPS: CaptureCaps = {
   maxTotalAssetBytes: 150 * 1024 * 1024,
   maxCssDepth: 5,
   assetConcurrency: 4,
+  maxImages: 1_000_000,
 };
 
 export interface CaptureOptions {
