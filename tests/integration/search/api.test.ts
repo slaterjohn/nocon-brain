@@ -143,6 +143,7 @@ describe("search API (S-03 to S-09, S-12, S-14 server side)", () => {
     const put = await t.svc.blobs.put(png, { kind: "image", mime: "image/png" });
     const asset = t.svc.db.run("INSERT INTO assets (blob_id, url, url_key, kind, mime, status, fetched_at) VALUES (?, 'https://x.invalid/favicon.png', 'k', 'image', 'image/png', 'ok', 1)", [put.blob.id]);
     t.svc.db.run("INSERT INTO asset_references (version_id, asset_id, role, referenced_url) VALUES (?, ?, 'icon', 'https://x.invalid/favicon.png')", [v.id, asset.lastInsertRowid]);
+    await drained(t); // the page must be in the index before searching for it (raced on slow CI runners)
     const r = await searchApi(t, { query: "icon page" });
     expect(r.body.results[0].faviconUrl).toBe(`/api/search/favicon/${p.pageId}`);
     const f = await t.server.app.inject({ method: "GET", url: r.body.results[0].faviconUrl, headers: { cookie: t.cookie } });
