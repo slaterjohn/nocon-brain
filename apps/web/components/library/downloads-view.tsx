@@ -274,7 +274,7 @@ export function DownloadsView() {
       </section>
 
       <Tabs.Root value={current} onValueChange={(v) => setTab(v as DownloadState)}>
-        <Tabs.List aria-label="Downloads by state" className="mb-4 flex gap-1 overflow-x-auto border-b">
+        <Tabs.List aria-label="Downloads by state" className="relative mb-4 flex gap-1 overflow-x-auto border-b">
           {TABS.map((t) => (
             <Tabs.Trigger
               key={t}
@@ -287,7 +287,7 @@ export function DownloadsView() {
             </Tabs.Trigger>
           ))}
         </Tabs.List>
-        <Tabs.Content value={current} className="outline-none">
+        <Tabs.Content value={current} className="rounded-md">
           {list.isLoading ? <LoadingSkeleton label="Loading downloads" /> : null}
           {list.error ? <ErrorState title="Couldn't load downloads" message={list.error.message} onRetry={() => void list.mutate()} /> : null}
           {list.data && items.length === 0 ? <EmptyState icon={Download} title={`No ${STATE_LABEL[current].toLowerCase()} downloads`} description={EMPTY_TEXT[current]} /> : null}

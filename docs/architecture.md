@@ -398,6 +398,7 @@ Graceful shutdown (`SIGTERM`): stop claiming jobs, stop accepting new requests, 
 | Storage | `NCB_VOLUMES_ALLOWED_ROOTS` | `/volumes` | Only these roots may be registered as storage volumes |
 | | `NCB_VOLUME_PATH` | `./volume` | Host path mounted at `/volumes/default` |
 | | `NCB_MIN_FREE_DISK_GB` | 5 | Hard floor; downloads pause below it |
+| | `NCB_DISCOVERY_PASS_SECONDS` | 30 | Seconds between Discovery timer passes; 0 turns the timer off (the tests do) |
 | Resources | `NCB_RESOURCE_PROFILE` | `pi-lite` on ARM64, else `standard` | Preset for the next group |
 | | `NCB_MAX_FETCH_CONCURRENCY`, `NCB_PER_HOST_CONCURRENCY`, `NCB_EXTRACT_WORKERS`, `NCB_WORKER_MEMORY_MB`, `NCB_BANDWIDTH_LIMIT_KBPS` | profile | Overrides |
 | | `NCB_SERVER_MEMORY`, `NCB_WEB_MEMORY`, `NCB_SERVER_CPUS` | profile | Compose limits |

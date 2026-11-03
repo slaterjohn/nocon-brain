@@ -253,7 +253,9 @@ export function runnerHeadline(r: RunnerStatus): string {
     default:
       return r.mode === "off"
         ? "Discovery is on and collecting suggestions. Downloading is set to off, so nothing is downloaded."
-        : `Ready. A pass runs every ${r.timerSeconds} seconds when there is something to do (mode: ${r.mode === "approval" ? "approval only" : "automatic"}).`;
+        : r.timerSeconds <= 0
+          ? `Ready. The timer is off, so a pass runs only when you choose Run a pass now (mode: ${r.mode === "approval" ? "approval only" : "automatic"}).`
+          : `Ready. A pass runs every ${r.timerSeconds} seconds when there is something to do (mode: ${r.mode === "approval" ? "approval only" : "automatic"}).`;
   }
 }
 

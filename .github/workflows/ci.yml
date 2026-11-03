@@ -72,17 +72,16 @@ jobs:
         env:
           SECURITY_BROWSERS: chromium,firefox
         run: pnpm test:security
-      # The browser suite is timing-sensitive on shared runners (a different test flakes each run), so it runs on x64 only,
-      # retries twice, and is advisory (continue-on-error) until the flaky specs are stabilised.
-      - name: Browser end-to-end tests (advisory)
+      # Phase 9 (HB-09): the known flakes have root-cause fixes, so the browser suite blocks. x64 only (arm64 unmeasured, HB-09).
+      # One retry absorbs runner hiccups; Playwright still reports any retried test as flaky, and those get fixed, not ignored.
+      - name: Browser end-to-end tests
         if: runner.arch == 'X64'
-        continue-on-error: true
-        run: pnpm test:e2e --retries=2
+        run: pnpm test:e2e --retries=1
       # H-11: the cross-browser subset (docs/browser-support.md). One engine per step: they share ports 25000-25002.
-      - name: Browser end-to-end tests, Firefox (advisory)
+      - name: Browser end-to-end tests, Firefox
         if: runner.arch == 'X64'
-        continue-on-error: true
-        run: pnpm test:e2e:firefox --retries=2
+        run: pnpm test:e2e:firefox --retries=1
+      # WebKit stays advisory until it has a few green CI runs behind it (first ran in CI run 41594122637).
       - name: Browser end-to-end tests, WebKit (advisory)
         if: runner.arch == 'X64'
         continue-on-error: true

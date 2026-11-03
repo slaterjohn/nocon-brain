@@ -1,6 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import { activeFrame, articleUrl, login, mode, openAddress, savePage, setWorkOffline } from "./helpers";
+import { activeFrame, articleUrl, blockExternal as guardNetwork, login, mode, openAddress, savePage, setWorkOffline } from "./helpers";
 
 // C-12: link states in saved pages, the legend, and the offline interstitial. With Work offline on, following a link that is not
 // saved shows a notice and no request leaves the app and the archive.
@@ -16,20 +16,6 @@ test.beforeEach(async ({ page }) => {
 test.afterEach(async ({ page }) => {
   await setWorkOffline(page, false);
 });
-
-/** Everything the browser asks for outside the app and the archive listener. Such requests are also refused, so nothing can leave. */
-async function guardNetwork(page: Page, baseURL: string) {
-  const allowed = new Set([new URL(baseURL).origin, new URL(process.env.E2E_ARCHIVE_URL ?? "http://127.0.0.1:25002").origin]);
-  const attempted: string[] = [];
-  await page.context().route("**/*", async (route) => {
-    const u = route.request().url();
-    if (u.startsWith("data:") || u.startsWith("blob:") || u.startsWith("about:") || allowed.has(new URL(u).origin)) return route.continue();
-    attempted.push(`${route.request().method()} ${u}`);
-    return route.abort("internetdisconnected");
-  });
-  return attempted;
-}
-
 
 test("saved pages mark their links by state, the legend explains them, and the states follow the connection", async ({ page, baseURL }) => {
   const home = articleUrl("/astronomy");
@@ -74,6 +60,9 @@ test("saved pages mark their links by state, the legend explains them, and the s
   // A saved link opens the saved copy.
   await fl.locator('a[data-ncb-link="cached"]', { hasText: /planets/i }).first().click();
   await expect(fl.getByRole("heading", { level: 1, name: /Planets/ })).toBeVisible();
+  // The shell learns of an in-frame click only when it reads the frame's state after the load. Back before that has nothing to go back
+  // to, so wait for the address bar to show where the frame is (the condition that matters), not just for the frame's content.
+  await expect(page.getByRole("textbox", { name: "Address or search terms" })).toHaveValue(articleUrl("/planets"));
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(fl.getByRole("heading", { level: 1, name: /Astronomy/ })).toBeVisible();
 

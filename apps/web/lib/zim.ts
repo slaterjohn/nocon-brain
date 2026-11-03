@@ -2,7 +2,7 @@
 // the add-a-package and topic-crawl drafts with their validation, the removal summary and the safe reading of package snippets.
 // No React in here, so it is unit tested directly (apps/web/test/zim.test.ts).
 
-import { ApiError, fieldErrors } from "./api";
+import { ApiError, errorMessage, fieldErrors } from "./api";
 import { markedParts, type SearchResult, type SnippetPart } from "./search";
 import type { Priority } from "./types";
 
@@ -322,7 +322,7 @@ export function importErrors(err: unknown): { fields: FieldErrors; general: stri
     if (err.status === 507) return { fields: {}, general: "There is not enough room on the volume for a copy. Choose another volume, or leave the file where it is." };
     return { fields: {}, general: err.message };
   }
-  return { fields: {}, general: err instanceof Error ? err.message : "Something went wrong. Try again." };
+  return { fields: {}, general: errorMessage(err) };
 }
 
 // ---- Removal ----
@@ -414,7 +414,7 @@ export function crawlStartBody(d: CrawlDraft): Record<string, unknown> {
 
 /** Plain words for a failed preview or crawl. */
 export function wikipediaErrorText(err: unknown): string {
-  if (!(err instanceof ApiError)) return err instanceof Error ? err.message : "Something went wrong. Try again.";
+  if (!(err instanceof ApiError)) return errorMessage(err);
   const wait = (err.details as { retryAfterMs?: number } | undefined)?.retryAfterMs;
   if (err.status === 404) return "Wikipedia has no article with that title. Check the spelling, or paste the address.";
   if (err.status === 409 && err.code === "offline") return "Work offline is on, or there is no connection. The preview needs to ask Wikipedia, so turn Work offline off first.";

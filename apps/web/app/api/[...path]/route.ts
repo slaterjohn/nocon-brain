@@ -78,13 +78,12 @@ async function proxy(req: NextRequest): Promise<Response> {
   let upstream: Response;
   try {
     upstream = await fetch(url, init);
-  } catch (err) {
+  } catch {
     if (req.signal.aborted) return new Response(null, { status: 499 });
     return Response.json(
       {
-        error: "internal",
+        error: "unavailable",
         message: "The NoConBrain server isn't reachable. Check that the server service is running, then try again.",
-        details: err instanceof Error ? err.message : undefined,
         requestId: "web-proxy",
       },
       { status: 502, headers: { "cache-control": "no-store" } },

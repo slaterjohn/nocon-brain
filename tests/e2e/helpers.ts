@@ -96,3 +96,19 @@ export async function expectHistory(page: Page, address: string, servedFrom: "ar
     }, { message: `History should list ${address} (${servedFrom})` })
     .toBe(true);
 }
+
+/**
+ * Everything the browser asks for outside the app and the archive listener. Such requests are refused as well as recorded, so nothing can
+ * leave and a page that waits on the internet fails at once instead of hanging. The returned list is live.
+ */
+export async function blockExternal(page: Page, baseURL: string): Promise<string[]> {
+  const allowed = new Set([new URL(baseURL).origin, new URL(process.env.E2E_ARCHIVE_URL ?? "http://127.0.0.1:25002").origin]);
+  const attempted: string[] = [];
+  await page.context().route("**/*", async (route) => {
+    const u = route.request().url();
+    if (u.startsWith("data:") || u.startsWith("blob:") || u.startsWith("about:") || allowed.has(new URL(u).origin)) return route.continue();
+    attempted.push(`${route.request().method()} ${u}`);
+    return route.abort("internetdisconnected");
+  });
+  return attempted;
+}

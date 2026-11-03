@@ -16,6 +16,7 @@ NoConBrain is a self-hosted, offline-first knowledge archiver, crawler and searc
 | [risk-register.md](risk-register.md) | Risks with likelihood, impact, mitigation and owner phase |
 | [security.md](security.md) | Threat model, isolation design, container hardening, secrets, and the results of the security review (authorisation matrix, SSRF fuzzing, XSS, isolation, SBOM) |
 | [browser-support.md](browser-support.md) | Supported browsers, what runs in each, how to run the matrix, known differences and gaps |
+| [accessibility.md](accessibility.md) | What the suite checks for WCAG 2.2 AA, what the audit fixed, and the manual checklist for screen readers and real zoom |
 | [hardening-backlog.md](hardening-backlog.md) | Findings from verification and review, with their status |
 
 Suggested reading order: architecture, technology decisions, data model, API, then the plan.

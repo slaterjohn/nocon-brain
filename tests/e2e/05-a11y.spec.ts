@@ -67,11 +67,21 @@ test("skip link is the first tab stop and moves focus into main", async ({ page 
 
 test("focused controls have a visible focus indicator", async ({ page }) => {
   await login(page);
+  // The navigation is drawn before the page has finished loading its data; wait until the page has settled (the event stream is open and
+  // the content has replaced its placeholder) so that nothing re-renders under the keyboard while it is being used.
+  await expect(page.getByTestId("connectivity")).toHaveAttribute("data-stream", "open");
+  await expect(page.locator('main [aria-busy="true"]')).toHaveCount(0);
   const link = page.getByRole("navigation", { name: "Areas" }).getByRole("link", { name: "Library" });
-  await link.focus();
-  await page.keyboard.press("Shift+Tab");
-  await page.keyboard.press("Tab");
-  await expect(link).toBeFocused();
+  // Reach the link the way a keyboard user does: from the link before it. The sequence is repeated until focus lands, because a late
+  // re-render of the surrounding page can drop focus once; the assertion that matters is what the focused link looks like.
+  await expect
+    .poll(async () => {
+      await link.focus();
+      await page.keyboard.press("Shift+Tab");
+      await page.keyboard.press("Tab");
+      return link.evaluate((el) => el === document.activeElement);
+    }, { message: "Tab should land on the Library link" })
+    .toBe(true);
   const style = await link.evaluate((el) => {
     const c = getComputedStyle(el);
     return { style: c.outlineStyle, width: parseFloat(c.outlineWidth) };

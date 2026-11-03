@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { FALLBACK_BY_CODE, isPlain, plainMessage } from "./errors";
 
 export class ApiError extends Error {
   status: number;
@@ -25,6 +26,13 @@ function redirectTo(path: string) {
   if (typeof window === "undefined") return;
   if (window.location.pathname === path) return;
   window.location.assign(path);
+}
+
+/** An ended session sends the person to sign in, says so there, and brings them back to the page they were on. */
+function redirectToSignIn() {
+  if (typeof window === "undefined") return;
+  const here = window.location.pathname + window.location.search;
+  window.location.assign(`/login?expired=1&next=${encodeURIComponent(here)}`);
 }
 
 function onPublicPage() {
@@ -58,7 +66,7 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
     res = await fetch(path, { method, headers, body, credentials: "include", signal: opts.signal, cache: "no-store" });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw err;
-    throw new ApiError(0, "network", "Can't reach the server. Check the connection, then try again.");
+    throw new ApiError(0, "network", FALLBACK_BY_CODE.network!);
   }
 
   const text = await res.text();
@@ -75,21 +83,12 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
     const e = (data ?? {}) as { error?: string; message?: string; details?: unknown; requestId?: string };
     const code = e.error ?? (res.status === 401 ? "unauthorized" : res.status === 429 ? "rate_limited" : "internal");
     if (!opts.noRedirect) {
-      if (res.status === 401 && !onPublicPage()) redirectTo("/login");
+      if (res.status === 401 && !onPublicPage()) redirectToSignIn();
       if (code === "setup_required" && !onPublicPage()) redirectTo("/setup");
     }
-    throw new ApiError(res.status, code, e.message ?? defaultMessage(res.status), e.details, e.requestId);
+    throw new ApiError(res.status, code, plainMessage(res.status, code, e.message), e.details, e.requestId);
   }
   return data as T;
-}
-
-function defaultMessage(status: number): string {
-  if (status === 401) return "The session has ended. Sign in again.";
-  if (status === 403) return "That action isn't allowed.";
-  if (status === 404) return "That item no longer exists.";
-  if (status === 429) return "Too many attempts. Wait a minute, then try again.";
-  if (status >= 500) return "The server hit a problem. Try again, and check the activity log if it persists.";
-  return "The request failed. Check the details and try again.";
 }
 
 export const get = <T,>(path: string) => api<T>(path);
@@ -100,8 +99,8 @@ export const del = <T,>(path: string) => api<T>(path, { method: "DELETE" });
 
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message;
-  if (err instanceof Error) return err.message;
-  return "Something went wrong. Try again.";
+  if (err instanceof Error && isPlain(err.message)) return err.message;
+  return FALLBACK_BY_CODE.internal!;
 }
 
 /**

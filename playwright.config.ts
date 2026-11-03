@@ -11,10 +11,10 @@ if (BROWSERS.length > 1) console.warn(`E2E_BROWSERS lists ${BROWSERS.join(", ")}
  * The specs that also run on Firefox and WebKit (task H-11). Chosen because the behaviour under test is the browser's own: the setup wizard and
  * sign-in (cookies, focus), the headers the app and the archive send, the sandboxed archive frame (load events, history, fragment navigation,
  * find), capture end to end, bookmarks and history, keyboard shortcuts, offline link states, the search UI, ZIM frames, the isolation proof of
- * concept and untrusted strings. Left on Chromium alone: the axe accessibility audits (engine independent), storage, discovery, packages and
+ * concept and untrusted strings, the offline end-to-end run and the error messages. Left on Chromium alone: the axe accessibility audits (engine independent), storage, discovery, packages and
  * online-search administration (server logic with plain forms), and the library wizard.
  */
-const CROSS_BROWSER = /(?:^|[\\/])(01-setup|02-auth|03-navigation|06-proxy|07-headers|08-browser-shell|09-capture|10-bookmarks-history|11-find|12-shortcuts-indicators|15-offline-links|17-search-ui|29-wikipedia-zim|35-isolation-poc|36-untrusted-strings)\.spec\.ts$/;
+const CROSS_BROWSER = /(?:^|[\\/])(01-setup|02-auth|03-navigation|06-proxy|07-headers|08-browser-shell|09-capture|10-bookmarks-history|11-find|12-shortcuts-indicators|15-offline-links|17-search-ui|29-wikipedia-zim|35-isolation-poc|36-untrusted-strings|37-offline-end-to-end|38-error-ux)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "tests/e2e",

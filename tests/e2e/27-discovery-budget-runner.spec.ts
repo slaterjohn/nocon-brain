@@ -53,7 +53,7 @@ test("a pass shows in the runner panel, the per-site list and the ledger", async
 
   await page.goto("/discovery/budget");
   await expect(page.getByTestId("runner-state")).toHaveText("Ready");
-  await expect(page.getByTestId("runner-headline")).toContainText("every 30 seconds");
+  await expect(page.getByTestId("runner-headline")).toContainText("timer is off");
   await expect(page.getByTestId("no-pass").or(page.getByTestId("last-pass"))).toBeVisible();
   await page.getByTestId("run-pass").click();
   await expect(page.getByTestId("last-pass")).toContainText("started by you");

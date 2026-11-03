@@ -52,6 +52,7 @@ export const envSchema = z.object({
   NCB_DATA_DIR: z.string().min(1).default("/data"),
   NCB_VOLUMES_ALLOWED_ROOTS: list(["/volumes"]),
   NCB_MIN_FREE_DISK_GB: int(5, 0),
+  NCB_DISCOVERY_PASS_SECONDS: int(30, 0, 86400),
   NCB_RESOURCE_PROFILE: z.enum(["pi-lite", "standard"]).optional(),
   NCB_PER_HOST_CONCURRENCY: int(1, 1, 16),
   NCB_MAX_FETCH_CONCURRENCY: int(2, 1, 64),

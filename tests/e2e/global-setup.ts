@@ -130,6 +130,8 @@ export default async function globalSetup() {
         NCB_SECRET_KEY: crypto.randomBytes(24).toString("hex"),
         NCB_LOG_LEVEL: "warn",
         NCB_MIN_FREE_DISK_GB: "0",
+        // No background Discovery pass: the specs start passes themselves, and a timer pass in the middle of one starts downloads they do not expect.
+        NCB_DISCOVERY_PASS_SECONDS: "0",
         NCB_FETCH_ALLOW_PRIVATE_HOSTS: "127.0.0.1",
         // Wikipedia requests need a contact, and go to the fake Wikimedia server, never to the real one.
         NCB_CONTACT: "https://github.com/slaterjohn/nocon-brain",

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { FileUp, RotateCcw, X } from "lucide-react";
-import { ApiError, useApi } from "@/lib/api";
+import { ApiError, errorMessage, useApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn, formatBytes } from "@/lib/utils";
@@ -137,7 +137,7 @@ export function useImportQueue(limits: ImportLimits | undefined) {
         patch(item.key, { status: result.duplicate ? "duplicate" : "done", progress: 100, result });
       } catch (e) {
         failed++;
-        patch(item.key, { status: "error", retryable: true, error: e instanceof Error ? e.message : "The upload failed. Try again." });
+        patch(item.key, { status: "error", retryable: true, error: errorMessage(e) });
       }
     }
     setRunning(false);

@@ -60,6 +60,10 @@ export function FindBar({ tab, getFrame, onClose }: { tab: Tab; getFrame: () => 
     },
     [frameUrl, versionId, getFrame],
   );
+  // The count effect below must not restart when only the frame's address changes (it does, once the frame reports the highlighted
+  // document it has just loaded): a restart would count again and jump back to the first hit, undoing a step made in between.
+  const goRef = React.useRef(go);
+  goRef.current = go;
 
   // Count after a short pause in typing; a new document (an in-frame click) starts a new search.
   React.useEffect(() => {
@@ -76,7 +80,7 @@ export function FindBar({ tab, getFrame, onClose }: { tab: Tab; getFrame: () => 
         .then((r) => {
           if (!live) return;
           setResult(r);
-          if (r.count > 0) go(r.query, 1);
+          if (r.count > 0) goRef.current(r.query, 1);
           else setAt(0);
         })
         .catch(() => live && setError("Couldn't search this page. Try again."));
@@ -85,7 +89,7 @@ export function FindBar({ tab, getFrame, onClose }: { tab: Tab; getFrame: () => 
       live = false;
       clearTimeout(t);
     };
-  }, [q, versionId, reader, go]);
+  }, [q, versionId, reader]);
 
   const step = (d: 1 | -1) => {
     if (!result || result.count === 0) return;

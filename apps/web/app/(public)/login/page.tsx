@@ -15,7 +15,11 @@ export default function LoginPage() {
   const [password, setPassword] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [expired, setExpired] = React.useState(false);
   const [fieldError, setFieldError] = React.useState<{ username?: string; password?: string }>({});
+
+  // Sent here because the session ended: say so, so the sign-in screen does not look like a failure of its own.
+  React.useEffect(() => setExpired(new URLSearchParams(window.location.search).get("expired") === "1"), []);
 
   // First run: no administrator yet, so there is nothing to sign in to.
   React.useEffect(() => {
@@ -47,7 +51,7 @@ export default function LoginPage() {
       } else if (err instanceof ApiError && err.code === "setup_required") {
         window.location.assign("/setup");
       } else {
-        setError(err instanceof Error ? err.message : "Sign-in failed. Try again.");
+        setError(err instanceof ApiError && err.code === "network" ? err.message : "Sign-in didn't work. Check the connection, then try again.");
       }
       setBusy(false);
     }
@@ -69,6 +73,11 @@ export default function LoginPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={submit} noValidate className="space-y-4">
+              {expired && !error ? (
+                <p role="status" className="rounded-md border bg-muted px-3 py-2 text-sm" data-testid="session-ended">
+                  Your session has ended. Sign in again to carry on where you were.
+                </p>
+              ) : null}
               <FormError message={error} />
               <Field id="username" label="Username" error={fieldError.username}>
                 {(p) => (

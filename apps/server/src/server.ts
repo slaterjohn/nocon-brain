@@ -602,7 +602,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         pageIdOf: (key) => db.get<{ public_id: string }>("SELECT p.public_id FROM pages p WHERE p.url_key = ? OR p.id IN (SELECT page_id FROM page_aliases WHERE url_key = ?) LIMIT 1", [key, key])?.public_id,
         historyEnabled: () => (settings.internal("privacy") as { history: { enabled: boolean } }).history.enabled,
       });
-      discovery.tickMs = opts.discovery?.tickMs ?? 30_000;
+      discovery.tickMs = opts.discovery?.tickMs ?? config.NCB_DISCOVERY_PASS_SECONDS * 1000;
       discoveryRef = discovery;
       deps.discovery = { fromVersion: (id) => discovery.fromVersion(id) };
       history.onRecorded = (v) => { discovery.onVisit(v); };

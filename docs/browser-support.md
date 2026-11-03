@@ -6,8 +6,8 @@ What NoConBrain is tested in, what is checked in each browser, and where the bro
 
 | Browser | Status | What runs |
 |---|---|---|
-| Chromium-based (Chrome, Edge, Brave, Vivaldi), current stable | Supported, primary | Every end-to-end spec (36 files) on Playwright Chromium, in CI on every push |
-| Firefox, current stable | Supported | The cross-browser subset (15 files, listed below) on Playwright Firefox (157 at the time of writing) |
+| Chromium-based (Chrome, Edge, Brave, Vivaldi), current stable | Supported, primary | Every end-to-end spec (39 files) on Playwright Chromium, in CI on every push |
+| Firefox, current stable | Supported | The cross-browser subset (17 files, listed below) on Playwright Firefox (157 at the time of writing) |
 | Safari and other WebKit browsers (macOS, iOS), current stable | Supported, with one gap | The same subset on Playwright WebKit in CI on Linux. See "What is not verified" |
 
 The app needs a browser that implements the iframe `sandbox` attribute and the `Content-Security-Policy: sandbox` header, `fetch`, `EventSource` (search streams progress over server-sent events), and the History API. All three engines above do. Mobile browsers use the same engines and the same responsive layout, but they are not in the test matrix.
@@ -25,9 +25,10 @@ The app needs a browser that implements the iframe `sandbox` attribute and the `
 | Keyboard | `12-shortcuts-indicators` | Browser-reserved shortcuts differ per engine and per platform |
 | Search | `17-search-ui` | The results page, streaming, filters |
 | Knowledge packages | `29-wikipedia-zim` | ZIM pages in the archive frame |
+| Offline and errors | `37-offline-end-to-end`, `38-error-ux` | Request blocking and refusal, the offline switch, and the wording of failures in each engine |
 | Isolation | `35-isolation-poc`, `36-untrusted-strings` | Archived content cannot read the app's cookies or storage or call its API; hostile titles and snippets render as text |
 
-Left on Chromium alone: the axe accessibility audits (`05`, `24`, `28`, `34` and the audits inside other files; axe checks the DOM and ARIA tree, not engine rendering), storage and discovery administration (`21` to `28`), the library wizard and package browser (`13`, `14`, `16`, `18` to `20`, `30` to `34`), and `04-dashboard`. They are server logic behind plain forms; a regression in them would show in Chromium first. If a bug turns up that only one engine shows, move the file into `CROSS_BROWSER`.
+Left on Chromium alone: the axe accessibility audits (`05`, `24`, `28`, `34`, `39` and the audits inside other files; axe checks the DOM and ARIA tree, not engine rendering), storage and discovery administration (`21` to `28`), the library wizard and package browser (`13`, `14`, `16`, `18` to `20`, `30` to `34`), and `04-dashboard`. They are server logic behind plain forms; a regression in them would show in Chromium first. If a bug turns up that only one engine shows, move the file into `CROSS_BROWSER`.
 
 The vitest `security` project also runs the sanitiser's cross-site-scripting corpus (344 vectors) in real browser engines: Chromium and Firefox by default, and WebKit when `SECURITY_BROWSERS=chromium,firefox,webkit` is set. Each vector is checked three ways: a control that proves the harness sees script run, the sanitiser's output in a bare page, and the archive listener's response opened directly (its CSP `sandbox` header is then the only protection besides the sanitiser).
 

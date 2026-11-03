@@ -228,6 +228,7 @@ describe("runner words and polling", () => {
     expect(runnerHeadline(runner({ state: "paused" }))).toMatch(/kill switch/);
     expect(runnerHeadline(runner({ state: "blocked" }))).toMatch(/held back/);
     expect(runnerHeadline(runner({ mode: "approval" }))).toMatch(/every 30 seconds/);
+    expect(runnerHeadline({ ...runner({ mode: "approval" }), timerSeconds: 0 })).toMatch(/timer is off.*Run a pass now/);
     expect(runnerHeadline(runner({ mode: "off" }))).toMatch(/nothing is downloaded/);
   });
   it("summarises a pass, with the reasons for skipping", () => {

@@ -95,7 +95,7 @@ export function ResultItem({ result, headingId, onSaveOnline }: { result: Search
           <span className="min-w-0 truncate text-muted-foreground" data-testid="result-address" title={local && address === "Imported document" ? undefined : result.url}>{address}</span>
         )}
       </div>
-      <h3 id={headingId} className="text-lg leading-snug font-medium">
+      <h3 id={headingId} className="text-lg leading-snug font-medium [overflow-wrap:anywhere]">
         {isZim ? (
           <button type="button" onClick={openPackage} className="text-left text-primary underline-offset-4 hover:underline" data-testid="result-title">
             {titleNode}
@@ -114,7 +114,7 @@ export function ResultItem({ result, headingId, onSaveOnline }: { result: Search
         )}
       </h3>
       {parts.length ? (
-        <p className="mt-1 max-w-3xl text-sm leading-relaxed text-foreground/90" data-testid="result-snippet">
+        <p className="mt-1 max-w-3xl text-sm leading-relaxed text-foreground/90 [overflow-wrap:anywhere]" data-testid="result-snippet">
           {parts.map((p, i) =>
             p.mark ? (
               <Mark key={i} className="rounded-sm bg-amber-200 px-0.5 font-medium text-amber-950 dark:bg-amber-800 dark:text-amber-50">{p.text}</Mark>
