@@ -159,7 +159,10 @@ await check("web serves the app shell with no external references", async () => 
   const r = await req("/login", { base: WEB });
   assert([200, 307, 308].includes(r.status), `HTTP ${r.status}`);
   const page = r.status === 200 ? r.text : (await req(r.headers.get("location") ?? "/", { base: WEB })).text;
-  const ext = [...page.matchAll(/(?:src|href)="(https?:\/\/[^"]+)"/g)].map((m) => m[1]).filter((u) => !u.startsWith(WEB));
+  // Resources the page loads (scripts, styles, images, fonts, frames) must be local. A plain <a href> is a link the person
+  // chooses to follow (the AGPL source and licence links in the footer), not something fetched, so anchors are skipped.
+  const tags = [...page.matchAll(/<([a-zA-Z][\w-]*)\b[^>]*>/g)].filter((m) => m[1].toLowerCase() !== "a").map((m) => m[0]);
+  const ext = tags.flatMap((tag) => [...tag.matchAll(/\b(?:src|href|srcset|poster|data)="(https?:\/\/[^"\s]+)/g)].map((m) => m[1])).filter((u) => !u.startsWith(WEB));
   assert(ext.length === 0, `external references: ${ext.slice(0, 3).join(", ")}`);
 });
 

@@ -101,7 +101,10 @@ describe("HB-05 robots.txt and files go through the per-host politeness gate", (
     expect(page.at - robots.at).toBeGreaterThanOrEqual(280); // the host delay, minus timer slack
     const files = seen.filter((s) => s.path.startsWith("/img")).map((s) => s.at).sort((a, b) => a - b);
     expect(files.length).toBeGreaterThanOrEqual(5);
-    for (let i = 1; i < files.length; i++) expect(files[i]! - files[i - 1]!, `gap before file ${i}`).toBeGreaterThanOrEqual(100); // 120 ms gap, minus slack
+    // The pacer spaces dispatch by 120 ms; arrival at this server jitters by a few ms either way, so one gap can read short
+    // (CI arm64 saw 95 ms) while the next reads long. A burst would show gaps near 0, so check each gap loosely and the total tightly.
+    for (let i = 1; i < files.length; i++) expect(files[i]! - files[i - 1]!, `gap before file ${i}`).toBeGreaterThanOrEqual(60);
+    expect(files.at(-1)! - files[0]!, "span of the file requests").toBeGreaterThanOrEqual((files.length - 1) * 120 - 40);
     expect(files[0]! - page.at).toBeGreaterThanOrEqual(100);
   });
 
