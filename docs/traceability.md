@@ -14,7 +14,7 @@ How evidence is found: a test file counts for a task when it names the task ID (
 | Deferred (Post-v1) | 4 |
 | Without evidence | 0 |
 | Performance targets | 22 |
-| Acceptance criteria | 24 (19 met, 4 partly met, 1 not met) |
+| Acceptance criteria | 24 (21 met, 2 partly met, 1 not met) |
 | Hardening backlog items | 29 |
 
 ## Tasks
@@ -178,7 +178,7 @@ How evidence is found: a test file counts for a task when it names the task ID (
 | ID | Status | Files named |
 |---|---|---|
 | HB-01 | Done (Phase 9, wave 1) | 5 |
-| HB-02 | Open | 0 |
+| HB-02 | Done (Phase 9, CI) | 0 |
 | HB-03 | Done (Phase 9, wave 1) | 1 |
 | HB-04 | Done (Phase 6) | 2 |
 | HB-05 | Done (Phase 9, wave 1) | 5 |
@@ -187,7 +187,7 @@ How evidence is found: a test file counts for a task when it names the task ID (
 | HB-08 | Done (Phase 9, wave 1) | 1 |
 | HB-09 | Phase 5 (shortcut, import), Phase 9 wave C (flakes); arm6... | 0 |
 | HB-10 | Done (Phase 9, wave 2) | 0 |
-| HB-11 | Done (Phase 9, wave 2); compose run on Linux open | 0 |
+| HB-11 | Done (Phase 9, wave 2); compose run on Linux done in CI (... | 0 |
 | HB-12 | Done (Phase 9, wave 2) | 0 |
 | HB-13 | Done (Phase 9, wave 2) | 0 |
 | HB-14 | Done (Phase 9, wave 2) | 0 |
@@ -197,7 +197,7 @@ How evidence is found: a test file counts for a task when it names the task ID (
 | HB-18 | Done (Phase 9, wave C) | 0 |
 | HB-19 | Done (Phase 9, wave C) | 0 |
 | HB-20 | Done (Phase 9, wave C) | 1 |
-| HB-21 | Open | 2 |
+| HB-21 | Done (Phase 9, CI) | 3 |
 | HB-22 | Done (Phase 9, wave D) | 2 |
 | HB-23 | Done (Phase 9, wave D) | 2 |
 | HB-24 | Done (Phase 9, wave D) | 2 |
