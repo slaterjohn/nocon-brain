@@ -35,14 +35,15 @@ describe("graceful shutdown under load (in process)", () => {
         await new Promise((r) => setTimeout(r, 2));
       }
     })();
-    await new Promise((r) => setTimeout(r, 50));
+    // Wait for a real sample of answered requests rather than a fixed time (a slow runner answers fewer in 50 ms).
+    await until(() => outcomes.length >= 10);
     const started = Date.now();
     stopping = true;
     await t.server.close();
     closed = true;
     const took = Date.now() - started;
     await hammer;
-    expect(stopping && outcomes.length).toBeGreaterThan(10);
+    expect(stopping && outcomes.length).toBeGreaterThanOrEqual(10);
     expect(took).toBeLessThan(10_000);
     expect(outcomes.every((s) => s === 200 || s === 503), `statuses: ${[...new Set(outcomes)].join(",")}`).toBe(true);
 
