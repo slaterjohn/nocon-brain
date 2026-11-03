@@ -50,6 +50,9 @@ services:
       # The API answers only requests that carry the proxy secret (from `web`) or come from inside the container (the health check),
       # so containers on `egress`, such as SearXNG, cannot use it.
       NCB_API_PROXY_ONLY: "true"
+      # ... and the secret only counts from the `backend` network. The renderer (and SearXNG) hold a copy of it by default, so without this a
+      # compromised renderer on the `render` network could call the API as `web`. Keep it equal to the `backend` subnet below.
+      NCB_API_PROXY_FROM: ${NCB_BACKEND_SUBNET:-172.31.249.0/24}
     ports:
       # The browser loads archived frames from this port directly, so it is published. The API (3001) is not:
       # the web container proxies it over the internal `backend` network.
@@ -113,7 +116,8 @@ services:
       - /var/cache/searxng:size=64m,uid=977,gid=977
     mem_limit: ${NCB_SEARXNG_MEMORY:-384m}
     pids_limit: 256
-    networks: [backend, egress]
+    # egress only: `server` reaches it there, and it has no reason to be on the network where `web` talks to the API.
+    networks: [egress]
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
       interval: 15s
@@ -166,9 +170,13 @@ networks:
   frontend:
     driver_opts:
       com.docker.network.bridge.enable_ip_masquerade: "false"
-  # web <-> server API (3001 is never published), and searxng. No route to the outside world.
+  # web <-> server API (3001 is never published). No route to the outside world. The subnet is fixed so `server` can say which source
+  # addresses may use the proxy secret (NCB_API_PROXY_FROM above). Change both together (NCB_BACKEND_SUBNET in .env) if it clashes.
   backend:
     internal: true
+    ipam:
+      config:
+        - subnet: ${NCB_BACKEND_SUBNET:-172.31.249.0/24}
   # Normal bridge. server (downloads, online search) and searxng reach the internet through it. It also carries
   # the archive port that server publishes.
   egress: {}

@@ -7,7 +7,7 @@ import { BookOpen, ExternalLink, Plus, ShieldCheck, Trash2 } from "lucide-react"
 import { errorMessage, get, patch, post, useApi } from "@/lib/api";
 import type { Source } from "@/lib/types";
 import {
-  checkText, flavourLabel, formatCount, languageLabel, stateOf, zimUrl,
+  checkText, flavourLabel, formatCount, languageLabel, safeLink, stateOf, zimUrl,
   type RemovalPlan, type VerifyResult, type ZimEntries, type ZimEntry, type ZimPackage, type ZimReferences,
 } from "@/lib/zim";
 import { formatBytes, formatDate } from "@/lib/utils";
@@ -288,7 +288,7 @@ export function PackageDetailView({ id }: { id: string }) {
               </span>
             </Meta>
             <Meta label="Licence"><LicenceLine pkg={pkg} /></Meta>
-            {pkg.license.url ? <Meta label="Licence address"><a href={pkg.license.url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-4">{pkg.license.url}<span className="sr-only"> (opens in a new browser tab)</span></a></Meta> : null}
+            {safeLink(pkg.license.url) ? <Meta label="Licence address"><a href={safeLink(pkg.license.url)!} target="_blank" rel="noopener noreferrer" className="underline underline-offset-4">{pkg.license.url}<span className="sr-only"> (opens in a new browser tab)</span></a></Meta> : null}
             {pkg.creator || pkg.publisher ? <Meta label="Made by">{[pkg.creator, pkg.publisher].filter(Boolean).join(", ")}</Meta> : null}
             {pkg.sourceUrl ? <Meta label="Original source">{pkg.sourceUrl}</Meta> : null}
             {pkg.date ? <Meta label="Date of the file">{pkg.date}</Meta> : null}

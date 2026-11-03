@@ -22,8 +22,8 @@ export function isSsrfError(err: unknown): SsrfError | null {
 export const DEFAULT_BLOCKED_PORTS: readonly number[] = [
   1, 7, 9, 11, 13, 15, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117,
   119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601,
-  636, 873, 993, 995, 1433, 1521, 2049, 2375, 2376, 3306, 3389, 4369, 5432, 5900, 5984, 6379, 6660, 6661, 6662, 6663, 6664, 6665,
-  6666, 6667, 6668, 6669, 8086, 9042, 9200, 9300, 11211, 15672, 27017, 50070,
+  445, 636, 873, 993, 995, 1433, 1521, 1883, 2049, 2375, 2376, 2379, 2380, 3306, 3389, 4243, 4369, 5432, 5672, 5900, 5984, 5985, 5986, 6379, 6443, 6660, 6661, 6662, 6663, 6664, 6665,
+  6666, 6667, 6668, 6669, 8086, 9042, 9200, 9300, 10250, 11211, 15672, 27017, 50070,
 ];
 
 // ---------- IP literal parsing (independent of ipaddr.js, then classified by it) ----------
@@ -96,6 +96,10 @@ export function ipRange(a: ParsedIp): string {
 
 /** Only globally routable unicast addresses pass. */
 export function isPublicUnicast(a: ParsedIp): boolean {
+  const u = unwrap(a);
+  // ::/96 is the deprecated IPv4-compatible range (`::127.0.0.1`, `::a00:1`). ipaddr.js calls it plain unicast, but it can only be
+  // an attempt to smuggle an IPv4 address past a check; the one real member, `::1`, is loopback anyway. (H-03 fuzzing)
+  if (u.kind() === "ipv6" && (u as ipaddr.IPv6).parts.slice(0, 6).every((x) => x === 0)) return false;
   return ipRange(a) === "unicast";
 }
 

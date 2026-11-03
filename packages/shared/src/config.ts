@@ -39,6 +39,11 @@ export const envSchema = z.object({
   NCB_TRUSTED_LAN_CIDRS: list([]),
   /** With a proxy secret set, API requests that neither carry it nor come from loopback are refused (HB-01). Set false only for a trusted network. */
   NCB_API_PROXY_ONLY: bool(true),
+  /**
+   * Source ranges the proxy secret is honoured from. Empty: from anywhere (the secret alone decides). Compose sets the `backend` subnet, so a
+   * container that merely holds a copy of the secret, such as the renderer (default secret = the proxy secret), cannot use it (H-03).
+   */
+  NCB_API_PROXY_FROM: list([]),
   NCB_PROXY_SECRET: z.string().min(16, "must be at least 16 characters (openssl rand -hex 32)").optional(),
   NCB_SECRET_KEY: z.string().min(16, "must be at least 16 characters").optional(),
   NCB_COOKIE_SECURE: bool(false),

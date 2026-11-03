@@ -384,6 +384,8 @@ test("an error from the server shows an error state with a retry", async ({ page
 for (const scheme of ["light", "dark"] as const) {
   test.describe(`${scheme} theme`, () => {
     test.use({ colorScheme: scheme });
+    // Playwright's Firefox ignores the context-level colour scheme under the test runner (found in H-11); the page-level call works in every engine.
+    test.beforeEach(async ({ page }) => { await page.emulateMedia({ colorScheme: scheme }); });
     const check = async (page: Page, url: string, ready: () => Promise<void>) => {
       await page.goto(url);
       await expect(page.locator("html")).toHaveClass(scheme === "dark" ? /dark/ : /^(?!.*dark).*$/);

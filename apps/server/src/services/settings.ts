@@ -54,7 +54,7 @@ export function buildGroupSchemas(config: ResolvedConfig) {
     }),
     offline: z.object({
       forced: bool(false),
-      probeUrl: z.union([z.literal(""), z.url({ error: "Enter an absolute URL or leave this empty" })]).default(config.NCB_CONNECTIVITY_PROBE_URL),
+      probeUrl: z.union([z.literal(""), z.url({ protocol: /^https?$/, error: "Enter an http or https address, or leave this empty" })]).default(config.NCB_CONNECTIVITY_PROBE_URL),
       probeIntervalSeconds: intIn(60, 10, 3600),
       probeToken: z.string().max(512).nullable().default(null).meta({ writeOnly: true, description: "Optional bearer token sent with the probe. Never returned." }),
     }),

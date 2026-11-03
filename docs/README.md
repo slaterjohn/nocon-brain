@@ -14,6 +14,9 @@ NoConBrain is a self-hosted, offline-first knowledge archiver, crawler and searc
 | [deployment.md](deployment.md) | What the Docker Compose stack looks like as built: images, networks, volumes, hardening, checks and known limits |
 | [benchmarks.md](benchmarks.md) | Measured numbers with the hardware they came from |
 | [risk-register.md](risk-register.md) | Risks with likelihood, impact, mitigation and owner phase |
+| [security.md](security.md) | Threat model, isolation design, container hardening, secrets, and the results of the security review (authorisation matrix, SSRF fuzzing, XSS, isolation, SBOM) |
+| [browser-support.md](browser-support.md) | Supported browsers, what runs in each, how to run the matrix, known differences and gaps |
+| [hardening-backlog.md](hardening-backlog.md) | Findings from verification and review, with their status |
 
 Suggested reading order: architecture, technology decisions, data model, API, then the plan.
 

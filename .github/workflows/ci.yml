@@ -49,13 +49,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.pw.outputs.version }}
+          key: playwright-3engines-${{ runner.os }}-${{ runner.arch }}-${{ steps.pw.outputs.version }}
       - name: Install Playwright browsers and system dependencies
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
       - name: Install Playwright system dependencies only
         if: steps.pw-cache.outputs.cache-hit == 'true'
-        run: pnpm exec playwright install-deps chromium
+        run: pnpm exec playwright install-deps chromium firefox webkit
       - run: pnpm test:integration
       # Phase 6 (T-12): P1 never evicted, shared assets kept, retention respected, interrupted eviction safe, index updated, deletion distinct from eviction. Blocking on both architectures.
       - name: Storage safety suite
@@ -66,10 +66,25 @@ jobs:
       # Phase 9 (H-01): SIGKILL at each stage, power loss under WAL, graceful shutdown, failure messages, backup and restore. Blocking on both architectures.
       - name: Reliability suite
         run: pnpm test:reliability
+      # Phase 9 (H-03): authorisation matrix over every route, SSRF corpus at every fetch entry point, XSS corpus in real browsers.
+      # Blocking on Chromium and Firefox; WebKit isolation runs in the advisory browser step until it has a track record on CI.
+      - name: Security suite
+        env:
+          SECURITY_BROWSERS: chromium,firefox
+        run: pnpm test:security
       # The browser suite is timing-sensitive on shared runners (a different test flakes each run), so it runs on x64 only,
       # retries twice, and is advisory (continue-on-error) until the flaky specs are stabilised.
       - name: Browser end-to-end tests (advisory)
         if: runner.arch == 'X64'
         continue-on-error: true
         run: pnpm test:e2e --retries=2
+      # H-11: the cross-browser subset (docs/browser-support.md). One engine per step: they share ports 25000-25002.
+      - name: Browser end-to-end tests, Firefox (advisory)
+        if: runner.arch == 'X64'
+        continue-on-error: true
+        run: pnpm test:e2e:firefox --retries=2
+      - name: Browser end-to-end tests, WebKit (advisory)
+        if: runner.arch == 'X64'
+        continue-on-error: true
+        run: pnpm test:e2e:webkit --retries=2
       - run: node scripts/licence-audit.mjs

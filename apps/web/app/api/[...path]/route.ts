@@ -31,6 +31,9 @@ const FORWARD_RESPONSE_HEADERS = [
   "vary",
   "location",
   "x-request-id",
+  // The API's `default-src 'none'; frame-ancestors 'none'` (and the nosniff the web app adds itself) must reach the browser: an API response
+  // that is ever opened as a document (an imported original, an error page) then cannot run or embed anything. It was dropped before H-03.
+  "content-security-policy",
 ];
 
 function upstreamBase(): string {

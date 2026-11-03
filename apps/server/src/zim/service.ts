@@ -105,6 +105,9 @@ export function deriveLicence(meta: Pick<ZimMeta, "name" | "title" | "creator" |
   return { name, url, attribution };
 }
 
+/** A web address a link may point at. `z.url()` alone accepts `javascript:` and `data:`, which must never become an href. */
+const webUrl = z.string().trim().url({ protocol: /^https?$/, error: "Use an http or https address" }).max(2000);
+
 const registerSchema = z.object({
   path: z.string().min(1, "Enter the path of a .zim file").max(4096),
   /** `false` (default): read the file where it is. `true`: copy it into a volume's `zim/` folder first. */
@@ -114,7 +117,7 @@ const registerSchema = z.object({
   priority: z.union([z.enum(["P1", "P2", "P3", "P4"]), z.number().int().min(1).max(4)], { error: "Use P1, P2, P3 or P4" }).optional(),
   enabledForSearch: z.boolean().optional(),
   licenseName: z.string().trim().max(200).optional(),
-  licenseUrl: z.string().trim().url().max(2000).optional(),
+  licenseUrl: webUrl.optional(),
   attribution: z.string().trim().max(2000).optional(),
   /** Creates the knowledge-package source for it (default true). */
   createSource: z.boolean().default(true),
@@ -126,7 +129,7 @@ const patchSchema = z.object({
   priority: z.union([z.enum(["P1", "P2", "P3", "P4"]), z.number().int().min(1).max(4)]).optional(),
   enabledForSearch: z.boolean().optional(),
   licenseName: z.string().trim().max(200).nullable().optional(),
-  licenseUrl: z.string().trim().url().max(2000).nullable().optional(),
+  licenseUrl: webUrl.nullable().optional(),
   attribution: z.string().trim().max(2000).nullable().optional(),
 });
 

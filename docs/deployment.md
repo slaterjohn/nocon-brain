@@ -22,8 +22,8 @@ How the Docker Compose stack is put together and how it was checked. The plan is
 | Service | Published | Networks | Notes |
 |---|---|---|---|
 | `web` | `NCB_WEB_PORT` (3000) | `frontend`, `backend` | Proxies `/api/*` to `http://server:3001` and adds the shared `NCB_PROXY_SECRET` |
-| `server` | `NCB_ARCHIVE_PORT` (3002) | `backend`, `egress` | The API on 3001 is not published. The browser loads archived frames from the archive port directly |
-| `searxng` (profile) | none | `backend`, `egress` | Reach it from the server as `http://searxng:8080` |
+| `server` | `NCB_ARCHIVE_PORT` (3002) | `backend`, `egress`, `render` | The API on 3001 is not published. The browser loads archived frames from the archive port directly |
+| `searxng` (profile) | none | `egress` | Reach it from the server as `http://searxng:8080`. It is not on `backend`, where `web` talks to the API |
 | `renderer` (profile) | none | `render` | Internal-only network shared with `server`, which runs the guarded forward proxy on it (port 3128). No route to the internet or the LAN. `server` is on `render` always; the network exists but is empty without the profile |
 
 Differences from the sketch in architecture.md:
@@ -65,7 +65,7 @@ Results and timings are in the F-10, F-13 and F-14 report. In short: `docker com
 - Turning the renderer on needs two lines in `.env` (`COMPOSE_PROFILES=renderer`, `NCB_RENDERER_URL=http://renderer:8080`). Compose cannot set an environment variable on `server` only when another service's profile is active.
 - The forward proxy listens only on `server`'s address inside the `render` network (HB-07). `NCB_RENDER_PROXY_HOST` is set to the network's subnet (`NCB_RENDER_SUBNET`, default `172.31.250.0/24`, fixed in `compose.yml`), and the server binds to its own address in that range. If the subnet clashes with one you use, change `NCB_RENDER_SUBNET` in `.env`. If the server has no address in the range the proxy does not start, rather than listening everywhere. It still refuses requests without the renderer secret.
 - Jobs fail with `No handler named "fetch"` until the fetch handlers land in Phase 2. That is expected.
-- The API still listens on all addresses inside the container, but it answers only requests that carry the proxy secret (from `web`) or come from the container itself (HB-01, `NCB_API_PROXY_ONLY`, default on). SearXNG and anything else on `egress` gets a 403. Tests: `tests/integration/server/hardening.test.ts`.
+- The API still listens on all addresses inside the container, but it answers only requests that carry the proxy secret (from `web`) or come from the container itself (HB-01, `NCB_API_PROXY_ONLY`, default on). SearXNG and anything else on `egress` gets a 403. The secret also only counts from the `backend` subnet (`NCB_API_PROXY_FROM`, fixed in `compose.yml` as `NCB_BACKEND_SUBNET`, default `172.31.249.0/24`), because the renderer and SearXNG hold a copy of it by default and the renderer shares a network with `server` (HB-11). Change the subnet in `.env` if it clashes with one you use. Tests: `tests/integration/server/hardening.test.ts`, `tests/security/api-proxy-source.test.ts`.
 
 ## Backup, restore and scheduled maintenance
 

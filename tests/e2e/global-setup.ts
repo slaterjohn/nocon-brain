@@ -72,7 +72,8 @@ export default async function globalSetup() {
   process.env.E2E_ARCHIVE_URL = `http://127.0.0.1:${ARCHIVE_PORT}`;
 
   // Local fixture websites for the capture specs. The server is told it may fetch loopback hosts (the operator allowlist).
-  const fixtures = await startFixtures();
+  // The hostile fixture page (`/malicious`) tries to call the app's own API; pointing it at the real one makes a leak visible as a request.
+  const fixtures = await startFixtures({ appApiUrl: `http://127.0.0.1:${WEB_PORT}/api/evil-probe` });
   process.env.E2E_ARTICLE_URL = fixtures.urls.article;
   process.env.E2E_EDGE_URL = fixtures.urls.edge;
   process.env.E2E_LINKGRAPH_URL = fixtures.urls.linkGraph;

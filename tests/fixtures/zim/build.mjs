@@ -33,7 +33,8 @@ export const NOTITLE_UUID = hexUuid("ncb-fixture-note");
 export const OTHER_UUID = hexUuid("ncb-fixture-cuis");
 export const BIG_UUID = hexUuid("ncb-fixture-bigg");
 export const WIKI_UUID = hexUuid("ncb-fixture-wiki");
-const RAW = { [CHEM_UUID]: "ncb-fixture-chem", [NOTITLE_UUID]: "ncb-fixture-note", [OTHER_UUID]: "ncb-fixture-cuis", [BIG_UUID]: "ncb-fixture-bigg", [WIKI_UUID]: "ncb-fixture-wiki" };
+export const HOSTILE_UUID = hexUuid("ncb-fixture-host");
+const RAW = { [CHEM_UUID]: "ncb-fixture-chem", [NOTITLE_UUID]: "ncb-fixture-note", [OTHER_UUID]: "ncb-fixture-cuis", [BIG_UUID]: "ncb-fixture-bigg", [WIKI_UUID]: "ncb-fixture-wiki", [HOSTILE_UUID]: "ncb-fixture-host" };
 
 /**
  * Snippet payload. libzim strips real tags when it builds a snippet, but text that was written as escaped markup comes back as live
@@ -74,7 +75,7 @@ const WIKI_ARTICLES = [
   ["Black_hole", "Black hole", `<p>A <b>black hole</b> is a region of spacetime where gravity is so strong that nothing escapes.</p>`],
 ];
 
-async function build(file, { uuid, title, fulltext, articles, language = "eng", flavour = "maxi", extraMeta = {}, redirects = true, extraItems = [] }) {
+export async function buildZim(file, { uuid, title, fulltext, articles, language = "eng", flavour = "maxi", extraMeta = {}, redirects = true, extraItems = [] }) {
   const { Creator, StringItem, Compression } = await loadLibzim();
   fs.rmSync(file, { force: true });
   const creator = new Creator().configNbWorkers(1).configClusterSize(16 * 1024).configIndexing(fulltext, language).configCompression(Compression.Zstd);
@@ -100,19 +101,52 @@ async function build(file, { uuid, title, fulltext, articles, language = "eng", 
   await creator.finishZimCreation();
 }
 
+/**
+ * A package made to attack the reader (H-03): one article per vector given, entries whose declared type disagrees with their bytes, script, SVG and
+ * XHTML entries, a style sheet with imports, and metadata (title, creator, licence, source) that is markup. `vectors` is a list of { name, html }.
+ */
+export async function buildHostileZim(file, vectors) {
+  const articles = vectors.map((v, i) => [`V${i}`, `Vector ${i}`, v.html]);
+  articles.unshift(["Hostile_start", "Hostile start", `<p>Start of the hostile package. xyzzyhostile</p>`]);
+  const A = "alert(1)";
+  const extraItems = [
+    ["A/svg.svg", "image/svg+xml", "svg", `<svg xmlns="http://www.w3.org/2000/svg" onload="${A}"><script>${A}</script><a href="javascript:${A}"><text>x</text></a><image href="http://attacker.invalid/a.png"/></svg>`],
+    ["A/doc.xhtml", "application/xhtml+xml", "xhtml", `<html xmlns="http://www.w3.org/1999/xhtml"><body onload="${A}"><script>${A}</script><p>xhtml</p></body></html>`],
+    ["A/xml.xml", "text/xml", "xml", `<?xml version="1.0"?><root><x:script xmlns:x="http://www.w3.org/1999/xhtml">${A}</x:script></root>`],
+    ["A/js.js", "text/javascript", "js", `${A}`],
+    ["A/plain.txt", "text/plain", "plain", `<script>${A}</script><img src=x onerror=${A}>`],
+    ["A/html-as-png", "image/png", "htmlpng", `<html><body onload="${A}"><script>${A}</script></body></html>`],
+    ["A/html-as-octet", "application/octet-stream", "htmloct", `<html><body onload="${A}"><script>${A}</script></body></html>`],
+    ["A/no-type", "", "notype", `<html><body onload="${A}"><script>${A}</script></body></html>`],
+    ["A/utf7.html", "text/html; charset=utf-7", "utf7", `+ADw-script+AD4-alert(1)+ADw-/script+AD4-`],
+    ["A/html-params", "text/html;charset=ISO-2022-JP", "htmlparams", `<script>${A}</script><p>x</p>`],
+    ["A/css.css", "text/css", "css", `@import url("http://attacker.invalid/x.css"); body{background:url(http://attacker.invalid/a.png);behavior:url(x.htc);-moz-binding:url(http://attacker.invalid/x.xml#y)} a{background:expression(${A})}`],
+    ["A/mhtml", "multipart/related", "mhtml", `Content-Type: text/html\r\n\r\n<script>${A}</script>`],
+    ["A/pdf.pdf", "application/pdf", "pdf", `%PDF-1.4 <script>${A}</script>`],
+    ["A/swf", "application/x-shockwave-flash", "swf", `CWS`],
+  ];
+  await buildZim(file, {
+    uuid: HOSTILE_UUID, title: `<img src=x onerror="${A}">Hostile <script>${A}</script>`, fulltext: true, articles, extraItems, redirects: false,
+    extraMeta: {
+      Creator: `<script>${A}</script>`, Publisher: `"><img src=x onerror=${A}>`, Description: `<svg onload=${A}>`,
+      License: `"><script>${A}</script>`, Source: `javascript:${A}`, Name: "hostile",
+    },
+  });
+}
+
 /** Builds every fixture into `outDir` (skipping files that already exist unless `force`). Returns their paths. */
 export async function buildFixtures(outDir = path.join(here, ".cache"), { force = false } = {}) {
   fs.mkdirSync(outDir, { recursive: true });
   const out = { wiki: path.join(outDir, "wiki.zim"), big: path.join(outDir, "big.zim"), chem: path.join(outDir, "chem.zim"), notitle: path.join(outDir, "notitle.zim"), other: path.join(outDir, "other.zim"), bad: path.join(outDir, "bad.zim") };
-  if (force || !fs.existsSync(out.chem)) await build(out.chem, { uuid: CHEM_UUID, title: "Chemistry (fixture)", fulltext: true, articles: CHEM_ARTICLES });
+  if (force || !fs.existsSync(out.chem)) await buildZim(out.chem, { uuid: CHEM_UUID, title: "Chemistry (fixture)", fulltext: true, articles: CHEM_ARTICLES });
   if (force || !fs.existsSync(out.notitle)) {
-    await build(out.notitle, {
+    await buildZim(out.notitle, {
       uuid: NOTITLE_UUID, title: "Notes without a full-text index", fulltext: false, flavour: "nopic", language: "eng",
       redirects: false, articles: [["Aromatic_notes", "Aromatic notes", `<p>Notes about aromatic rings, but nothing indexes this text.</p>`], ["Alkane_notes", "Alkane notes", `<p>Alkanes are saturated.</p>`]],
     });
   }
   if (force || !fs.existsSync(out.other)) {
-    await build(out.other, {
+    await buildZim(out.other, {
       uuid: OTHER_UUID, title: "Cuisine (fixture)", fulltext: true, language: "fra", flavour: "mini",
       redirects: false, articles: [["Pain", "Pain", `<p>Le pain est une aromatic base de la cuisine.</p>`], ["Fromage", "Fromage", `<p>Le fromage est fait de lait.</p>`]],
     });
@@ -120,14 +154,14 @@ export async function buildFixtures(outDir = path.join(here, ".cache"), { force 
   if (force || !fs.existsSync(out.big)) {
     // About 24 MiB of incompressible media in a few articles: proves that registering a package reads in place and extracts nothing.
     const { randomBytes } = await import("node:crypto");
-    await build(out.big, {
+    await buildZim(out.big, {
       uuid: BIG_UUID, title: "Large package (fixture)", fulltext: false, flavour: "maxi", redirects: false,
       articles: [["Big_article", "Big article", `<p>Large package.</p><img src="I/blob0.bin">`]],
       extraItems: Array.from({ length: 6 }, (_, i) => [`I/blob${i}.bin`, "application/octet-stream", `blob${i}`, randomBytes(4 * 1024 * 1024)]),
     });
   }
   if (force || !fs.existsSync(out.wiki)) {
-    await build(out.wiki, {
+    await buildZim(out.wiki, {
       uuid: WIKI_UUID, title: "Wikipedia (fixture)", fulltext: true, language: "eng", flavour: "mini", articles: WIKI_ARTICLES,
       extraMeta: { Creator: "Wikipedia", Publisher: "Wikimedia", Source: "https://en.wikipedia.org", Description: "Fixture package that looks like a Wikipedia build." },
     });

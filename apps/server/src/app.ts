@@ -5,7 +5,8 @@ import rateLimit from "@fastify/rate-limit";
 import type { ResolvedConfig } from "@ncb/shared";
 import { AppError, isAppError, redactObject, redactText, redactUrl, toApiError, ulid } from "@ncb/shared";
 import type { ServerState } from "./context.js";
-import { clientIp, proxyVerified } from "./lib/clientip.js";
+import { cidrMatcher } from "./lib/cidr.js";
+import { clientIp, proxyVerified, type RouteEntry } from "./lib/clientip.js";
 import { clearSessionCookie, setSessionCookie } from "./lib/http.js";
 import { RequestValidationError, validatorCompiler } from "./lib/zod.js";
 import { SESSION_COOKIE } from "./services/auth.js";
@@ -43,6 +44,15 @@ export function isLoopback(addr: string | undefined): boolean {
   if (!addr) return true;
   const a = addr.startsWith("::ffff:") ? addr.slice(7) : addr;
   return a === "::1" || /^127\./.test(a);
+}
+
+/**
+ * True for anything under /api. The raw URL alone is not enough: the router percent-decodes the path before matching, so
+ * `/%61pi/settings` reaches the `/api/settings` handler while its raw URL does not start with `/api` (found by the H-03
+ * authorisation matrix). The matched route is the truth.
+ */
+export function isApiRequest(req: FastifyRequest): boolean {
+  return req.url.startsWith("/api") || (req.routeOptions?.url ?? "").startsWith("/api");
 }
 
 function header(req: FastifyRequest, name: string): string | undefined {
@@ -109,6 +119,16 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
     },
   });
   app.decorate("proxySecret", config.NCB_PROXY_SECRET ?? "");
+  app.decorate("proxyFrom", config.NCB_API_PROXY_FROM.length ? cidrMatcher(config.NCB_API_PROXY_FROM) : null);
+  const routeTable: RouteEntry[] = [];
+  app.decorate("routeTable", routeTable);
+  app.addHook("onRoute", (r) => {
+    const cfg = (r.config ?? {}) as { auth?: RouteEntry["auth"]; guestPost?: boolean };
+    for (const method of Array.isArray(r.method) ? r.method : [r.method]) {
+      if (method === "HEAD" || method === "OPTIONS") continue; // added automatically for every GET
+      routeTable.push({ method, url: r.url, auth: cfg.auth ?? "session", guestPost: cfg.guestPost === true });
+    }
+  });
   app.setValidatorCompiler(validatorCompiler);
 
   await app.register(cookie);
@@ -117,7 +137,7 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
     max: opts.rateLimitMax ?? config.NCB_RATE_LIMIT_PER_MINUTE,
     timeWindow: "1 minute",
     keyGenerator: (req) => clientIp(req),
-    allowList: (req) => req.url.split("?")[0] === HEALTH,
+    allowList: (req) => req.routeOptions?.url === HEALTH,
     errorResponseBuilder: (_req, ctx) => {
       const seconds = Math.max(1, Math.ceil(ctx.ttl / 1000));
       return new AppError("rate_limited", `Too many requests. Wait ${seconds} second${seconds === 1 ? "" : "s"} and try again.`, { retryAfterSeconds: seconds });
@@ -139,8 +159,9 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
 
   app.addHook("onRequest", async (req, reply) => {
     reply.header("x-request-id", req.id);
-    if (!req.url.startsWith("/api")) return;
-    const path = req.url.split("?")[0]!;
+    if (!isApiRequest(req)) return;
+    // The route the router matched, not the spelling in the URL: `/%61pi/system/health` is the health route too, and any other spelling of a protected route stays protected.
+    const path = req.routeOptions?.url ?? req.url.split("?")[0]!;
 
     // 0. Only the web container (which holds the proxy secret) or the container itself (loopback: the health check, local tools) may call the API.
     //    Without this, any container on a shared network, such as SearXNG on `egress`, could reach it directly (HB-01).
@@ -202,7 +223,7 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
   app.addHook("onSend", async (req, reply, payload) => {
     reply.header("x-content-type-options", "nosniff");
     reply.header("referrer-policy", "no-referrer");
-    if (req.url.startsWith("/api")) {
+    if (isApiRequest(req)) {
       reply.header("x-frame-options", "DENY");
       reply.header("content-security-policy", "default-src 'none'; frame-ancestors 'none'");
       if (!reply.hasHeader("cache-control")) reply.header("cache-control", "no-store");

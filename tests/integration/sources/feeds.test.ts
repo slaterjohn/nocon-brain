@@ -116,7 +116,8 @@ describe("C-07 feed sources", () => {
       await t.settled(s.id);
       expect((await t.api("GET", `/api/sources/${s.id}/pages`)).body.total).toBe(3);
       expect(t.svc.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM source_discovered_urls")!.n).toBe(3);
-      expect((await t.api("GET", `/api/sources/${s.id}`)).body.lastStatus).toBe("running");
+      // Every download has ended, so the newest one decides the status (refreshStatus runs just after the job row settles).
+      await until(async () => (await t.api("GET", `/api/sources/${s.id}`)).body.lastStatus === "ok");
     } finally {
       await site.close();
     }

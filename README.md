@@ -32,8 +32,15 @@ pnpm typecheck
 pnpm test                 # unit
 pnpm test:integration     # real SQLite, worker threads
 pnpm test:reliability     # kill/restart, power loss, shutdown
+pnpm test:security        # authorisation matrix, SSRF fuzzing, XSS corpus, isolation
+pnpm test:e2e             # Playwright on Chromium; :firefox and :webkit run the cross-browser subset
+pnpm sbom                 # CycloneDX software bill of materials (git-ignored output)
 node scripts/licence-audit.mjs
 ```
+
+## Browsers
+
+NoConBrain is tested in current Chromium-based browsers (every end-to-end test), Firefox and WebKit/Safari (the subset that depends on the browser: sign-in, the archive frame, capture, search, shortcuts and the isolation checks). The matrix, how to run it and the known gaps are in [docs/browser-support.md](docs/browser-support.md). How archived content is kept away from the app, and what the security review found, is in [docs/security.md](docs/security.md).
 
 ## Licence
 

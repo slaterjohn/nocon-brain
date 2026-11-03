@@ -151,6 +151,8 @@ test("show link states: off removes the marks from saved pages, on brings them b
 for (const scheme of ["light", "dark"] as const) {
   test.describe(`${scheme} theme: no serious axe violations on the new screens`, () => {
     test.use({ colorScheme: scheme });
+    // Playwright's Firefox ignores the context-level colour scheme under the test runner (found in H-11); the page-level call works in every engine.
+    test.beforeEach(async ({ page }) => { await page.emulateMedia({ colorScheme: scheme }); });
     for (const path of ["/library", "/bookmarks", "/history", "/downloads", "/search?q=tides", `/save?url=${encodeURIComponent("https://example.org/x")}`]) {
       test(path, async ({ page }) => {
         await page.goto(path);

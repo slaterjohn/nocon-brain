@@ -6,3 +6,6 @@ export const WIKI_UUID: string;
 export const XSS_TEXT: string;
 export const XSS_BODY: string;
 export function buildFixtures(outDir?: string, opts?: { force?: boolean }): Promise<{ wiki: string; chem: string; notitle: string; other: string; bad: string; big: string }>;
+export const HOSTILE_UUID: string;
+export function buildZim(file: string, opts: Record<string, unknown>): Promise<void>;
+export function buildHostileZim(file: string, vectors: { name: string; html: string }[]): Promise<void>;

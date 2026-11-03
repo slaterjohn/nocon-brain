@@ -1,6 +1,6 @@
 # SearXNG settings for the optional `searxng` compose profile (docs/architecture.md section 7).
-# Mounted read-only at /etc/searxng/settings.yml. Reachable only on the internal `backend` network
-# as http://searxng:8080; no port is published.
+# Mounted read-only at /etc/searxng/settings.yml. Reachable from `server` on the `egress` network
+# as http://searxng:8080; no port is published. It is not on `backend`, where `web` talks to the API.
 use_default_settings: true
 
 general:

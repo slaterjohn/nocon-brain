@@ -25,7 +25,10 @@ Knowledge packages are the exception. `@openzim/libzim` has no prebuilt Node bin
 | `pnpm test:storage-safety` | The storage safety suite |
 | `pnpm test:discovery` | The discovery suite |
 | `pnpm test:reliability` | The reliability suite: kill and restart, power loss, shutdown, failures |
+| `pnpm test:security` | The security suite: authorisation matrix, SSRF fuzzing, XSS corpus, isolation checks (about 4 minutes; see [security.md](../security.md)) |
+| `pnpm sbom` | Writes `sbom/nocon-brain.cdx.json`, a CycloneDX software bill of materials (git-ignored); `--prod` for what ships |
 | `pnpm licence-audit` | Licence check of dependencies |
-| `pnpm test:e2e` | Playwright; needs ports 25000 to 25002 free |
+| `pnpm test:e2e` | Playwright on Chromium, every spec; needs ports 25000 to 25002 free |
+| `pnpm test:e2e:firefox`, `pnpm test:e2e:webkit` | The cross-browser subset on Firefox or WebKit (one engine per run; install them with `pnpm exec playwright install firefox webkit`; see [browser-support.md](../browser-support.md)) |
 
 Automated tests never use the network. The reliability suite starts and kills real server processes; set `RELIABILITY_SEED` to repeat a particular set of kill times.

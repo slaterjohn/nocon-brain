@@ -261,6 +261,12 @@ export async function startArticle({ appApiUrl = 'http://127.0.0.1:3000/api/evil
 <script src="/malicious.js"></script></article></main>`;
       return html(res, layout(origin, { title: 'Malicious page', canonical: `${origin}/malicious`, body }), 200, { 'Set-Cookie': 'fixture_session=secret-cookie-value; Path=/' });
     }
+    // A page whose title, headings and text are markup. Every place the app shows a title or a snippet must show it as text (H-03).
+    if (p === '/hostile-title') {
+      const t = `<img src=x onerror="document.title='pwned-title'"><script>document.title='pwned-script'</script>`;
+      const body = `<main><article><h1>${esc(t)}</h1><p>The quokkazorn is a made-up animal used to test that markup in titles and snippets stays text. ${esc('<b onmouseover=alert(1)>bold</b> <img src=x onerror=alert(2)> <a href="javascript:alert(3)">link</a>')} quokkazorn quokkazorn.</p></article></main>`;
+      return html(res, layout(origin, { title: t, canonical: `${origin}/hostile-title`, body }));
+    }
     if (p === '/malicious.js') return send(res, 200, MALICIOUS_JS(appApiUrl), { 'Content-Type': 'text/javascript' });
     if (p === '/dedup/a' || p === '/dedup/b') {
       const b = p.endsWith('b');

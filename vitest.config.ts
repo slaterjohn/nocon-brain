@@ -62,6 +62,18 @@ export default defineConfig({
           fileParallelism: false,
         },
       },
+      {
+        // The named security suite (task H-03): API authorisation matrix over the live route table, SSRF fuzzing of every outbound fetch path,
+        // the XSS corpus against archived-page, snippet, title and ZIM serving, header and listener isolation checks.
+        test: {
+          name: "security",
+          include: ["tests/security/**/*.test.ts"],
+          environment: "node",
+          testTimeout: 180_000,
+          hookTimeout: 120_000,
+          fileParallelism: false,
+        },
+      },
     ],
   },
 });

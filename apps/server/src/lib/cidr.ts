@@ -52,6 +52,21 @@ export function privateCidrMatcher(cidrs: string[]): (ip: string) => boolean {
   };
 }
 
+/** Builds a matcher for any ranges (not only private ones). An IPv4-mapped IPv6 address is matched as its IPv4 form. */
+export function cidrMatcher(cidrs: string[]): (ip: string) => boolean {
+  const list = new BlockList();
+  for (const text of cidrs) {
+    const c = parseCidr(text);
+    list.addSubnet(c.net, c.prefix, c.family);
+  }
+  return (ip: string) => {
+    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+    const addr = mapped ? mapped[1]! : ip;
+    const fam = isIP(addr);
+    return fam !== 0 && list.check(addr, fam === 4 ? "ipv4" : "ipv6");
+  };
+}
+
 export interface LocalInterfaces {
   [name: string]: { address: string; family: string | number; internal: boolean }[] | undefined;
 }
