@@ -122,21 +122,41 @@ function search(query: string, limit: number, offset: number, budgetMs: number):
   return { kind: "search", hits, estimated: s.estimatedMatches, partial };
 }
 
+/** The first position in the title index whose title is after `after` (bytewise, as libzim orders titles). */
+function firstAfter(a: Archive, after: string, size: number): number {
+  const key = Buffer.from(after);
+  let lo = 0;
+  let hi = size;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (Buffer.compare(Buffer.from(a.getEntryByTitle(mid).title), key) <= 0) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * The articles by title, after the title `after`. `findByTitle` is a prefix search, not a position, so the title the last page ended on is
+ * located by a binary search over the title index and the scan carries on from there in windows.
+ */
 function browse(after: string | undefined, limit: number): ZimReply {
   const a = arch();
-  const range = after ? a.findByTitle(after) : a.iterByTitle();
+  const all = a.iterByTitle();
+  const total = all.size;
+  let pos = after ? firstAfter(a, after, total) : 0;
   const items: { path: string; title: string }[] = [];
-  let skipped = !after;
   let next: string | null = null;
-  for (const e of range) {
-    if (!skipped) { skipped = true; if (e.title === after) continue; }
-    if (items.length >= limit) { next = items[items.length - 1]!.title; break; }
-    // Redirects and non-article entries (stylesheets, images) are not listed: a browse list is for reading.
-    if (e.isRedirect) continue;
-    let mime = "";
-    try { mime = e.item.mimetype; } catch { continue; }
-    if (!/^text\/html|^application\/xhtml/.test(mime)) continue;
-    items.push({ path: e.path, title: e.title });
+  scan: while (pos < total) {
+    for (const e of all.offset(pos, 200)) {
+      pos++;
+      // Redirects and non-article entries (stylesheets, images) are not listed: a browse list is for reading.
+      if (e.isRedirect) continue;
+      let mime = "";
+      try { mime = e.item.mimetype; } catch { continue; }
+      if (!/^text\/html|^application\/xhtml/.test(mime)) continue;
+      if (items.length >= limit) { next = items[items.length - 1]!.title; break scan; }
+      items.push({ path: e.path, title: e.title });
+    }
   }
   return { kind: "browse", items, next };
 }

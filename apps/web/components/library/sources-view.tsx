@@ -84,11 +84,11 @@ export function SourcesView() {
                   <TableCell className="whitespace-nowrap">{whenText(s.lastRunAt ?? runs[s.id]?.at ?? null, "Never")}</TableCell>
                   <TableCell className="whitespace-nowrap">{s.paused || !s.enabled ? "Not scheduled" : s.nextRunAt ? formatDate(s.nextRunAt) : describeSchedule(s.schedule) === "Only when you run it" ? "Manual" : "Not scheduled"}</TableCell>
                   <TableCell className="text-right tabular-nums">{s.pageCount}</TableCell>
-                  <TableCell className="text-right whitespace-nowrap tabular-nums">{sizes[s.id] !== undefined ? formatBytes(sizes[s.id]) : "–"}</TableCell>
+                  <TableCell className="text-right whitespace-nowrap tabular-nums">{s.knowledgePackage ? formatBytes(s.knowledgePackage.sizeBytes) : sizes[s.id] !== undefined ? formatBytes(sizes[s.id]) : "–"}</TableCell>
                   <TableCell className="whitespace-nowrap">{priorityLabel(s.priority)}</TableCell>
                   <TableCell>
                     <div className="flex flex-wrap justify-end gap-1">
-                      {s.system ? null : <RunButtons s={s} actions={actions} />}
+                      {s.system || s.type === "knowledge_package" ? null : <RunButtons s={s} actions={actions} />}
                       <EnableButton s={s} actions={actions} />
                     </div>
                   </TableCell>

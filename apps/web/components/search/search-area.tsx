@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { useSearchPrefs, useSearchServerSettings, type SearchPrefs } from "@/lib/search-prefs";
 import { readHistory, readSavedList, searchHref, stateFromSaved, type SavedSearch } from "@/lib/search";
 import { formatDate } from "@/components/library/format";
+import { isZimMode, ZIM_MODE_HELP, ZIM_MODE_LABELS, ZIM_MODES } from "@/lib/zim";
 import { SearchBox } from "./search-box";
 import { CandidatesDialog, SavedSourceDialog } from "./saved-source";
 
@@ -273,6 +274,13 @@ function SearchSettings() {
             {[10, 20, 30, 40, 50].concat([10, 20, 30, 40, 50].includes(prefs.resultsPerPage) ? [] : [prefs.resultsPerPage]).sort((a, b) => a - b).map((n) => <option key={n} value={n}>{n}</option>)}
           </Select>
           <p className="mt-1 text-xs text-muted-foreground">Saved to your account.</p>
+        </div>
+        <div>
+          <Label htmlFor="set-zim" className="mb-1 block">Knowledge package results</Label>
+          <Select id="set-zim" className="max-w-sm" value={prefs.zimResults} onChange={(e) => isZimMode(e.target.value) && void changePref({ zimResults: e.target.value })} aria-describedby="set-zim-help" data-testid="search-zim-mode">
+            {ZIM_MODES.map((m) => <option key={m} value={m}>{ZIM_MODE_LABELS[m]}</option>)}
+          </Select>
+          <p id="set-zim-help" className="mt-1 text-xs text-muted-foreground">{ZIM_MODE_HELP[prefs.zimResults]} Saved to your account. <Link href="/storage/packages" className="underline underline-offset-4">Knowledge package settings</Link></p>
         </div>
         <div>
           <Label htmlFor="set-prefer" className="mb-1 block">When a page is saved and also online</Label>

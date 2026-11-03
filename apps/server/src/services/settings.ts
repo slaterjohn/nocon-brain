@@ -137,7 +137,9 @@ export const userSettingsSchema = z.object({
       recentSearches: z.boolean().default(false), bookmarks: z.boolean().default(false), favourites: z.boolean().default(false), libraryStats: z.boolean().default(false),
     }).default({ recentSearches: false, bookmarks: false, favourites: false, libraryStats: false }),
     resultsPerPage: z.number().int().min(1).max(50).default(10),
-  }).default({ homepageSections: { recentSearches: false, bookmarks: false, favourites: false, libraryStats: false }, resultsPerPage: 10 }),
+    /** How knowledge-package hits join search results: mixed into the list, in their own groups, or not asked at all (Phase 8 interface). */
+    zimResults: z.enum(["unified", "federated", "off"]).default("unified"),
+  }).default({ homepageSections: { recentSearches: false, bookmarks: false, favourites: false, libraryStats: false }, resultsPerPage: 10, zimResults: "unified" }),
 });
 
 type Json = Record<string, unknown>;

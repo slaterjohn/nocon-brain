@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useApi } from "@/lib/api";
 import type { Source } from "@/lib/types";
 import { Breadcrumb } from "@/components/common/breadcrumb";
@@ -14,6 +15,10 @@ export function NewSourceView() {
       <Breadcrumb items={[{ label: "Library", href: "/library" }, { label: "Sources", href: "/library/sources" }, { label: "New source" }]} />
       <PageHeader title="New source" description="Say what to save, how often, and how much it matters. You see an estimate before anything runs." />
       <LibraryNav />
+      <p className="mb-4 text-sm" data-testid="package-source-hint">
+        Making a source for a knowledge package you have added?{" "}
+        <Link href="/library/sources/new/package" className="text-primary underline underline-offset-4" data-testid="package-source-link">Source for a knowledge package</Link>.
+      </p>
       <SourceForm />
     </div>
   );

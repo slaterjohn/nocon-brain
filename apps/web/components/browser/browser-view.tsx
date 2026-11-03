@@ -106,7 +106,7 @@ function FrameHost({
       // A new key is a new iframe: shell-initiated moves add nothing to the browser's session history (D-5).
       key={`${tab.id}-${c.frameKey}`}
       ref={(el) => register(tab.id, el)}
-      title={`Saved page: ${c.current.title}`}
+      title={`${c.zim && c.current.state === "zim" ? "Package article" : "Saved page"}: ${c.current.title}`}
       src={c.frame.url}
       sandbox={FRAME_SANDBOX}
       referrerPolicy="no-referrer"
@@ -127,12 +127,13 @@ export function BrowserView() {
   const [findFor, setFindFor] = React.useState<string | null>(null);
   const active = b.active;
   const c = active.content;
-  const findOpen = findFor === active.id && c.kind === "archive";
+  const canFind = c.kind === "archive" && !(c.zim && c.current.state === "zim");
+  const findOpen = findFor === active.id && canFind;
   const register = React.useCallback((id: string, el: HTMLIFrameElement | null) => { frames.current[id] = el; }, []);
 
   const toggleFind = React.useCallback(() => {
-    setFindFor((cur) => (cur === active.id ? null : c.kind === "archive" ? active.id : cur));
-  }, [active.id, c.kind]);
+    setFindFor((cur) => (cur === active.id ? null : canFind ? active.id : cur));
+  }, [active.id, canFind]);
 
   const savingId = active.saving?.downloadId;
   const archiveTabs = b.tabs.filter((t) => t.content.kind === "archive");
@@ -141,7 +142,7 @@ export function BrowserView() {
     <div className="flex min-h-[calc(100dvh-3.5rem)] flex-col">
       <BrowserChrome addressRef={addressRef} onToggleFind={toggleFind} findOpen={findOpen} />
       {savingId ? <CaptureStatus downloadId={savingId} onOpenSaved={b.reopen} /> : null}
-      {findOpen ? <FindBar key={active.id + (c.kind === "archive" ? c.current.versionId : "")} tab={active} getFrame={() => frames.current[active.id] ?? null} onClose={() => {
+      {findOpen ? <FindBar key={active.id + (c.kind === "archive" ? c.current.versionId ?? "" : "")} tab={active} getFrame={() => frames.current[active.id] ?? null} onClose={() => {
         setFindFor(null);
         // Focus goes back to the control that opened the find bar (WCAG 2.4.3).
         requestAnimationFrame(() => document.querySelector<HTMLElement>('[data-testid="find-toggle"]')?.focus());
@@ -150,7 +151,7 @@ export function BrowserView() {
         {c.kind === "blank" ? <SearchHome /> : null}
         {c.kind === "loading" ? (
           <div className="p-6">
-            <LoadingSkeleton variant="page" label={`Opening ${hostOf(c.url)}`} />
+            <LoadingSkeleton variant="page" label={c.url.startsWith("zim://") ? "Opening a package article" : `Opening ${hostOf(c.url)}`} />
           </div>
         ) : null}
         {c.kind === "error" ? (

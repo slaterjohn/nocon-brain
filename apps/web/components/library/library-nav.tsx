@@ -9,6 +9,8 @@ const tabs = [
   { href: "/library", label: "Pages" },
   { href: "/library/sources", label: "Sources" },
   { href: "/library/collections", label: "Collections" },
+  { href: "/library/packages", label: "Packages" },
+  { href: "/library/wikipedia", label: "Wikipedia" },
 ];
 
 /** Sub-navigation for the Library area. Plain links, so it works without script and by keyboard. */

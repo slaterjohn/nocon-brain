@@ -82,6 +82,8 @@ export default async function globalSetup() {
   process.env.E2E_MOJEEK_URL = fixtures.urls.mojeek;
   process.env.E2E_BRAVE_TOKEN = fixtures.credentials.braveToken;
   process.env.E2E_MOJEEK_KEY = fixtures.credentials.mojeekApiKey;
+  // The fake Wikimedia server (core REST and Action API) the Wikipedia client talks to in place of wikipedia.org.
+  process.env.E2E_WIKIPEDIA_URL = fixtures.urls.wikipediaLike;
   closers.push(() => fixtures.close());
 
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "ncb-e2e-logs-"));
@@ -128,6 +130,9 @@ export default async function globalSetup() {
         NCB_LOG_LEVEL: "warn",
         NCB_MIN_FREE_DISK_GB: "0",
         NCB_FETCH_ALLOW_PRIVATE_HOSTS: "127.0.0.1",
+        // Wikipedia requests need a contact, and go to the fake Wikimedia server, never to the real one.
+        NCB_CONTACT: "https://github.com/slaterjohn/nocon-brain",
+        NCB_WIKIPEDIA_ORIGIN: fixtures.urls.wikipediaLike,
         // The suite makes far more calls from one address than a person would.
         NCB_RATE_LIMIT_PER_MINUTE: "20000",
       });

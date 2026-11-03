@@ -57,6 +57,19 @@ describe("ZimSource: open, read, suggest, search", () => {
     expect(page1.next).toBeTruthy();
     const page2 = await s.browse("zim_a", { after: page1.next!, limit: 50 });
     expect(page2.items.map((x) => x.path)).not.toContain(page1.items[0]!.path);
+    // the cursor continues where the last page ended: walking three at a time lists every article once, in title order
+    const walked: string[] = [];
+    for (let after: string | undefined, i = 0; i < 20; i++) {
+      const p = await s.browse("zim_a", { after, limit: 3 });
+      walked.push(...p.items.map((x) => x.title));
+      if (!p.next) break;
+      after = p.next;
+    }
+    const all = (await s.browse("zim_a", { limit: 200 })).items.map((x) => x.title);
+    expect(page2.items.length).toBeGreaterThan(0);
+    expect(walked).toEqual(all);
+    expect(new Set(walked).size).toBe(walked.length);
+    expect(all.length).toBeGreaterThan(3);
     // every listed entry is an article, not a stylesheet or image
     expect([...page1.items, ...page2.items].some((x) => x.path.startsWith("I/") || x.path.endsWith(".css"))).toBe(false);
   });

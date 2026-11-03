@@ -20,6 +20,8 @@ export interface SourceTypeInfo {
   addressLabel: string;
   addressHint: string;
   later?: string;
+  /** Not made with this form: where to go instead. */
+  elsewhere?: string;
 }
 
 export const SOURCE_TYPES: SourceTypeInfo[] = [
@@ -31,7 +33,7 @@ export const SOURCE_TYPES: SourceTypeInfo[] = [
   { value: "feed", label: "Feed", description: "Save the items in an RSS or Atom feed. Later runs save only new items.", addressLabel: "Feed address", addressHint: "The address of the RSS or Atom feed." },
   { value: "imported_documents", label: "Imported documents", description: "PDF, Markdown, text and HTML files you upload from your device. They are saved with a reader view and can be searched.", addressLabel: "", addressHint: "" },
   { value: "saved_search", label: "Saved search", description: "Pages found by a search you run again and again.", addressLabel: "", addressHint: "", later: "Arrives with online search." },
-  { value: "knowledge_package", label: "Knowledge package", description: "An offline encyclopedia or other package file.", addressLabel: "", addressHint: "", later: "Arrives with offline package (ZIM) support." },
+  { value: "knowledge_package", label: "Knowledge package", description: "An offline encyclopedia or other package file.", addressLabel: "", addressHint: "", elsewhere: "Made from a package you have added. Use Source for a knowledge package, on this page." },
 ];
 export const typeLabel = (t: SourceType) => SOURCE_TYPES.find((x) => x.value === t)?.label ?? t;
 

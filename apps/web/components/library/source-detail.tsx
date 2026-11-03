@@ -17,6 +17,7 @@ import { formatBytes, formatDate } from "@/lib/utils";
 import { LibraryNav } from "./library-nav";
 import { DeleteSourceDialog, EnableButton, RunButtons, useSourceActions } from "./source-actions";
 import { useCollections } from "./hooks";
+import { PackageSourcePanel } from "@/components/zim/package-source";
 
 function Stat({ label, value, note }: { label: string; value: React.ReactNode; note?: string }) {
   return (
@@ -45,9 +46,10 @@ export function SourceDetailView({ id }: { id: string }) {
   const src = useApi<Source>(`/api/sources/${id}`, { refreshInterval: polling ? 2500 : undefined });
   const running = src.data?.lastStatus === "running";
   React.useEffect(() => setPolling(running), [running]);
-  const stats = useApi<SourceStats>(`/api/sources/${id}/stats`, { refreshInterval: running ? 4000 : undefined });
+  const kp = src.data?.type === "knowledge_package";
+  const stats = useApi<SourceStats>(`/api/sources/${id}/stats`, { refreshInterval: running ? 4000 : undefined, enabled: !kp });
   const [limit, setLimit] = React.useState(25);
-  const pages = useApi<Page<SourcePageRow>>(`/api/sources/${id}/pages?limit=${limit}`, { refreshInterval: running ? 6000 : undefined });
+  const pages = useApi<Page<SourcePageRow>>(`/api/sources/${id}/pages?limit=${limit}`, { refreshInterval: running ? 6000 : undefined, enabled: !kp });
   const cols = useCollections();
   const actions = useSourceActions(() => { void src.mutate(); void stats.mutate(); void pages.mutate(); });
   const [deleting, setDeleting] = React.useState(false);
@@ -80,16 +82,16 @@ export function SourceDetailView({ id }: { id: string }) {
         }
         actions={
           <>
-            {s.system ? null : <RunButtons s={s} actions={actions} size="default" />}
+            {s.system || kp ? null : <RunButtons s={s} actions={actions} size="default" />}
             <EnableButton s={s} actions={actions} size="default" />
-            <Button asChild variant="outline"><Link href={`/library/sources/${s.id}/edit`} data-testid="edit-source"><Pencil aria-hidden="true" /> Edit<span className="sr-only"> {s.name}</span></Link></Button>
+            {kp ? null : <Button asChild variant="outline"><Link href={`/library/sources/${s.id}/edit`} data-testid="edit-source"><Pencil aria-hidden="true" /> Edit<span className="sr-only"> {s.name}</span></Link></Button>}
             {s.system ? null : <Button variant="ghost" onClick={(e) => { opener.current = e.currentTarget; setDeleting(true); }} data-testid="delete-source"><Trash2 aria-hidden="true" /> Delete<span className="sr-only"> {s.name}</span></Button>}
           </>
         }
       />
       <LibraryNav />
 
-      <section aria-labelledby="stats-h" className="mb-8">
+      {kp ? null : <section aria-labelledby="stats-h" className="mb-8">
         <h2 id="stats-h" className="mb-2 text-lg font-semibold">Statistics</h2>
         {stats.isLoading ? <LoadingSkeleton rows={2} label="Loading statistics" /> : null}
         {stats.error ? <ErrorState title="Couldn't load statistics" message={stats.error.message} onRetry={() => void stats.mutate()} /> : null}
@@ -108,9 +110,9 @@ export function SourceDetailView({ id }: { id: string }) {
             ) : null}
           </>
         ) : null}
-      </section>
+      </section>}
 
-      <section aria-labelledby="runs-h" className="mb-8">
+      {kp ? null : <section aria-labelledby="runs-h" className="mb-8">
         <h2 id="runs-h" className="mb-2 text-lg font-semibold">Recent runs</h2>
         {s2 && s2.lastRuns.length === 0 ? <p className="text-sm text-muted-foreground">This source has not run yet.{s.system ? "" : " Choose Run now to start it."}</p> : null}
         {s2 && s2.lastRuns.length > 0 ? (
@@ -147,26 +149,27 @@ export function SourceDetailView({ id }: { id: string }) {
             </TableBody>
           </Table>
         ) : null}
-      </section>
+      </section>}
 
       <section aria-labelledby="settings-h" className="mb-8">
         <h2 id="settings-h" className="mb-2 text-lg font-semibold">Settings</h2>
         <dl className="divide-y rounded-lg border px-4" data-testid="source-settings">
           {s.description ? <Row label="Description">{s.description}</Row> : null}
-          {!s.system ? <Row label="Mode">{MODES.find((m) => m.value === s.strategy)?.label ?? s.strategy}</Row> : null}
-          {!s.system && s.type !== "single_page" ? <Row label="Amount">{PROFILES.find((p) => p.value === s.profile)?.label ?? s.profile}: {s.config.maxPages.toLocaleString("en-GB")} pages, {s.config.depth} links deep, up to {formatBytes(s.config.maxBytes, 0)}</Row> : null}
-          <Row label="Runs">{describeSchedule(s.schedule)}</Row>
-          {s.schedule?.window ? <Row label="Download window">{describeWindow(s.schedule.window)}</Row> : null}
-          <Row label="Next run">{s.paused || !s.enabled ? "Not scheduled" : s.nextRunAt ? formatDate(s.nextRunAt) : "None planned"}</Row>
+          {!s.system && !kp ? <Row label="Mode">{MODES.find((m) => m.value === s.strategy)?.label ?? s.strategy}</Row> : null}
+          {!s.system && !kp && s.type !== "single_page" ? <Row label="Amount">{PROFILES.find((p) => p.value === s.profile)?.label ?? s.profile}: {s.config.maxPages.toLocaleString("en-GB")} pages, {s.config.depth} links deep, up to {formatBytes(s.config.maxBytes, 0)}</Row> : null}
+          {kp ? null : <Row label="Runs">{describeSchedule(s.schedule)}</Row>}
+          {!kp && s.schedule?.window ? <Row label="Download window">{describeWindow(s.schedule.window)}</Row> : null}
+          {kp ? null : <Row label="Next run">{s.paused || !s.enabled ? "Not scheduled" : s.nextRunAt ? formatDate(s.nextRunAt) : "None planned"}</Row>}
           <Row label="Priority">{priorityLabel(s.priority)}</Row>
-          <Row label="Retention">{describeRetention(s.retention)}</Row>
-          <Row label="Automatic removal">{s.priority === "P1" ? "Never (Protected)" : s.automaticEviction ? "Allowed when space runs short" : "Not allowed"}</Row>
+          {kp ? null : <Row label="Retention">{describeRetention(s.retention)}</Row>}
+          <Row label="Automatic removal">{kp || s.priority === "P1" ? "Never. Packages are removed only by hand." : s.automaticEviction ? "Allowed when space runs short" : "Not allowed"}</Row>
           {s.storageBudgetBytes ? <Row label="Storage budget">{formatBytes(s.storageBudgetBytes)}</Row> : null}
           {s.collections.length ? <Row label="Collections">{s.collections.map((c) => cols.byId.get(c)?.name ?? "A collection").join(", ")}</Row> : null}
         </dl>
       </section>
 
-      <section aria-labelledby="pages-h">
+      {kp ? <PackageSourcePanel source={s} /> : null}
+      {kp ? null : <section aria-labelledby="pages-h">
         <h2 id="pages-h" className="mb-2 text-lg font-semibold">Pages from this source</h2>
         {pages.isLoading ? <LoadingSkeleton rows={3} label="Loading pages" /> : null}
         {pages.data && pages.data.items.length === 0 ? <p className="text-sm text-muted-foreground" data-testid="source-no-pages">No pages yet.</p> : null}
@@ -202,7 +205,7 @@ export function SourceDetailView({ id }: { id: string }) {
             {pages.data.nextCursor ? <div className="mt-2"><Button variant="outline" onClick={() => setLimit((n) => n + 25)}>Show more</Button></div> : null}
           </>
         ) : null}
-      </section>
+      </section>}
 
       <DeleteSourceDialog source={deleting ? s : null} opener={opener} onClose={() => setDeleting(false)} onDeleted={() => router.push("/library/sources")} />
     </div>

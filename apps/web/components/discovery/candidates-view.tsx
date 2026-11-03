@@ -113,16 +113,25 @@ export function CandidatesView() {
   const [error, setError] = React.useState("");
   const [loadingMore, setLoadingMore] = React.useState(false);
   const seq = React.useRef(0);
+  const loaded = React.useRef(false);
   const pages = React.useRef(1);
   const headingRef = React.useRef<HTMLHeadingElement>(null);
 
   const load = React.useCallback(async (cursor?: string, quiet = false) => {
     const id = ++seq.current;
-    if (!cursor && !quiet) setStatus("loading");
+    // Only the first load replaces the list with a skeleton. A new filter keeps the rows on screen until the answer arrives, so a focused
+    // button or an open "Why suggested" panel is not unmounted (and keyboard focus lost) by a refresh.
+    if (!cursor && !quiet && !loaded.current) setStatus("loading");
     try {
       const r = await get<CandidateList>(`/api/discovery/candidates?${filtersToQuery(applied, cursor, PAGE)}`);
       if (id !== seq.current) return;
+      loaded.current = true;
       setItems((cur) => (cursor ? [...cur, ...r.items] : r.items));
+      if (!cursor) {
+        const ids = new Set(r.items.map((i) => i.id));
+        setOpenWhy((o) => (o && ids.has(o) ? o : null));
+        setSelected((sel) => (sel.size && [...sel].some((x) => !ids.has(x)) ? new Set([...sel].filter((x) => ids.has(x))) : sel));
+      }
       setCounts(r.counts);
       setTotal(r.total);
       setNext(r.nextCursor);
@@ -137,8 +146,6 @@ export function CandidatesView() {
   }, [applied]);
 
   React.useEffect(() => {
-    setSelected(new Set());
-    setOpenWhy(null);
     void load();
   }, [load]);
 

@@ -100,7 +100,15 @@ test("dismiss removes a candidate for good", async ({ page }) => {
 test("why suggested: the score components add up to the score", async ({ page }) => {
   const fresh = await seedCandidates(page);
   const target = fresh[0]!;
-  await openCandidate(page, target);
+  // A slow network (the CI runner): the list for the typed filter arrives well after the panel is open. It must not remount the rows.
+  await page.route("**/api/discovery/candidates?*", async (route) => {
+    await new Promise((r) => setTimeout(r, 1200));
+    await route.continue();
+  });
+  await page.goto("/discovery");
+  await expect(rowFor(page, target)).toBeVisible();
+  // Typing a filter shows the target from the list already on screen while the filtered list is on its way.
+  await page.getByLabel("Address or title contains").fill(target.url);
   const row = rowFor(page, target);
   const why = row.getByTestId("candidate-why");
   await expect(why).toHaveAttribute("aria-expanded", "false");
@@ -127,7 +135,11 @@ test("why suggested: the score components add up to the score", async ({ page })
   await expect(panel.getByTestId("why-provenance-item").first()).toContainText("Link on a saved page");
   await expect(panel.getByTestId("why-not-stored")).toHaveCount(0);
 
+  // The refresh for the filter has landed by now; the panel and the button are still the same elements.
+  await page.waitForTimeout(2000);
+  await expect(panel).toBeVisible();
   // It closes again, and focus stays on the button.
+  await why.focus();
   await why.press("Enter");
   await expect(why).toHaveAttribute("aria-expanded", "false");
   await expect(panel).toHaveCount(0);

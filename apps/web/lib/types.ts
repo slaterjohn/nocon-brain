@@ -152,6 +152,7 @@ export interface FrameInfo {
 export type Resolution =
   | { kind: "search"; query: string }
   | { kind: "archive"; page: PageSummary; version: VersionSummary; mode: "original" | "reader"; frame: FrameInfo }
+  | { kind: "zim"; zim: { id: string; title: string; language: string | null }; path: string; title: string; frame: FrameInfo }
   | { kind: "live"; url: string; frameable: boolean | "unknown"; canSave: true; queued?: { downloadId: string } }
   | { kind: "offline"; url: string; reason: "offline" | "forced_offline" | "blocked" | "not_archived"; canQueue: boolean; queued?: { downloadId: string } };
 
@@ -170,6 +171,9 @@ export interface FrameStateInfo {
   state: LinkStateName | "zim";
   pageId?: string;
   versionId?: string;
+  /** Set when the document is an entry of a knowledge package (`state` is then "zim"). */
+  zimId?: string;
+  zimPath?: string;
   reader?: boolean;
   interstitial?: boolean;
   at: string;
@@ -203,6 +207,8 @@ export interface Bookmark {
   originalUrl: string;
   title: string;
   archive?: { pageId: string; versionId?: string; availability: PageSummary["availability"] };
+  /** The knowledge-package entry the bookmark opens (Phase 8). */
+  zim?: { zimId: string; path: string };
   referencePriority: number;
   createdAt: string;
 }
@@ -214,6 +220,7 @@ export interface HistoryEntry {
   visitedAt: string;
   servedFrom: "archive" | "cache" | "zim" | "live" | "offline";
   pageId?: string;
+  zim?: { zimId: string; path: string };
 }
 
 export interface FindResult {
@@ -340,6 +347,8 @@ export interface Source {
   system: boolean;
   systemKind: "quick_saves" | "browsing_cache" | "imports" | null;
   collections: string[];
+  /** For a knowledge_package source: the package it is bound to. */
+  knowledgePackage?: { id: string; title: string; state: string; sizeBytes: number };
   schedule: Schedule | null;
   pageCount: number;
   lastRunAt: string | null;

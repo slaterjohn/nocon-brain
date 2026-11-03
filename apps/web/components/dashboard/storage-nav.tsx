@@ -15,6 +15,7 @@ const items = [
   { href: "/storage/dashboard", label: "Dashboard" },
   { href: "/storage/activity", label: "Activity log" },
   { href: "/storage/online-search", label: "Online search" },
+  { href: "/storage/packages", label: "Knowledge packages" },
 ];
 
 /** Local navigation inside the Storage and settings area. */

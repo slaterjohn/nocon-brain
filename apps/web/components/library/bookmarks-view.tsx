@@ -14,12 +14,15 @@ import { EmptyState, ErrorState, LoadingSkeleton, PageHeader } from "@/component
 import { useBrowser } from "@/components/browser/tabs";
 import { useEvents } from "@/components/layout/events";
 import { formatDate } from "./format";
+import { usePackages } from "@/components/zim/hooks";
+import { zimUrl } from "@/lib/zim";
 
 /** Bookmarks: the address plus the saved copy it links to, when there is one. */
 export function BookmarksView() {
   const b = useBrowser();
   const ev = useEvents();
   const { toast } = useToast();
+  const pkgs = usePackages();
   const [q, setQ] = React.useState("");
   const [term, setTerm] = React.useState("");
   React.useEffect(() => {
@@ -67,15 +70,17 @@ export function BookmarksView() {
                 <div className="truncate font-medium">{bm.title}</div>
                 <div className="truncate text-xs text-muted-foreground">{bm.originalUrl}</div>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  {bm.archive ? <Badge variant="success">Saved copy</Badge> : <Badge variant="warning">Not saved</Badge>}
+                  {bm.archive ? <Badge variant="success">Saved copy</Badge> : null}
+                  {bm.zim ? <Badge variant="success" data-testid="bookmark-package">Knowledge package: {pkgs.byId.get(bm.zim.zimId)?.title ?? "package"}</Badge> : null}
+                  {!bm.archive && !bm.zim ? <Badge variant="warning">Not saved</Badge> : null}
                   <span>Added {formatDate(bm.createdAt)}</span>
                 </div>
               </div>
               <div className="flex flex-wrap gap-1">
-                <Button size="sm" variant="outline" onClick={() => b.openInBrowser(bm.originalUrl)}>
+                <Button size="sm" variant="outline" onClick={() => b.openInBrowser(bm.zim && !bm.archive && !/^https?:\/\//i.test(bm.originalUrl) ? zimUrl(bm.zim.zimId, bm.zim.path) : bm.originalUrl)}>
                   <ExternalLink aria-hidden="true" /> Open<span className="sr-only"> {bm.title}</span>
                 </Button>
-                {!bm.archive ? (
+                {!bm.archive && !bm.zim && /^https?:\/\//i.test(bm.originalUrl) ? (
                   <Button size="sm" variant="outline" onClick={() => void save(bm)}>
                     <Save aria-hidden="true" /> Save for offline<span className="sr-only">: {bm.title}</span>
                   </Button>

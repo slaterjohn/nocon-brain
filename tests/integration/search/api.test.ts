@@ -65,8 +65,11 @@ describe("search API (S-03 to S-09, S-12, S-14 server side)", () => {
     expect((await t.api("GET", `/api/search/${r.body.searchId}?after=0`)).body).toMatchObject({ done: true, events: [{ type: "done", reason: "no_providers" }] });
     // user settings keys
     const us = await t.api("PATCH", "/api/settings/user", { search: { resultsPerPage: 25, homepageSections: { recentSearches: true } } });
-    expect(us.body.search).toEqual({ resultsPerPage: 25, homepageSections: { recentSearches: true, bookmarks: false, favourites: false, libraryStats: false } });
+    expect(us.body.search).toEqual({ resultsPerPage: 25, zimResults: "unified", homepageSections: { recentSearches: true, bookmarks: false, favourites: false, libraryStats: false } });
     expect((await t.api("PATCH", "/api/settings/user", { search: { resultsPerPage: 99 } })).status).toBe(400);
+    // Phase 8: how knowledge-package hits join the results is a per-user choice.
+    expect((await t.api("PATCH", "/api/settings/user", { search: { zimResults: "federated" } })).body.search).toMatchObject({ zimResults: "federated", resultsPerPage: 25 });
+    expect((await t.api("PATCH", "/api/settings/user", { search: { zimResults: "sideways" } })).status).toBe(400);
   });
 
   it("typo, did you mean, suggestions and prefix", async () => {

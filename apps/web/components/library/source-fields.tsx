@@ -71,9 +71,9 @@ export function TypeSection({ d, set, errors }: SectionProps) {
             checked={d.type === t.value}
             onChange={() => set({ type: t.value, mode: CRAWL_TYPES.includes(t.value) ? (d.mode === "capture" ? "explore" : d.mode) : "capture", includeExternal: t.value === "linked_collection" })}
             label={t.label}
-            description={t.later ? `Coming later. ${t.later}` : t.description}
-            disabled={!!t.later}
-            badge={t.later ? "Coming later" : undefined}
+            description={t.later ? `Coming later. ${t.later}` : t.elsewhere ? t.elsewhere : t.description}
+            disabled={!!t.later || !!t.elsewhere}
+            badge={t.later ? "Coming later" : t.elsewhere ? "Added separately" : undefined}
             testId={`type-${t.value}`}
           />
         ))}

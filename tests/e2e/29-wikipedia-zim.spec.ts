@@ -6,8 +6,8 @@ import { articleUrl, login, mode, savePage, setWorkOffline } from "./helpers";
 import { buildFixtures } from "../fixtures/zim/build.mjs";
 
 // Z-06: unified browsing. A Wikipedia article address opens from an enabled Wikipedia package, offline; the visit and a bookmark of it are
-// kept; an archived page's Wikipedia link opens the package copy. The web app's address bar does not show package entries yet (the interface
-// follows), so this spec drives the same API calls the address bar makes, through the web app's own proxy, and reads what the listener serves.
+// kept; an archived page's Wikipedia link opens the package copy. This spec drives the API calls the address bar makes, through the web app's
+// own proxy, and reads what the listener serves. The address bar, the frame, search and the Library pages are covered by specs 30 to 34.
 test.skip(mode() !== "real-server", "needs the real server and libzim");
 test.describe.configure({ mode: "serial" });
 

@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { api, errorMessage, get, post } from "@/lib/api";
 import type { FrameInfo, FrameStateInfo, LinkStateName, PageSummary, ResolveResponse, SaveResponse, VersionSummary } from "@/lib/types";
+import { parseZimUrl } from "@/lib/zim";
 import { useEvents } from "@/components/layout/events";
 
 /**
@@ -17,7 +18,13 @@ import { useEvents } from "@/components/layout/events";
  * re-resolve and re-create the iframe, so they add nothing to the browser's joint session history.
  */
 
-export type ViewMode = "archived" | "reader" | "original";
+export type ViewMode = "archived" | "reader" | "original" | "package";
+
+/** The knowledge-package entry a frame shows. */
+export interface ZimRef {
+  id: string;
+  path: string;
+}
 
 export interface Entry {
   /** The address as shown in the address bar. */
@@ -25,6 +32,8 @@ export interface Entry {
   title?: string;
   mode: ViewMode;
   pageId?: string;
+  /** Set when the entry is an article of a knowledge package. */
+  zim?: ZimRef;
 }
 
 /** What the frame is showing right now (it can differ from the entry after an in-frame click). */
@@ -36,13 +45,14 @@ export interface Current {
   versionId?: string;
   reader: boolean;
   interstitial: boolean;
+  zim?: ZimRef;
 }
 
 export type Content =
   | { kind: "blank" }
   | { kind: "loading"; url: string }
   | { kind: "error"; url: string; message: string }
-  | { kind: "archive"; frame: FrameInfo; page: PageSummary; version: VersionSummary; alternatives: ResolveResponse["alternatives"]; current: Current; frameKey: number }
+  | { kind: "archive"; frame: FrameInfo; page?: PageSummary; version?: VersionSummary; zim?: ZimRef; alternatives: ResolveResponse["alternatives"]; current: Current; frameKey: number }
   | { kind: "live"; url: string; alternatives: ResolveResponse["alternatives"]; queued?: { downloadId: string } }
   | { kind: "offline"; url: string; reason: "offline" | "forced_offline" | "blocked" | "not_archived"; canQueue: boolean; queued?: { downloadId: string } };
 
@@ -77,7 +87,7 @@ export function tabTitle(t: Tab): string {
 }
 
 /** Where the page in this tab came from, for the indicator next to the address bar and on the tab. */
-export type Source = "blank" | "loading" | "saved" | "partial" | "reader" | "live" | "offline" | "unsaved" | "error";
+export type Source = "blank" | "loading" | "saved" | "partial" | "reader" | "package" | "live" | "offline" | "unsaved" | "error";
 export function tabSource(t: Tab): Source {
   const c = t.content;
   switch (c.kind) {
@@ -88,11 +98,12 @@ export function tabSource(t: Tab): Source {
     case "offline": return "offline";
     case "archive":
       if (c.current.interstitial) return "unsaved";
+      if (c.zim && c.current.state === "zim") return "package";
       return c.current.reader ? "reader" : c.current.state === "partial" ? "partial" : "saved";
   }
 }
 
-const modeToPrefer = (m: ViewMode) => (m === "reader" ? "reader" : m === "original" ? "live" : "archive");
+const modeToPrefer = (m: ViewMode) => (m === "reader" ? "reader" : m === "original" ? "live" : m === "package" ? "zim" : "archive");
 
 interface BrowserState {
   tabs: Tab[];
@@ -151,34 +162,62 @@ export function BrowserProvider({ children }: { children: React.ReactNode }) {
       const my = (seq.current[tabId] = (seq.current[tabId] ?? 0) + 1);
       const previous: Content = tabsRef.current.find((t) => t.id === tabId)?.content ?? { kind: "blank" };
       patch(tabId, (t) => ({ ...t, content: { kind: "loading", url: input } }));
-      let res: ResolveResponse;
+      const zimRef = parseZimUrl(input);
+      let res: ResolveResponse | null = null;
+      let grant: FrameInfo | null = null;
       try {
-        res = await post<ResolveResponse>("/api/browser/resolve", { input, tabId, prefer: modeToPrefer(opts.mode), versionId: opts.versionId });
+        // A knowledge-package entry that has no web address (`zim://id/path`) is opened with a frame grant, not resolved.
+        if (zimRef) grant = await post<FrameInfo>("/api/archive/frame-grants", { zimId: zimRef.zimId, zimPath: zimRef.path });
+        else res = await post<ResolveResponse>("/api/browser/resolve", { input, tabId, prefer: modeToPrefer(opts.mode), versionId: opts.versionId });
       } catch (e) {
         if (seq.current[tabId] !== my) return;
         patch(tabId, (t) => ({ ...t, content: { kind: "error", url: input, message: errorMessage(e) } }));
         return;
       }
       if (seq.current[tabId] !== my) return;
-      const r = res.resolution;
-      if (r.kind === "search") {
-        // Search arrives in a later release; the results page says so. The tab goes back to what it showed.
-        patch(tabId, (t) => ({ ...t, content: previous }));
-        router.push(`/search?q=${encodeURIComponent(r.query)}`);
-        return;
+      let address: string;
+      let entryPatch: Partial<Entry>;
+      let content: Content;
+      if (grant && zimRef) {
+        const ref: ZimRef = { id: zimRef.zimId, path: zimRef.path };
+        address = input;
+        entryPatch = { url: address, mode: "package", pageId: undefined, zim: ref };
+        content = {
+          kind: "archive", frame: grant, zim: ref, alternatives: [], frameKey: ++frameKeys.current,
+          current: { url: input, title: zimRef.path.replace(/_/g, " "), state: "zim", reader: false, interstitial: false, zim: ref },
+        };
+      } else {
+        const r = res!.resolution;
+        if (r.kind === "search") {
+          // The tab goes back to what it showed, and the search page opens.
+          patch(tabId, (t) => ({ ...t, content: previous }));
+          router.push(`/search?q=${encodeURIComponent(r.query)}`);
+          return;
+        }
+        // A redirect or alias shows where the page really is, as a browser does after a redirect.
+        address = r.kind === "archive" ? r.page.url : res!.normalizedUrl;
+        const alternatives = res!.alternatives;
+        if (r.kind === "zim") {
+          const ref: ZimRef = { id: r.zim.id, path: r.path };
+          const mode: ViewMode = "package";
+          entryPatch = { url: address, mode, pageId: undefined, title: r.title, zim: ref };
+          content = {
+            kind: "archive", frame: r.frame, zim: ref, alternatives, frameKey: ++frameKeys.current,
+            current: { url: address, title: r.title, state: "zim", reader: false, interstitial: false, zim: ref },
+          };
+        } else {
+          entryPatch = { url: address, mode: opts.mode, zim: undefined, ...(r.kind === "archive" ? { pageId: r.page.id, title: r.page.title } : { pageId: undefined }) };
+          content =
+            r.kind === "archive"
+              ? {
+                  kind: "archive", frame: r.frame, page: r.page, version: r.version, alternatives, frameKey: ++frameKeys.current,
+                  current: { url: r.page.url, title: r.page.title, state: r.version.status === "partial" ? "partial" : "cached", pageId: r.page.id, versionId: r.version.id, reader: r.mode === "reader", interstitial: false },
+                }
+              : r.kind === "live"
+                ? { kind: "live", url: r.url, alternatives, queued: r.queued }
+                : { kind: "offline", url: r.url, reason: r.reason, canQueue: r.canQueue, queued: r.queued };
+        }
       }
-      // A redirect or alias shows where the page really is, as a browser does after a redirect.
-      const address = r.kind === "archive" ? r.page.url : res.normalizedUrl;
-      const entryPatch: Partial<Entry> = { url: address, mode: opts.mode, ...(r.kind === "archive" ? { pageId: r.page.id, title: r.page.title } : { pageId: undefined }) };
-      const content: Content =
-        r.kind === "archive"
-          ? {
-              kind: "archive", frame: r.frame, page: r.page, version: r.version, alternatives: res.alternatives, frameKey: ++frameKeys.current,
-              current: { url: r.page.url, title: r.page.title, state: r.version.status === "partial" ? "partial" : "cached", pageId: r.page.id, versionId: r.version.id, reader: r.mode === "reader", interstitial: false },
-            }
-          : r.kind === "live"
-            ? { kind: "live", url: r.url, alternatives: res.alternatives, queued: r.queued }
-            : { kind: "offline", url: r.url, reason: r.reason, canQueue: r.canQueue, queued: r.queued };
       patch(tabId, (t) => {
         let history = t.history;
         let index = t.index;
@@ -301,15 +340,18 @@ export function BrowserProvider({ children }: { children: React.ReactNode }) {
               if (t.id !== tabId || t.content.kind !== "archive" || t.content.frameKey !== frameKey) return t;
               if (fs.seq <= t.lastSeq) return t; // nothing new: a highlight reload or a fragment move
               const c = t.content;
+              const zim: ZimRef | undefined = fs.state === "zim" && fs.zimId && fs.zimPath ? { id: fs.zimId, path: fs.zimPath } : undefined;
               const current: Current = {
                 url: fs.url, title: fs.title || fs.url, state: fs.state, pageId: fs.pageId, versionId: fs.versionId,
-                reader: !!fs.reader, interstitial: !!fs.interstitial,
+                reader: !!fs.reader, interstitial: !!fs.interstitial, zim,
               };
               const cur = t.history[t.index]!;
-              const sameDoc = (e: Entry | undefined) => !!e && (current.pageId ? e.pageId === current.pageId : e.url === current.url);
+              const sameDoc = (e: Entry | undefined) =>
+                !!e && (zim ? e.zim?.id === zim.id && e.zim.path === zim.path : current.pageId ? e.pageId === current.pageId : !e.zim && e.url === current.url);
               let { history, index } = t;
               if (sameDoc(cur)) {
-                history = history.map((e, i) => (i === index ? { ...e, title: current.title, pageId: current.pageId ?? e.pageId } : e));
+                // A package article takes the address the listener reports (the Wikipedia address in its normal form, whatever host was typed).
+                history = history.map((e, i) => (i === index ? { ...e, title: current.title, pageId: current.pageId ?? e.pageId, url: zim ? current.url : e.url } : e));
               } else if (sameDoc(history[index - 1])) {
                 index -= 1; // the browser's own Back, inside the frame
                 history = history.map((e, i) => (i === index ? { ...e, title: current.title } : e));
@@ -318,11 +360,15 @@ export function BrowserProvider({ children }: { children: React.ReactNode }) {
                 history = history.map((e, i) => (i === index ? { ...e, title: current.title } : e));
               } else {
                 // A click inside the frame: a new entry, with no new frame.
-                const entry: Entry = { url: current.url, title: current.title, mode: current.reader ? "reader" : "archived", pageId: current.pageId };
+                const entry: Entry = { url: current.url, title: current.title, mode: zim ? "package" : current.reader ? "reader" : "archived", pageId: current.pageId, zim };
                 history = [...history.slice(0, index + 1), entry];
                 index = history.length - 1;
               }
-              return { ...t, history, index, lastSeq: fs.seq, content: { ...c, current } };
+              // The alternatives belong to the document `resolve` opened. Once the frame shows another document, a package or
+              // saved copy of it is not known, so those two are dropped rather than offered for the wrong article.
+              const moved = !sameDoc(cur);
+              const alternatives = moved ? c.alternatives.filter((a) => a !== "zim" && !(zim && a === "archive")) : c.alternatives;
+              return { ...t, history, index, lastSeq: fs.seq, content: { ...c, current, zim, alternatives } };
             }),
           );
         })

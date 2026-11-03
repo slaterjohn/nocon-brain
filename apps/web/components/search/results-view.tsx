@@ -3,8 +3,13 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { BookmarkPlus, ListFilter, Search as SearchIcon, X } from "lucide-react";
+import { BookmarkPlus, Library, ListFilter, Search as SearchIcon, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { usePackages } from "@/components/zim/hooks";
+import { ZIM_MODE_HELP, ZIM_MODE_LABELS, ZIM_MODES, isZimMode } from "@/lib/zim";
+import { ZimGroups, ZimNotes } from "./zim-groups";
 import { EmptyState, ErrorState } from "@/components/layout/states";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
@@ -29,7 +34,7 @@ import { ResultItem } from "./result-item";
 import { SaveSearchDialog } from "./save-search-dialog";
 import { SearchBox } from "./search-box";
 
-const SCOPES: Scope[] = ["all", "offline", "online", "images", "documents"];
+const SCOPES: Scope[] = ["all", "offline", "online", "images", "documents", "zim"];
 const NO_FACETS: Facets = { sources: [], collections: [], domains: [], types: [], languages: [], availability: [], approximate: false };
 
 const ONLINE_OFF_TEXT: Record<NonNullable<OnlineStatus["reason"]>, string> = {
@@ -91,12 +96,13 @@ function CategoryTabs({ scope, status, onSelect }: { scope: Scope; status: Onlin
   );
 }
 
-function ActiveFilters({ state, onChange }: { state: SearchState; onChange: (p: Partial<SearchState>) => void }) {
+function ActiveFilters({ state, onChange, packageTitles }: { state: SearchState; onChange: (p: Partial<SearchState>) => void; packageTitles: Map<string, string> }) {
   const chips: { key: string; label: string; clear: () => void }[] = [];
   state.sources.forEach((v) => chips.push({ key: `s${v}`, label: `Source: ${v}`, clear: () => onChange({ sources: state.sources.filter((x) => x !== v) }) }));
   state.collections.forEach((v) => chips.push({ key: `c${v}`, label: `Collection: ${v}`, clear: () => onChange({ collections: state.collections.filter((x) => x !== v) }) }));
   state.domains.forEach((v) => chips.push({ key: `d${v}`, label: `Site: ${v}`, clear: () => onChange({ domains: state.domains.filter((x) => x !== v) }) }));
   state.types.forEach((v) => chips.push({ key: `t${v}`, label: `Type: ${typeLabel(v)}`, clear: () => onChange({ types: state.types.filter((x) => x !== v) }) }));
+  state.zimIds.forEach((v) => chips.push({ key: `z${v}`, label: `Package: ${packageTitles.get(v) ?? v}`, clear: () => onChange({ zimIds: state.zimIds.filter((x) => x !== v) }) }));
   state.languages.forEach((v) => chips.push({ key: `l${v}`, label: `Language: ${v}`, clear: () => onChange({ languages: state.languages.filter((x) => x !== v) }) }));
   state.availability.forEach((v) => chips.push({ key: `a${v}`, label: `Availability: ${v.replace("_", " ")}`, clear: () => onChange({ availability: state.availability.filter((x) => x !== v) }) }));
   if (state.dlFrom || state.dlTo) chips.push({ key: "dl", label: `Saved ${state.dlFrom || "…"} to ${state.dlTo || "…"}`, clear: () => onChange({ dlFrom: "", dlTo: "" }) });
@@ -140,7 +146,10 @@ export function ResultsView() {
   const pathname = usePathname();
   const { toast } = useToast();
   const ev = useEvents();
-  const [prefs, , prefsReady] = useSearchPrefs();
+  const [prefs, setPrefs, prefsReady] = useSearchPrefs();
+  const pkgs = usePackages();
+  const packageTitles = React.useMemo(() => new Map(pkgs.packages.map((p) => [p.id, p.title])), [pkgs.packages]);
+  const searchable = pkgs.packages.filter((p) => p.enabledForSearch && p.state !== "missing" && p.state !== "importing");
   const status = useOnlineStatus();
   const onlineAvailable = status.available;
   const state = React.useMemo(() => stateFromParams(params), [params]);
@@ -211,11 +220,11 @@ export function ResultsView() {
       // A saved search that is run again goes through its own endpoint, so it records when it ran and how many it found.
       (state.saved && pageNo === 1
         ? post<SearchResponse>(`/api/search/saved/${encodeURIComponent(state.saved)}/run`, { page: pageNo, pageSize: prefs.resultsPerPage })
-        : post<SearchResponse>("/api/search", requestFromState(state, { page: pageNo, pageSize: prefs.resultsPerPage, onlineAvailable }))
+        : post<SearchResponse>("/api/search", requestFromState(state, { page: pageNo, pageSize: prefs.resultsPerPage, onlineAvailable, zim: prefs.zimResults }))
       ).then((res) => (signal.cancelled ? null : res)),
     // `state` is covered by stateKey.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stateKey, prefs.resultsPerPage, onlineAvailable],
+    [stateKey, prefs.resultsPerPage, prefs.zimResults, onlineAvailable],
   );
 
   // Back or Forward: the list comes back from the snapshot the server kept, not from a new search.
@@ -441,6 +450,10 @@ export function ResultsView() {
   const online: OnlineInfo = { ...(data?.online ?? { state: "disabled", pending: [], disclosure: "" }), disclosure: data?.online?.disclosure ?? "" };
   const noteReason = onlineRan || !status.ready ? null : status.available ? (data?.online?.state === "offline" ? "offline" : null) : status.reason;
   const webOff = state.scope === "online" && !loading && !onlineRan && !!data;
+  const zimBlock = data?.zim && data.zim.state === "ok" ? data.zim : null;
+  const separate = !!zimBlock && zimBlock.mode === "federated" && zimBlock.scope === "mixed";
+  const zimHitCount = separate ? zimBlock!.groups.reduce((n, g) => n + g.hits.length, 0) : 0;
+  const showMode = searchable.length > 0 && (state.scope === "all" || state.scope === "offline");
   const uncached = results.filter((r) => r.origin === "online" && r.availability === "online_only");
 
   return (
@@ -458,6 +471,21 @@ export function ResultsView() {
       </div>
 
       <CategoryTabs scope={state.scope} status={status} onSelect={(scope) => go({ scope })} />
+      {showMode ? (
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="zim-mode-control">
+          <Label htmlFor="zim-mode" className="text-sm font-normal"><Library className="mr-1 inline size-4 text-muted-foreground" aria-hidden="true" />Package results</Label>
+          <Select
+            id="zim-mode"
+            className="h-8 w-auto max-w-56 text-sm"
+            value={prefs.zimResults}
+            aria-describedby="zim-mode-help"
+            onChange={(e) => { if (isZimMode(e.target.value)) void setPrefs({ zimResults: e.target.value }).catch((err) => toast({ title: "Couldn't change the setting", description: errorMessage(err), variant: "error" })); }}
+          >
+            {ZIM_MODES.map((m) => <option key={m} value={m}>{ZIM_MODE_LABELS[m]}</option>)}
+          </Select>
+          <span id="zim-mode-help" className="text-xs text-muted-foreground">{ZIM_MODE_HELP[prefs.zimResults]}</span>
+        </div>
+      ) : null}
       <OnlineNote reason={noteReason} scopeOnline={state.scope === "online"} />
 
       <div className="mt-4 grid gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]">
@@ -466,7 +494,7 @@ export function ResultsView() {
             <ListFilter aria-hidden="true" /> Filters{nFilters ? ` (${nFilters})` : ""}
           </Button>
           <div id="filters-wrap" className={cn("mt-3 lg:mt-0 lg:block", filtersOpen ? "block" : "hidden")}>
-            <FiltersPanel state={state} facets={facets} onChange={(p) => go(p)} onClear={() => go({ ...EMPTY_STATE, q: state.q, scope: state.scope })} />
+            <FiltersPanel state={state} facets={facets} packages={searchable.map((p) => ({ id: p.id, title: p.title }))} onChange={(p) => go(p)} onClear={() => go({ ...EMPTY_STATE, q: state.q, scope: state.scope })} />
           </div>
         </aside>
 
@@ -506,12 +534,13 @@ export function ResultsView() {
               onImprove={() => setCoverageOpen(true)}
               coverage={cov}
             />
-          ) : cov && !loading ? (
+          ) : cov && !loading && state.scope !== "zim" ? (
             <p className="mb-1 text-sm text-muted-foreground" data-testid="coverage-strip">
               {cov.cachedMatches} {cov.cachedMatches === 1 ? "match" : "matches"} in your saved pages{cov.partial ? `, ${cov.partial} partly saved` : ""}
             </p>
           ) : null}
-          <ActiveFilters state={state} onChange={(p) => go(p)} />
+          <ActiveFilters state={state} packageTitles={packageTitles} onChange={(p) => go(p)} />
+          {data?.zim ? <ZimNotes block={data.zim} /> : null}
 
           <div ref={panelRef} data-testid="results-body">
             {loading && results.length === 0 ? <ResultsSkeleton /> : null}
@@ -525,12 +554,12 @@ export function ResultsView() {
                 className="mt-4"
               />
             ) : null}
-            {!loading && !error && !webOff && results.length === 0 && !(pending && !boxExpired) ? (
+            {!loading && !error && !webOff && results.length === 0 && zimHitCount === 0 && !(pending && !boxExpired) ? (
               <EmptyState
                 icon={SearchIcon}
-                title={`No results for "${state.q}"`}
-                description={nFilters || state.scope !== "all" ? "Try removing a filter or choosing All." : "Check the spelling, try fewer or different words, or look in the Library."}
-                action={nFilters ? <Button variant="outline" onClick={() => go({ ...EMPTY_STATE, q: state.q })}>Clear filters and category</Button> : undefined}
+                title={state.scope === "zim" && !pkgs.packages.length && pkgs.data ? "No knowledge packages yet" : `No results for "${state.q}"`}
+                description={state.scope === "zim" && !pkgs.packages.length && pkgs.data ? "Add a package in the Library to search it here." : nFilters || state.scope !== "all" ? "Try removing a filter or choosing All." : "Check the spelling, try fewer or different words, or look in the Library."}
+                action={state.scope === "zim" && !pkgs.packages.length && pkgs.data ? <Button asChild variant="outline"><Link href="/library/packages">Open the packages</Link></Button> : nFilters ? <Button variant="outline" onClick={() => go({ ...EMPTY_STATE, q: state.q })}>Clear filters and category</Button> : undefined}
                 className="mt-4"
               />
             ) : null}
@@ -555,6 +584,7 @@ export function ResultsView() {
               </>
             ) : null}
           </div>
+          {separate && !loading && zimBlock ? <ZimGroups block={zimBlock} /> : null}
           {onlineRan && !loading ? <OnlineFooter stream={stream} pending={pending} disclosure={online.disclosure} /> : null}
         </div>
       </div>

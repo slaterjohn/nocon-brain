@@ -2,7 +2,7 @@
 // Facets, suggestions, saved searches and history are not fully typed in docs/api.md, so the readers below accept the likely spellings.
 
 export type Iso = string;
-export type Scope = "all" | "offline" | "online" | "images" | "documents";
+export type Scope = "all" | "offline" | "online" | "images" | "documents" | "zim";
 export type Availability = "cached" | "partial" | "queued" | "online_only";
 
 export interface SearchFilters {
@@ -21,6 +21,10 @@ export interface SearchFilters {
 export interface SearchRequest {
   query: string;
   scope?: Scope;
+  /** How knowledge-package hits join the results (6.3). Left out means the server default, "unified". */
+  zim?: "unified" | "federated" | "off";
+  /** Search only these packages. */
+  zimIds?: string[];
   filters?: SearchFilters;
   online?: "auto" | "off" | "on";
   /** Typo tolerance and "did you mean". Off for "Search instead for ...". */
@@ -75,6 +79,8 @@ export interface SearchResult {
   faviconUrl?: string | null;
   sourceName?: string | null;
   collections?: { id: string; name: string }[];
+  /** A package hit whose article is also saved as a page: the saved page's id (6.3). */
+  archivedAs?: string;
 }
 
 export interface Coverage {
@@ -100,6 +106,8 @@ export interface SearchResponse {
   warnings?: string[];
   tookMs?: { local: number; zim: number };
   nextCursor?: string;
+  /** Package results (6.3); absent when packages were not asked. */
+  zim?: import("./zim").ZimBlock;
 }
 
 // ---- State in the address of the results page ----
@@ -122,14 +130,16 @@ export interface SearchState {
   exact: boolean;
   /** Set when a saved search is being run again: page 1 comes from POST /api/search/saved/{id}/run. */
   saved: string;
+  /** Knowledge packages to search (public ids). Empty means all that are switched on. */
+  zimIds: string[];
 }
 
 export const EMPTY_STATE: SearchState = {
   q: "", scope: "all", sources: [], collections: [], domains: [], types: [],
-  dlFrom: "", dlTo: "", pubFrom: "", pubTo: "", availability: [], languages: [], exact: false, saved: "",
+  dlFrom: "", dlTo: "", pubFrom: "", pubTo: "", availability: [], languages: [], exact: false, saved: "", zimIds: [],
 };
 
-const SCOPES: Scope[] = ["all", "offline", "online", "images", "documents"];
+const SCOPES: Scope[] = ["all", "offline", "online", "images", "documents", "zim"];
 const AVAIL: Availability[] = ["cached", "partial", "queued", "online_only"];
 
 type ParamReader = { get(name: string): string | null; getAll(name: string): string[] };
@@ -151,6 +161,7 @@ export function stateFromParams(p: ParamReader): SearchState {
     languages: p.getAll("lang"),
     exact: p.get("exact") === "1",
     saved: p.get("saved") ?? "",
+    zimIds: p.getAll("pkg"),
   };
 }
 
@@ -170,6 +181,7 @@ export function paramsFromState(s: SearchState): URLSearchParams {
   for (const v of s.languages) p.append("lang", v);
   if (s.exact) p.set("exact", "1");
   if (s.saved) p.set("saved", s.saved);
+  for (const v of s.zimIds) p.append("pkg", v);
   return p;
 }
 
@@ -178,7 +190,7 @@ export const searchHref = (s: Partial<SearchState> & { q: string }) => `/search?
 /** How many filters (not counting the category) are set. */
 export function filterCount(s: SearchState): number {
   return (
-    s.sources.length + s.collections.length + s.domains.length + s.types.length + s.availability.length + s.languages.length +
+    s.sources.length + s.collections.length + s.domains.length + s.types.length + s.availability.length + s.languages.length + s.zimIds.length +
     [s.dlFrom, s.dlTo, s.pubFrom, s.pubTo].filter(Boolean).length
   );
 }
@@ -221,12 +233,15 @@ export function stateFromSaved(saved: { id: string; query: string; filters?: Sea
   };
 }
 
-export function requestFromState(s: SearchState, opts: { page: number; pageSize: number; onlineAvailable: boolean }): SearchRequest {
+export function requestFromState(s: SearchState, opts: { page: number; pageSize: number; onlineAvailable: boolean; zim?: "unified" | "federated" | "off" }): SearchRequest {
   const req: SearchRequest = { query: s.q, scope: s.scope, page: opts.page, pageSize: opts.pageSize };
+  // Packages are asked for on page 1 of All, Offline and Packages. Unified is the server's default, so only the other two are sent.
+  if (opts.zim && opts.zim !== "unified" && s.scope !== "zim") req.zim = opts.zim;
+  if (s.zimIds.length) req.zimIds = s.zimIds;
   if (s.exact) req.typo = false;
   const filters = filtersFromState(s);
   if (Object.keys(filters).length) req.filters = filters;
-  req.online = s.scope === "offline" || s.scope === "images" || s.scope === "documents" ? "off" : opts.onlineAvailable ? "auto" : "off";
+  req.online = s.scope === "offline" || s.scope === "images" || s.scope === "documents" || s.scope === "zim" ? "off" : opts.onlineAvailable ? "auto" : "off";
   return req;
 }
 
@@ -253,11 +268,11 @@ export function decodeEntities(s: string): string {
  * Splits the server's snippet into plain text and highlighted text. The snippet is untrusted: only `<mark>` and `</mark>` are
  * recognised, every other angle bracket is kept as literal text, and the parts are rendered as React text, never as HTML.
  */
-export function markedParts(snippet: string): SnippetPart[] {
+export function markedParts(snippet: string, tag: "mark" | "b" = "mark"): SnippetPart[] {
   const parts: SnippetPart[] = [];
   let mark = false;
   let last = 0;
-  const re = /<(\/?)mark>/gi;
+  const re = new RegExp(`<(/?)${tag}>`, "gi");
   let m: RegExpExecArray | null;
   const push = (raw: string) => {
     const text = decodeEntities(raw);
@@ -404,7 +419,7 @@ export const AVAILABILITY_LABELS: Record<SearchResult["availability"], string> =
   partial: "Partly saved",
   queued: "Waiting to be saved",
   online_only: "Online only",
-  zim: "Offline library",
+  zim: "Knowledge package",
 };
 
 export const AVAILABILITY_FILTERS: { value: Availability; label: string }[] = [
@@ -414,7 +429,7 @@ export const AVAILABILITY_FILTERS: { value: Availability; label: string }[] = [
   { value: "online_only", label: "Online only" },
 ];
 
-export const SCOPE_LABELS: Record<Scope, string> = { all: "All", offline: "Offline", online: "Online", images: "Images", documents: "Documents" };
+export const SCOPE_LABELS: Record<Scope, string> = { all: "All", offline: "Offline", online: "Online", images: "Images", documents: "Documents", zim: "Packages" };
 
 /** An imported file has a made-up address that is never shown. */
 export const isImportedAddress = (url: string) => /^https?:\/\/imports\.noconbrain\.invalid\//i.test(url);

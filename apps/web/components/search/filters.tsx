@@ -52,11 +52,34 @@ function FacetGroup({
   );
 }
 
+/** Which knowledge packages to search. Nothing ticked means every package that is switched on. */
+function PackageFilter({ packages, selected, onChange }: { packages: { id: string; title: string }[]; selected: string[]; onChange: (next: string[]) => void }) {
+  if (!packages.length) return null;
+  return (
+    <fieldset className="min-w-0" data-testid="filter-packages">
+      <legend className="mb-1.5 text-sm font-medium">Packages</legend>
+      <ul className="space-y-1">
+        {packages.map((p) => {
+          const id = `flt-pkg-${p.id}`;
+          return (
+            <li key={p.id} className="flex items-center gap-2">
+              <Checkbox id={id} checked={selected.includes(p.id)} onCheckedChange={(v) => onChange(v === true ? [...selected, p.id] : selected.filter((x) => x !== p.id))} />
+              <Label htmlFor={id} className="min-w-0 flex-1 cursor-pointer text-sm font-normal"><span className="break-words">{p.title}</span></Label>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-1 text-xs text-muted-foreground">Leave all unticked to search every package.</p>
+    </fieldset>
+  );
+}
+
 export function FiltersPanel({
-  state, facets, onChange, onClear,
+  state, facets, onChange, onClear, packages = [],
 }: {
   state: SearchState;
   facets: Facets;
+  packages?: { id: string; title: string }[];
   onChange: (patch: Partial<SearchState>) => void;
   onClear: () => void;
 }) {
@@ -75,6 +98,7 @@ export function FiltersPanel({
         ) : null}
       </div>
       {facets.approximate ? <p className="text-xs text-muted-foreground">Counts are approximate for a search with very many matches.</p> : null}
+      {state.scope === "all" || state.scope === "offline" || state.scope === "zim" ? <PackageFilter packages={packages} selected={state.zimIds} onChange={(zimIds) => onChange({ zimIds })} /> : null}
       <FacetGroup name="source" legend="Source" facets={facets.sources} selected={state.sources} onChange={(sources) => onChange({ sources })} />
       <FacetGroup name="collection" legend="Collection" facets={facets.collections} selected={state.collections} onChange={(collections) => onChange({ collections })} />
       <FacetGroup name="domain" legend="Site" facets={facets.domains} selected={state.domains} onChange={(domains) => onChange({ domains })} />

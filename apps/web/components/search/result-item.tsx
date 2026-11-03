@@ -49,6 +49,10 @@ export function ResultItem({ result, headingId, onSaveOnline }: { result: Search
   const href = local ? (result.actions?.open || (result.pageId ? `/library/pages/${result.pageId}` : result.url)) : liveUrl;
   const providers = (result.attribution ?? []).filter((a) => a.kind === "provider").map((a) => a.name);
 
+  function openPackage() {
+    b.openInBrowser(result.url);
+  }
+
   function open(e: React.MouseEvent<HTMLAnchorElement>) {
     if (!local || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
     e.preventDefault();
@@ -69,9 +73,14 @@ export function ResultItem({ result, headingId, onSaveOnline }: { result: Search
     }
   }
 
-  const parts = markedParts(result.snippet ?? "");
-  const titleParts = result.titleHtml ? markedParts(result.titleHtml) : null;
-  const titleNode = titleParts?.length ? titleParts.map((p, i) => (p.mark ? <mark key={i} className="rounded-sm bg-amber-200 px-0.5 font-semibold text-amber-950 dark:bg-amber-800 dark:text-amber-50">{p.text}</mark> : <React.Fragment key={i}>{p.text}</React.Fragment>)) : result.title || address;
+  // Package hits mark matches with <b>, archive hits with <mark>. Either way only that one tag is recognised and the text is never HTML.
+  const isZim = result.origin === "zim" && !!result.zimId;
+  const tag = isZim ? "b" : "mark";
+  const parts = markedParts(result.snippet ?? "", tag);
+  const titleParts = result.titleHtml ? markedParts(result.titleHtml, tag) : null;
+  const Mark = tag;
+  const titleNode = titleParts?.length ? titleParts.map((p, i) => (p.mark ? <Mark key={i} className="rounded-sm bg-amber-200 px-0.5 font-semibold text-amber-950 dark:bg-amber-800 dark:text-amber-50">{p.text}</Mark> : <React.Fragment key={i}>{p.text}</React.Fragment>)) : result.title || address;
+  const packageName = result.sourceName || result.domain || "Knowledge package";
   const saved = day(result.capturedAt);
   const published = day(result.publishedAt);
   const meta = [result.sourceName, ...(result.collections ?? []).map((c) => c.name)].filter(Boolean);
@@ -79,11 +88,19 @@ export function ResultItem({ result, headingId, onSaveOnline }: { result: Search
   return (
     <article className="min-w-0 py-4" data-testid="search-result" data-result-key={result.key} data-availability={result.availability} data-origin={result.origin} aria-labelledby={headingId}>
       <div className="mb-0.5 flex min-w-0 items-center gap-2 text-sm">
-        <Favicon result={result} />
-        <span className="min-w-0 truncate text-muted-foreground" data-testid="result-address" title={local && address === "Imported document" ? undefined : result.url}>{address}</span>
+        {isZim ? <Library className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : <Favicon result={result} />}
+        {isZim ? (
+          <span className="min-w-0 truncate text-muted-foreground" data-testid="result-origin" data-package={packageName}>{packageName}</span>
+        ) : (
+          <span className="min-w-0 truncate text-muted-foreground" data-testid="result-address" title={local && address === "Imported document" ? undefined : result.url}>{address}</span>
+        )}
       </div>
       <h3 id={headingId} className="text-lg leading-snug font-medium">
-        {local ? (
+        {isZim ? (
+          <button type="button" onClick={openPackage} className="text-left text-primary underline-offset-4 hover:underline" data-testid="result-title">
+            {titleNode}
+          </button>
+        ) : local ? (
           <Link href={href ?? result.url} onClick={open} className="text-primary underline-offset-4 hover:underline" data-testid="result-title">
             {titleNode}
           </Link>
@@ -100,7 +117,7 @@ export function ResultItem({ result, headingId, onSaveOnline }: { result: Search
         <p className="mt-1 max-w-3xl text-sm leading-relaxed text-foreground/90" data-testid="result-snippet">
           {parts.map((p, i) =>
             p.mark ? (
-              <mark key={i} className="rounded-sm bg-amber-200 px-0.5 font-medium text-amber-950 dark:bg-amber-800 dark:text-amber-50">{p.text}</mark>
+              <Mark key={i} className="rounded-sm bg-amber-200 px-0.5 font-medium text-amber-950 dark:bg-amber-800 dark:text-amber-50">{p.text}</Mark>
             ) : (
               <React.Fragment key={i}>{p.text}</React.Fragment>
             ),
@@ -139,6 +156,16 @@ export function ResultItem({ result, headingId, onSaveOnline }: { result: Search
               </React.Fragment>
             ))}
           </span>
+        ) : null}
+        {isZim && result.archivedAs ? (
+          <Link href={`/library/pages/${result.archivedAs}`} className="underline-offset-4 hover:underline" data-testid="result-archived-as">
+            Also saved as a page<span className="sr-only">: {result.title}</span>
+          </Link>
+        ) : null}
+        {isZim ? (
+          <Link href={`/library/packages/${result.zimId}`} className="underline-offset-4 hover:underline" data-testid="result-package-details">
+            Package details<span className="sr-only">: {packageName}</span>
+          </Link>
         ) : null}
         {local && result.pageId ? (
           <Link href={`/library/pages/${result.pageId}`} className="underline-offset-4 hover:underline" data-testid="result-details">

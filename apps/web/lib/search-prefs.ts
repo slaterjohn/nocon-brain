@@ -3,6 +3,7 @@
 import * as React from "react";
 import { api, ApiError, get, patch, useApi } from "@/lib/api";
 import type { ProvidersResponse } from "@/lib/online-search";
+import { isZimMode, type ZimMode } from "@/lib/zim";
 
 // Search preferences live in the signed-in user's server settings (GET and PATCH /api/settings/user, key `search`). A guest has no
 // settings, so the defaults apply and a change lasts until the page is closed.
@@ -13,12 +14,14 @@ export interface SearchPrefs {
   homeBookmarks: boolean;
   homeCollections: boolean;
   homeStats: boolean;
+  /** How knowledge-package hits join the results: mixed in, in their own groups, or not searched. */
+  zimResults: ZimMode;
 }
 
-export const DEFAULT_PREFS: SearchPrefs = { resultsPerPage: 10, homeRecent: false, homeBookmarks: false, homeCollections: false, homeStats: false };
+export const DEFAULT_PREFS: SearchPrefs = { resultsPerPage: 10, homeRecent: false, homeBookmarks: false, homeCollections: false, homeStats: false, zimResults: "unified" };
 
 interface UserSearchSettings {
-  search?: { homepageSections?: { recentSearches?: boolean; bookmarks?: boolean; favourites?: boolean; libraryStats?: boolean }; resultsPerPage?: number };
+  search?: { homepageSections?: { recentSearches?: boolean; bookmarks?: boolean; favourites?: boolean; libraryStats?: boolean }; resultsPerPage?: number; zimResults?: string };
 }
 
 function fromServer(u: UserSearchSettings): SearchPrefs {
@@ -30,6 +33,7 @@ function fromServer(u: UserSearchSettings): SearchPrefs {
     homeBookmarks: h.bookmarks === true,
     homeCollections: h.favourites === true,
     homeStats: h.libraryStats === true,
+    zimResults: isZimMode(u.search?.zimResults) ? u.search.zimResults : DEFAULT_PREFS.zimResults,
   };
 }
 
@@ -42,6 +46,7 @@ function toServer(p: Partial<SearchPrefs>): UserSearchSettings {
   const search: NonNullable<UserSearchSettings["search"]> = {};
   if (Object.keys(sections).length) search.homepageSections = sections;
   if (p.resultsPerPage !== undefined) search.resultsPerPage = p.resultsPerPage;
+  if (p.zimResults !== undefined) search.zimResults = p.zimResults;
   return { search };
 }
 

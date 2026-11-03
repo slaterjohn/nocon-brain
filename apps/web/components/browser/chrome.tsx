@@ -3,13 +3,15 @@
 import * as React from "react";
 import Link from "next/link";
 import {
-  Archive, ArrowLeft, ArrowRight, BookOpen, Bookmark as BookmarkIcon, CircleHelp, ExternalLink, Globe, History, Loader2, Plus, RotateCw, Save, Search,
+  Archive, ArrowLeft, ArrowRight, BookOpen, Bookmark as BookmarkIcon, CircleHelp, ExternalLink, Globe, History, Library, Loader2, Plus, RotateCw, Save, Search,
   Star, WifiOff, X, AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { del, errorMessage, get, post, useApi } from "@/lib/api";
 import type { Bookmark } from "@/lib/types";
 import { matchShortcut } from "@/lib/shortcuts";
+import { parseZimUrl } from "@/lib/zim";
+import { usePackageSummary } from "@/components/zim/hooks";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -19,6 +21,8 @@ import { ShortcutsDialog } from "./shortcuts-dialog";
 import { entryOf, tabSource, tabTitle, tabUrl, useBrowser, type Source, type Tab, type ViewMode } from "./tabs";
 
 const SINGLE_KEYS = "ncb.singleKeys";
+
+const content0Title = (t: Tab) => (t.content.kind === "archive" ? t.content.current.title : tabTitle(t));
 
 /** The address the bookmark and save buttons act on: the page in the frame, or the tab's address. */
 export function pageAddress(t: Tab): string {
@@ -34,6 +38,7 @@ const SOURCE_TEXT: Record<Source, { label: string; hint: string; icon: React.Com
   loading: { label: "Opening", hint: "Looking for this page.", icon: Loader2 },
   saved: { label: "Saved copy", hint: "This is the copy saved on this server. It opens without internet.", icon: Archive },
   partial: { label: "Partly saved copy", hint: "This copy is missing some files.", icon: Archive },
+  package: { label: "Knowledge package", hint: "This article is read from a knowledge package on this server. It opens without internet.", icon: Library },
   reader: { label: "Reader view", hint: "The saved copy, shown as plain text for reading.", icon: BookOpen },
   live: { label: "Not saved", hint: "This address is not saved. Open the live site, or save it for offline.", icon: Globe },
   offline: { label: "Offline, not saved", hint: "There is no internet and this page is not saved.", icon: WifiOff },
@@ -45,13 +50,17 @@ const SOURCE_TEXT: Record<Source, { label: string; hint: string; icon: React.Com
 export function SourceBadge({ tab, className }: { tab: Tab; className?: string }) {
   const { connectivity } = useEvents();
   const source = tabSource(tab);
+  const c = tab.content;
+  const pkg = usePackageSummary(source === "package" && c.kind === "archive" ? c.zim?.id : undefined);
   if (source === "blank") return null;
   // A live tab turns into an "offline" one the moment the connection is lost.
   const eff: Source = source === "live" && connectivity === "offline" ? "offline" : source;
-  const { label, hint, icon: Icon } = SOURCE_TEXT[eff];
+  const { label: base, hint, icon: Icon } = SOURCE_TEXT[eff];
+  const label = eff === "package" && pkg ? `Package: ${pkg.title}` : base;
   return (
     <span
       data-testid="tab-source"
+      data-package={eff === "package" ? (pkg?.title ?? "") : undefined}
       data-source={eff}
       title={hint || undefined}
       className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs", eff === "offline" || eff === "error" ? "border-warning text-warning" : "text-muted-foreground", className)}
@@ -62,13 +71,15 @@ export function SourceBadge({ tab, className }: { tab: Tab; className?: string }
   );
 }
 
-function useBookmarkState(address: string) {
+const bookmarkable = (address: string) => /^https?:\/\//i.test(address) || parseZimUrl(address) !== null;
+
+function useBookmarkState(address: string, title: string) {
   const { toast } = useToast();
   const [bookmark, setBookmark] = React.useState<Bookmark | null>(null);
   const [busy, setBusy] = React.useState(false);
   React.useEffect(() => {
     setBookmark(null);
-    if (!/^https?:\/\//i.test(address)) return;
+    if (!bookmarkable(address)) return;
     let live = true;
     get<{ items: Bookmark[] }>(`/api/bookmarks?url=${encodeURIComponent(address)}`)
       .then((r) => live && setBookmark(r.items[0] ?? null))
@@ -76,7 +87,7 @@ function useBookmarkState(address: string) {
     return () => { live = false; };
   }, [address]);
   const toggle = React.useCallback(async () => {
-    if (!/^https?:\/\//i.test(address) || busy) return;
+    if (!bookmarkable(address) || busy) return;
     setBusy(true);
     try {
       if (bookmark) {
@@ -84,16 +95,17 @@ function useBookmarkState(address: string) {
         setBookmark(null);
         toast({ title: "Bookmark removed" });
       } else {
-        const b = await post<Bookmark>("/api/bookmarks", { url: address });
+        const ref = parseZimUrl(address);
+        const b = await post<Bookmark>("/api/bookmarks", ref ? { zimId: ref.zimId, zimPath: ref.path, title } : { url: address });
         setBookmark(b);
-        toast({ title: "Bookmarked", description: b.archive ? "The saved copy is linked to the bookmark." : "This page is not saved yet. Use Save for offline to keep a copy." });
+        toast({ title: "Bookmarked", description: b.archive ? "The saved copy is linked to the bookmark." : b.zim ? "The package copy is linked to the bookmark, so it opens offline." : "This page is not saved yet. Use Save for offline to keep a copy." });
       }
     } catch (e) {
       toast({ title: "Couldn't change the bookmark", description: errorMessage(e), variant: "error" });
     } finally {
       setBusy(false);
     }
-  }, [address, bookmark, busy, toast]);
+  }, [address, title, bookmark, busy, toast]);
   return { bookmark, toggle, busy };
 }
 
@@ -114,7 +126,7 @@ function BookmarksMenu() {
         {list.data?.items.slice(0, 15).map((bm) => (
           <DropdownMenuItem key={bm.id} onSelect={() => b.openInBrowser(bm.originalUrl)} className="flex-col items-start gap-0">
             <span className="w-full truncate text-sm">{bm.title}</span>
-            <span className="w-full truncate text-xs text-muted-foreground">{bm.archive ? "Saved copy" : "Not saved"} · {bm.originalUrl}</span>
+            <span className="w-full truncate text-xs text-muted-foreground">{bm.archive ? "Saved copy" : bm.zim ? "Knowledge package" : "Not saved"} · {bm.originalUrl}</span>
           </DropdownMenuItem>
         ))}
         <DropdownMenuSeparator />
@@ -194,10 +206,11 @@ export function BrowserChrome({
   }, [b.focusRequest, active.id, active.content.kind, url, focusAddress]);
 
   const address = pageAddress(active);
-  const star = useBookmarkState(address);
+  const star = useBookmarkState(address, content0Title(active));
   const content = active.content;
   const canSave = content.kind === "live" || content.kind === "offline" || (content.kind === "archive" && content.current.interstitial);
-  const mode: ViewMode = content.kind === "archive" ? (content.current.reader ? "reader" : "archived") : content.kind === "live" ? "original" : (entryOf(active)?.mode ?? "archived");
+  const inPackage = content.kind === "archive" && content.current.state === "zim" && !!content.zim;
+  const mode: ViewMode = content.kind === "archive" ? (inPackage ? "package" : content.current.reader ? "reader" : "archived") : content.kind === "live" ? "original" : (entryOf(active)?.mode ?? "archived");
   const alternatives = content.kind === "archive" || content.kind === "live" ? content.alternatives : [];
   const liveHref = content.kind === "live" || content.kind === "offline" ? content.url : address;
   const openLive = React.useCallback(() => {
@@ -338,7 +351,7 @@ export function BrowserChrome({
           />
         </form>
         <Button
-          variant="ghost" size="icon" onClick={() => void star.toggle()} disabled={!/^https?:\/\//i.test(address) || star.busy}
+          variant="ghost" size="icon" onClick={() => void star.toggle()} disabled={!bookmarkable(address) || star.busy}
           aria-pressed={!!star.bookmark} aria-keyshortcuts="Alt+Shift+D" data-testid="bookmark-toggle"
         >
           <Star aria-hidden="true" className={cn(star.bookmark && "fill-current")} />
@@ -354,6 +367,7 @@ export function BrowserChrome({
       {content.kind !== "blank" && content.kind !== "loading" ? (
         <div className="flex flex-wrap items-center gap-2 border-t bg-background px-2 py-1.5" data-testid="page-actions">
           <SourceBadge tab={active} />
+          {!inPackage ? (
           <div role="radiogroup" aria-label="View" className="flex rounded-md border">
             {MODES.map(({ mode: m, label, need }) => {
               const available = need === "live" ? alternatives.includes("live") && ev.connectivity !== "offline" : alternatives.includes(need);
@@ -374,6 +388,17 @@ export function BrowserChrome({
               );
             })}
           </div>
+          ) : null}
+          {content.kind === "archive" && !inPackage && !content.current.interstitial && alternatives.includes("zim") ? (
+            <Button size="sm" variant="outline" onClick={() => b.setMode("package")} data-testid="alt-package">
+              <Library aria-hidden="true" /> Also in a knowledge package<span className="sr-only">: open the package copy</span>
+            </Button>
+          ) : null}
+          {inPackage && alternatives.includes("archive") ? (
+            <Button size="sm" variant="outline" onClick={() => b.setMode("archived")} data-testid="alt-archive">
+              <Archive aria-hidden="true" /> Also archived<span className="sr-only">: open the saved copy</span>
+            </Button>
+          ) : null}
           {canSave ? (
             <Button size="sm" variant="outline" onClick={saveNow} aria-keyshortcuts="Alt+Shift+S" data-testid="save-button">
               <Save aria-hidden="true" /> {ev.connectivity === "offline" ? "Queue for later" : "Save for offline"}
@@ -382,7 +407,7 @@ export function BrowserChrome({
           <Button size="sm" variant="outline" onClick={openLive} disabled={ev.connectivity === "offline" || !/^https?:\/\//i.test(liveHref)} aria-keyshortcuts="Alt+Shift+U" data-testid="open-live">
             <ExternalLink aria-hidden="true" /> Open live site<span className="sr-only"> in a new browser tab</span>
           </Button>
-          {content.kind === "archive" ? (
+          {content.kind === "archive" && !inPackage ? (
             <Button size="sm" variant="outline" onClick={onToggleFind} aria-pressed={findOpen} aria-keyshortcuts="Alt+Shift+F" data-testid="find-toggle">
               <Search aria-hidden="true" /> Find in page
             </Button>

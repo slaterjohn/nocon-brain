@@ -14,6 +14,8 @@ import { useToast } from "@/components/ui/toast";
 import { EmptyState, ErrorState, LoadingSkeleton, PageHeader } from "@/components/layout/states";
 import { useBrowser } from "@/components/browser/tabs";
 import { formatDate } from "./format";
+import { usePackages } from "@/components/zim/hooks";
+import { zimUrl } from "@/lib/zim";
 
 const MARKER: Record<HistoryEntry["servedFrom"], { label: string; variant: "success" | "secondary" | "warning" }> = {
   archive: { label: "Saved copy", variant: "success" },
@@ -27,6 +29,7 @@ const MARKER: Record<HistoryEntry["servedFrom"], { label: string; variant: "succ
 export function HistoryView() {
   const b = useBrowser();
   const { toast } = useToast();
+  const pkgs = usePackages();
   const [q, setQ] = React.useState("");
   const [term, setTerm] = React.useState("");
   React.useEffect(() => {
@@ -96,10 +99,11 @@ export function HistoryView() {
             return (
               <li key={h.id} className="flex flex-wrap items-center gap-3 p-3" data-testid="history-row">
                 <div className="min-w-0 flex-1">
-                  <button type="button" className="block max-w-full truncate text-left font-medium text-primary underline-offset-4 hover:underline" onClick={() => b.openInBrowser(h.url)}>
+                  <button type="button" className="block max-w-full truncate text-left font-medium text-primary underline-offset-4 hover:underline" onClick={() => b.openInBrowser(h.zim && h.servedFrom === "zim" ? zimUrl(h.zim.zimId, h.zim.path) : h.url)}>
                     {h.title}
                   </button>
                   <div className="truncate text-xs text-muted-foreground">{h.url}</div>
+                  {h.zim ? <div className="truncate text-xs text-muted-foreground" data-testid="history-package">Package: {pkgs.byId.get(h.zim.zimId)?.title ?? "a knowledge package"}</div> : null}
                 </div>
                 <Badge variant={m.variant}>{m.label}</Badge>
                 <time className="text-xs whitespace-nowrap text-muted-foreground" dateTime={h.visitedAt}>{formatDate(h.visitedAt)}</time>

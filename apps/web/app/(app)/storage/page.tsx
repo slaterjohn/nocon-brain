@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Activity, ClipboardList, Eraser, Globe, HardDrive, LayoutDashboard, PieChart, SlidersHorizontal, Telescope, Wrench, type LucideIcon } from "lucide-react";
+import { Activity, ClipboardList, Eraser, Globe, HardDrive, Library, LayoutDashboard, PieChart, SlidersHorizontal, Telescope, Wrench, type LucideIcon } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/layout/states";
 
@@ -16,6 +16,7 @@ const CARDS: { href: string; title: string; text: string; link: string; icon: Lu
   { href: "/storage/dashboard", title: "Dashboard", text: "Worker status, storage used and available, and job counts.", link: "Open the dashboard", icon: LayoutDashboard },
   { href: "/storage/activity", title: "Activity log", text: "What the server has been doing, filtered by level and area.", link: "Open the activity log", icon: Activity },
   { href: "/storage/online-search", title: "Online search", text: "Search the web as well as your saved pages. Choose providers, limits and privacy.", link: "Open online search settings", icon: Globe },
+  { href: "/storage/packages", title: "Knowledge packages", text: "How offline packages, such as Wikipedia, take part in search, and the limits behind it.", link: "Open knowledge package settings", icon: Library },
   { href: "/discovery/settings", title: "Discovery", text: "Suggest pages worth saving next, and decide whether any may be downloaded for you. Everything is off by default.", link: "Open discovery settings", icon: Telescope },
 ];
 

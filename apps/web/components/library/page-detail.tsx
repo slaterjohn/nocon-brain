@@ -20,6 +20,7 @@ import { useCollections } from "./hooks";
 import { AddToCollectionDialog } from "./add-to-collection";
 import { DeleteDialog } from "./library-view";
 import { CollectionIcon } from "./collection-icon";
+import { AttributionPanel } from "./attribution";
 
 const STATUS_WORDS: Record<string, string> = {
   ready: "Saved",
@@ -180,6 +181,7 @@ export function PageDetailView({ id }: { id: string }) {
                 <Meta label="Size">{formatBytes(current.totalBytes)}</Meta>
                 {current.partialReason ? <Meta label="What is missing">{PARTIAL_WORDS[current.partialReason] ?? current.partialReason}</Meta> : null}
               </dl>
+              <AttributionPanel versionId={current.id} />
               <div className="mt-3 flex flex-wrap gap-2">
                 <Button size="sm" onClick={() => b.openInBrowser(page.url, { versionId: current.id })} data-testid="open-version"><ExternalLink aria-hidden="true" /> Open this version</Button>
                 <Button size="sm" variant="outline" onClick={() => b.openInBrowser(page.url, { versionId: current.id, mode: "reader" })}><BookOpen aria-hidden="true" /> Reader view<span className="sr-only"> of this version</span></Button>
