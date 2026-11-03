@@ -1,0 +1,33 @@
+{
+  "_comment": "Evidence that the code and tests of a task do not name by ID. scripts/traceability.mjs merges this with the IDs it finds in test and source files, checks that every path exists, and fails when a task that is not Post-v1 has neither a test nor an exemption with a reason. Edit this file when a test or an exemption is added.",
+  "map": {
+    "F-01": { "tests": ["scripts/test/licence-audit.test.ts", "scripts/test/sbom.test.ts"], "code": ["scripts/licence-audit.mjs", "pnpm-workspace.yaml", "tsconfig.base.json"] },
+    "F-02": { "tests": ["packages/shared/test/ids.test.ts", "packages/shared/test/config.test.ts", "packages/shared/test/redact.test.ts", "packages/shared/test/paths.test.ts", "packages/shared/test/errors.test.ts"], "code": ["packages/shared/src"] },
+    "F-03": { "tests": ["tests/integration/db/database.test.ts", "packages/db/test/schema-sync.test.ts"], "code": ["packages/db/src"] },
+    "F-04": { "tests": ["tests/integration/queue/queue.test.ts", "tests/integration/queue/concurrency.test.ts", "tests/integration/queue/scale.test.ts", "packages/db/test/state-machine.test.ts"], "code": ["packages/db/src/queue"] },
+    "F-09": { "tests": ["tests/e2e/02-auth.spec.ts", "tests/e2e/03-navigation.spec.ts", "tests/e2e/06-proxy.spec.ts", "tests/e2e/07-headers.spec.ts", "apps/web/test/api-proxy.test.ts"], "code": ["apps/web/app", "apps/web/proxy.ts"] },
+    "F-10": { "tests": ["tests/integration/server/hardening.test.ts", "tests/integration/server/platform.test.ts"], "code": ["compose.yml", "docker/server/Dockerfile", "docker/web/Dockerfile", "scripts/build-images.sh", ".env.example"], "note": "The image build and docker compose up run on both architectures in the CI jobs named images and test." },
+    "F-13": { "tests": ["tests/offline/check.mjs", "tests/e2e/37-offline-end-to-end.spec.ts"], "code": ["scripts/offline-test.sh", "tests/fixtures/sites", "tests/e2e/fakes.ts", "compose.offline.yml"] },
+    "F-14": { "code": ["scripts/bench-queue.ts", "scripts/search/bench.ts", "docs/benchmarks.md"] },
+    "F-17": { "tests": ["tests/e2e/05-a11y.spec.ts", "tests/e2e/39-a11y-flows.spec.ts"], "code": ["apps/web/app/tokens.css"] },
+    "A-01": { "tests": ["packages/fetch/test/url.test.ts"], "code": ["packages/fetch/src/url.ts"] },
+    "A-02": { "tests": ["packages/fetch/test/ssrf.test.ts", "tests/integration/fetch/ssrf.test.ts", "tests/security/ssrf-guard.test.ts"], "code": ["packages/fetch/src/ssrf.ts"] },
+    "A-03": { "tests": ["tests/integration/fetch/fetcher.test.ts", "tests/integration/fetch/robots.test.ts", "packages/fetch/test/content.test.ts"], "code": ["packages/fetch/src/fetcher.ts"] },
+    "A-13": { "tests": ["tests/integration/archive/listener.test.ts", "tests/integration/archive/isolation.test.ts", "tests/e2e/35-isolation-poc.spec.ts", "tests/security/xss-serving.test.ts"], "code": ["apps/server/src/archive"] },
+    "C-02": { "tests": ["packages/crawl/test/scope.test.ts"], "code": ["packages/crawl/src/scope.ts"] },
+    "S-13": { "code": ["scripts/search/bench.ts", "scripts/bench-scale.ts", "docs/benchmarks.md"] },
+    "T-12": { "tests": ["tests/storage-safety/p1-never-evicted.test.ts", "tests/storage-safety/shared-assets.test.ts", "tests/storage-safety/retention-respected.test.ts", "tests/storage-safety/interrupted-eviction.test.ts", "tests/storage-safety/index-and-delete.test.ts"], "code": ["packages/storage-planner/src", "apps/server/src/storage/executor.ts"] },
+    "D-08": { "tests": ["tests/discovery/runner-limits.test.ts", "tests/discovery/property.test.ts", "tests/discovery/api-and-provenance.test.ts"], "code": ["apps/server/src/discovery"] },
+    "H-12": { "tests": ["scripts/test/traceability.test.ts"], "code": ["scripts/traceability.mjs", "docs/traceability.md", "docs/traceability-map.json"] },
+    "H-07": { "tests": ["scripts/test/docs-check.test.ts"], "code": ["scripts/docs-check.mjs", "docs/acceptance.md", "docs/guides"] },
+    "H-09": { "code": ["scripts/bench-scale.ts"], "note": "Run by hand with pnpm bench:scale; deliberately outside every test suite because the full run takes about an hour and 10 GB of disk." },
+    "H-04": { "code": ["docs/benchmarks.md", "scripts/bench-queue.ts", "scripts/bench-scale.ts", "scripts/search/bench.ts"] },
+    "H-10": { "tests": ["scripts/test/version.test.ts", "tests/e2e/03-navigation.spec.ts"], "code": ["CHANGELOG.md", "docs/release/release.yml.draft", "docs/release/checklist.md", "scripts/set-version.mjs", "apps/web/components/layout/source-notice.tsx"] }
+  },
+  "exempt": {
+    "F-14": "A benchmark harness has no pass or fail: evidence is a recorded run in docs/benchmarks.md.",
+    "S-13": "A benchmark: evidence is the recorded runs in docs/benchmarks.md; the search quality suite is packages/search/test/quality.test.ts.",
+    "H-04": "Measurements, not behaviour: evidence is docs/benchmarks.md, which states what was and was not measured.",
+    "H-09": "A manual scale run (pnpm bench:scale); evidence is the 500,000-page run in docs/benchmarks.md."
+  }
+}

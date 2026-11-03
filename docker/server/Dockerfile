@@ -93,7 +93,9 @@ COPY --from=native --chown=node:node /opt/native/node_modules ./node_modules
 COPY --from=build --chown=node:node /repo/apps/server/dist ./dist
 USER node
 EXPOSE 3001 3002
-HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+# A large library takes minutes to start: the search index is checked end to end first (2 minutes at 500,000 pages on an M4 Pro, docs/benchmarks.md).
+# Failed checks during the start period do not count, and the first success ends it, so a long period costs nothing on a small library.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=300s --retries=5 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.NCB_API_PORT||3001)+'/api/system/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "dist/index.js"]

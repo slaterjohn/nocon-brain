@@ -1,0 +1,52 @@
+# DRAFT benchmark workflow. Not active: it lives in docs/release/, not .github/workflows/. The Human reviews it and copies it to
+# .github/workflows/bench.yml. It runs only when started by hand, and publishes the JSON as a build artefact, so nobody has to
+# trust a number that was typed in.
+#
+# It gives the AMD64 figures for docs/benchmarks.md (ubuntu-latest, x86-64) and a second arm64 data point (ubuntu-24.04-arm, a cloud VM,
+# not a Raspberry Pi). GitHub-hosted runners are shared machines, so repeat runs vary; take the median of three and note the runner image.
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      pages:
+        description: Pages in the synthetic library (500000 needs about 10 GB of free disk and about an hour)
+        default: "50000"
+
+permissions:
+  contents: read
+
+jobs:
+  scale:
+    name: scale (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ncb/server build
+      - name: Machine
+        run: |
+          uname -a
+          lscpu | head -20
+          free -h
+          df -h .
+      - name: Scale benchmark
+        run: pnpm bench:scale --pages ${{ github.event.inputs.pages }} --out scale-${{ runner.arch }}.json
+      - name: Queue benchmark
+        run: pnpm bench:queue > queue-${{ runner.arch }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks-${{ runner.arch }}
+          path: |
+            scale-*.json
+            queue-*.json

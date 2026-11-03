@@ -149,7 +149,7 @@ export class WikipediaClient {
 
   get userAgent(): string {
     this.assertReady();
-    return wikipediaUserAgent(this.o.version ?? "0.1.0", this.contact!);
+    return wikipediaUserAgent(this.o.version ?? "dev", this.contact!);
   }
 
   get minIntervalMs(): number {

@@ -358,18 +358,21 @@ export class BlobStore {
 export class SimulatedCrash extends Error {}
 
 /**
- * How many things use a blob, counted from the reference rows: asset references (through assets), the four `version_content`
+ * Whether anything uses a blob, counted from the reference rows: asset references (through assets), the four `version_content`
  * columns, imported originals, and the original bytes of a version that is still being captured. Never the cached `refcount`.
+ * The result is the number of kinds of use found, 0 to 7: only zero against non-zero matters, so each kind stops at its first row.
+ * (A style sheet shared by every page of a site has tens of thousands of references; counting them all for each removal made eviction
+ * slower the more popular the site, HB-26.)
  */
 export function blobInUse(db: Db, blobId: number, sha256: string): number {
   return db.get<{ n: number }>(
-    `SELECT (SELECT COUNT(*) FROM asset_references ar JOIN assets a ON a.id = ar.asset_id WHERE a.blob_id = @b)
-          + (SELECT COUNT(*) FROM version_content WHERE text_blob_id = @b)
-          + (SELECT COUNT(*) FROM version_content WHERE reader_blob_id = @b)
-          + (SELECT COUNT(*) FROM version_content WHERE outline_blob_id = @b)
-          + (SELECT COUNT(*) FROM version_content WHERE extraction_blob_id = @b)
-          + (SELECT COUNT(*) FROM import_documents WHERE original_blob_id = @b)
-          + (SELECT COUNT(*) FROM page_versions WHERE status = 'capturing' AND (raw_hash = @s OR document_blob_id = @b)) AS n`,
+    `SELECT EXISTS (SELECT 1 FROM asset_references ar JOIN assets a ON a.id = ar.asset_id WHERE a.blob_id = @b)
+          + EXISTS (SELECT 1 FROM version_content WHERE text_blob_id = @b)
+          + EXISTS (SELECT 1 FROM version_content WHERE reader_blob_id = @b)
+          + EXISTS (SELECT 1 FROM version_content WHERE outline_blob_id = @b)
+          + EXISTS (SELECT 1 FROM version_content WHERE extraction_blob_id = @b)
+          + EXISTS (SELECT 1 FROM import_documents WHERE original_blob_id = @b)
+          + EXISTS (SELECT 1 FROM page_versions WHERE status = 'capturing' AND (raw_hash = @s OR document_blob_id = @b)) AS n`,
     { b: blobId, s: sha256 },
   )!.n;
 }

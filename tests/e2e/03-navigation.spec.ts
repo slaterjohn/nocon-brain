@@ -131,3 +131,12 @@ test("connectivity indicator is honest about not having checked, and follows the
   await expect(indicator).toHaveAttribute("data-state", "unknown");
   await expect(indicator).toContainText("Connection not checked");
 });
+
+// AGPL-3.0 section 13 (H-10): people who use the app over a network are offered the source.
+test("every page offers the source code and the licence", async ({ page }) => {
+  const notice = page.getByTestId("source-notice");
+  await expect(notice).toContainText(/free software under the GNU AGPL v3/);
+  await expect(notice.getByRole("link", { name: "Source code" })).toHaveAttribute("href", "https://github.com/slaterjohn/nocon-brain");
+  await page.getByRole("navigation", { name: "Areas" }).getByRole("link", { name: "Library" }).click();
+  await expect(page.getByTestId("source-notice")).toBeVisible();
+});

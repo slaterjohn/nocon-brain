@@ -11,6 +11,7 @@ import type { Me, SetupStatus } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { ErrorState, LoadingSkeleton } from "./states";
+import { SourceNotice } from "./source-notice";
 import { ThemeToggle } from "./theme";
 import { ConnectivityIndicator, EventsProvider, WorkOfflineSwitch } from "./events";
 import { BrowserProvider } from "@/components/browser/tabs";
@@ -130,6 +131,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
         </main>
       </div>
+      <SourceNotice />
     </div>
     </BrowserProvider>
     </EventsProvider>

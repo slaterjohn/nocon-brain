@@ -1,6 +1,6 @@
 # Architecture
 
-Status: planning. Nothing in this document has been built. Numbers marked "to be measured" are targets, not results. Numbers taken from the research are cited by file.
+Status: this began as the plan and is kept up to date with what was built; where the build differs, the section says "as built" or [deployment.md](deployment.md) records the difference. Numbers marked "to be measured" are targets, not results, and measured figures are in [benchmarks.md](benchmarks.md). Numbers taken from the research are cited by file.
 
 NoConBrain is a self-hosted, offline-first knowledge archiver, crawler and search engine. It archives web pages to local storage, lets the user browse and search them with no internet connection, and can blend in results from online search providers when a connection exists. It targets Docker Compose on Raspberry Pi 4/5 (ARM64) and AMD64.
 
@@ -381,12 +381,14 @@ Healthchecks: `server` `GET /api/system/health` (database writable, index openab
 
 Graceful shutdown (`SIGTERM`): stop claiming jobs, stop accepting new requests, wait up to `NCB_SHUTDOWN_GRACE_SECONDS` (default 25; compose `stop_grace_period: 30s`) for running stages to reach a checkpoint or release their leases, flush the index outbox, `wal_checkpoint(TRUNCATE)` on both databases, close.
 
-### Environment variables (to become `.env.example`)
+### Environment variables
+
+As built, the full list with defaults is [configuration.md](configuration.md) and `.env.example`. This table is the original plan: settings that a person changes while the app runs (crawl defaults, robots.txt, bandwidth, search fusion weights, providers, download windows, maintenance times) became settings in the app, not environment variables, and the cache and worker count of search are not configurable.
 
 | Group | Variable | Default | Purpose |
 |---|---|---|---|
 | App | `NCB_APP_URL` | `http://localhost:3000` | Public app URL; used for CSRF `Origin` checks and absolute links |
-| | `NCB_WEB_PORT` / `NCB_ARCHIVE_PORT` / `NCB_API_PORT` | 3000 / 3002 / 3001 | Host and container ports; API not published unless `NCB_API_BIND` set |
+| | `NCB_WEB_PORT` / `NCB_ARCHIVE_PORT` / `NCB_API_PORT` | 3000 / 3002 / 3001 | Host and container ports; API port not published |
 | | `NCB_ARCHIVE_PUBLIC_URL` | derived from request host + archive port | Override when behind a reverse proxy with a separate hostname. The `web` container reads it too (and `NCB_ARCHIVE_PORT`) to put the archive origin in the CSP `frame-src` |
 | | `NCB_RATE_LIMIT_PER_MINUTE` | 600 | Global API requests per minute per client IP (api.md section 1) |
 | Auth | `NCB_PROXY_SECRET` | required | Shared by `web` and `server` (`openssl rand -hex 32`) |
@@ -400,18 +402,15 @@ Graceful shutdown (`SIGTERM`): stop claiming jobs, stop accepting new requests, 
 | | `NCB_MIN_FREE_DISK_GB` | 5 | Hard floor; downloads pause below it |
 | | `NCB_DISCOVERY_PASS_SECONDS` | 30 | Seconds between Discovery timer passes; 0 turns the timer off (the tests do) |
 | Resources | `NCB_RESOURCE_PROFILE` | `pi-lite` on ARM64, else `standard` | Preset for the next group |
-| | `NCB_MAX_FETCH_CONCURRENCY`, `NCB_PER_HOST_CONCURRENCY`, `NCB_EXTRACT_WORKERS`, `NCB_WORKER_MEMORY_MB`, `NCB_BANDWIDTH_LIMIT_KBPS` | profile | Overrides |
+| | `NCB_MAX_FETCH_CONCURRENCY`, `NCB_PER_HOST_CONCURRENCY`, `NCB_EXTRACT_WORKERS`, `NCB_WORKER_MEMORY_MB` | profile | Overrides |
 | | `NCB_SERVER_MEMORY`, `NCB_WEB_MEMORY`, `NCB_SERVER_CPUS` | profile | Compose limits |
 | Crawl | `NCB_CONTACT` | none; required for Wikipedia | A web address or an email address of the person who runs the server. Wikipedia and Wikimedia requests carry it in the User-Agent (`NoConBrain/<ver> (<contact>; <repo>)`); without it there are no Wikipedia requests (api.md 15.2) |
 | | `NCB_WIKIPEDIA_ORIGIN` | empty | Replaces `https://<language>.wikipedia.org` (a mirror, or the fake server of the tests). The pace and the contact rule still apply |
-| | `NCB_CRAWL_DEFAULT_DELAY_MS`, `NCB_CRAWL_MAX_PAGES`, `NCB_CRAWL_MAX_DEPTH`, `NCB_CRAWL_MAX_BYTES_PER_CAPTURE`, `NCB_RESPECT_ROBOTS` | profile | Defaults for new sources |
-| | `NCB_PRIVATE_NETWORK_ALLOWLIST` | empty | Operator allowlist for intentional LAN crawling; off by default |
-| Providers | `NCB_SEARXNG_URL`, `NCB_BRAVE_API_KEY`, `NCB_MOJEEK_API_KEY` | empty | Seed provider rows on first start only; the app works with none |
-| Search | `NCB_INDEX_CACHE_MB`, `NCB_SEARCH_WORKERS`, `NCB_RRF_K`, `NCB_RRF_LOCAL_WEIGHT` | profile, 1, 60, 1.5 | |
+| | `NCB_FETCH_ALLOW_PRIVATE_HOSTS` | empty | Operator allowlist for intentional LAN crawling: comma separated `host`, `host:port`, `*.suffix`, address or CIDR. Off by default. Read by the fetcher, not by `config.ts` |
 | ZIM | `NCB_ZIM_CACHE_MB`, `NCB_ZIM_SEARCH_BUDGET_MS` | 16, 800 | libzim cluster cache per open package (MiB), per-search time budget (default of `search.zimSearchBudgetMs`) |
 | Offline | `NCB_CONNECTIVITY_PROBE_URL` | empty | Optional active probe |
 | Logging | `NCB_LOG_LEVEL`, `NCB_LOG_FORMAT`, `NCB_ACTIVITY_LOG_RETENTION_DAYS` | `info`, `json`, 30 | |
-| Schedules | `NCB_TZ`, `NCB_SCHEDULER_ENABLED`, `NCB_DOWNLOAD_WINDOW`, `NCB_MAINTENANCE_CRON`, `NCB_BACKUP_CRON` | `UTC`, `true`, empty, `0 3 * * *`, empty | |
+| Schedules | `NCB_TZ`, `NCB_SCHEDULER_ENABLED` | `UTC`, `true` | Time zone for schedules; turning the scheduler off |
 | Renderer | `NCB_RENDERER_URL`, `NCB_RENDERER_SECRET`, `NCB_RENDER_PROXY_PORT`, `NCB_RENDER_CONCURRENCY`, `NCB_RENDER_TIMEOUT_SECONDS`, `NCB_RENDER_NEVER_HOSTS`, `NCB_RENDERER_MEMORY`, `NCB_RENDERER_CPUS` | empty, `NCB_PROXY_SECRET`, 3128, 1, 45, empty, 1g, 2.0 | `NCB_RENDERER_URL` empty means off: no proxy listens and nothing is rendered. With the `renderer` profile set it to `http://renderer:8080` |
 | Import | `NCB_IMPORT_MAX_MB` | 50 | Largest document upload |
 | Profiles | `COMPOSE_PROFILES` | empty | `renderer`, `searxng` |

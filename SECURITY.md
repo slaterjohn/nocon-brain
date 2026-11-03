@@ -8,7 +8,7 @@ Include what you found, the version or commit, how to reproduce it, and the impa
 
 ## Supported versions
 
-Only the latest commit on `main` is supported. There are no maintained release branches yet.
+Only the latest release and the latest commit on `main` are supported (the current version is 1.0.0-rc.1). There are no maintained release branches. Security fixes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## In scope
 
@@ -38,4 +38,4 @@ NoConBrain is built for one household on a trusted network.
 - `NCB_SECRET_KEY` encrypts stored search-provider credentials. If you don't set it, a key is generated in the data folder's `secrets` directory. Either way, back it up with your data, or the credentials have to be entered again.
 - Only set `NCB_VOLUMES_ALLOWED_ROOTS` to folders NoConBrain should be able to write to.
 
-The design is described in [docs/architecture.md](docs/architecture.md) and the deployment options in [docs/deployment.md](docs/deployment.md).
+Step-by-step setup, including HTTPS behind a reverse proxy, is in [docs/guides/install.md](docs/guides/install.md). The design is described in [docs/architecture.md](docs/architecture.md) and the deployment options in [docs/deployment.md](docs/deployment.md).

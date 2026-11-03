@@ -17,7 +17,7 @@ x-hardening: &hardening
 
 services:
   server:
-    image: nocon-brain/server:${NCB_VERSION:-latest}
+    image: ${NCB_REGISTRY:-}nocon-brain/server:${NCB_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/server/Dockerfile
@@ -72,7 +72,7 @@ services:
     # The image HEALTHCHECK (GET /api/system/health) applies: migrations ran and the database is writable.
 
   web:
-    image: nocon-brain/web:${NCB_VERSION:-latest}
+    image: ${NCB_REGISTRY:-}nocon-brain/web:${NCB_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/web/Dockerfile
@@ -134,7 +134,7 @@ services:
   # Chromium's own sandbox needs unprivileged user namespaces and chroot, which Docker's default seccomp profile blocks; docker/renderer/seccomp.json
   # is Playwright's profile that allows them (with CAP_SYS_CHROOT, the one capability added back). On a host that forbids user namespaces (some hardened Ubuntu settings) the renderer will not start.
   renderer:
-    image: nocon-brain/renderer:${NCB_VERSION:-latest}
+    image: ${NCB_REGISTRY:-}nocon-brain/renderer:${NCB_VERSION:-latest}
     build:
       context: .
       dockerfile: docker/renderer/Dockerfile

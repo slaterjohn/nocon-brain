@@ -70,3 +70,12 @@ Review the register at the end of every phase. A risk is closed only when its ve
 | Pi performance | R-14, R-35, R-37 |
 | Licensing | R-15 |
 | Dynamic sites | R-02, R-24 |
+
+## Added in Phase 9 wave D
+
+| ID | Risk | L | I | Mitigation and status |
+|---|---|---|---|---|
+| R-31 | **A very large library outgrows the default memory.** Planning an eviction needs about 2.7 GB at 500,000 pages and the server container has 768 MB; a Pi has less. | Medium | High | Measured, not fixed: HB-28. Raise `NCB_SERVER_MEMORY` on a machine that has the memory; the planner needs rework before 500,000 pages is safe at the default. |
+| R-32 | **Scale faults that only show at size.** Four faults grew with the square of the library and none showed below 10,000 pages (HB-24, HB-25, HB-26). | Medium | Medium | Found and fixed by `pnpm bench:scale`. Run it at 100,000 pages before each release and compare with [benchmarks.md](benchmarks.md). |
+| R-33 | **Nothing has run on a Raspberry Pi.** Every Pi figure is "not measured". | High | Medium | Open: a person with a Pi runs the install guide and the benchmarks ([release checklist](release/checklist.md)). The release notes must say so until then. |
+

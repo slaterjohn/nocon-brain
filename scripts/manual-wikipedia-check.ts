@@ -2,7 +2,7 @@
 // internet and makes TWO requests in all, one second apart, with the User-Agent policy applied.
 //   NCB_CONTACT=https://github.com/slaterjohn/nocon-brain node --import tsx scripts/manual-wikipedia-check.ts [Title] [lang]
 // NCB_CONTACT must be a web address or an email address that reaches the person running NoConBrain. It is required; the script refuses without one.
-import { WikipediaClient, extractWikiImages, extractWikiLinks, parsoidMeta } from "@ncb/server";
+import { VERSION, WikipediaClient, extractWikiImages, extractWikiLinks, parsoidMeta } from "@ncb/server";
 
 const contact = process.env.NCB_CONTACT;
 if (!contact) {
@@ -12,7 +12,7 @@ if (!contact) {
 const title = process.argv[2] ?? "Ethylbenzene";
 const lang = process.argv[3] ?? "en";
 
-const client = new WikipediaClient({ contact, version: "0.1.0" });
+const client = new WikipediaClient({ contact, version: VERSION });
 console.log("user agent:", client.userAgent);
 
 const t0 = Date.now();

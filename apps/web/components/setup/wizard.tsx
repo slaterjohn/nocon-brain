@@ -13,6 +13,7 @@ import { Field, FormError } from "@/components/common/form";
 import { AdvancedSettings } from "@/components/common/advanced-settings";
 import { ThemeToggle } from "@/components/layout/theme";
 import { Wordmark } from "@/components/layout/app-shell";
+import { SourceNotice } from "@/components/layout/source-notice";
 import { LoadingSkeleton } from "@/components/layout/states";
 import { Label } from "@/components/ui/label";
 
@@ -110,6 +111,7 @@ export function SetupWizard() {
           </>
         )}
       </main>
+      <SourceNotice className="mt-8 border-t-0" />
     </div>
   );
 }

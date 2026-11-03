@@ -1,0 +1,437 @@
+{
+  "when": "2026-11-03T13:18:58.199Z",
+  "environment": {
+    "cpu": "Apple M4 Pro x12",
+    "ramGiB": 24,
+    "os": "Darwin 25.0.0 arm64",
+    "node": "v24.22.2",
+    "scratchFilesystem": "/var/folders/0k/r8305dhd3974xqbdpdkv2lw00000gn/T/ncb-scale-0TnIed"
+  },
+  "parameters": {
+    "pages": 500000,
+    "seed": 20261103,
+    "execSample": 2000,
+    "searchUnderLoad": false
+  },
+  "sqliteVersion": "3.53.4",
+  "library": {
+    "pages": 500000,
+    "versions": 549899,
+    "hosts": 2000,
+    "sources": 300,
+    "textBlobs": 549899,
+    "sharedAssets": 6000,
+    "uniqueAssets": 74866,
+    "assetRefs": 1724563,
+    "rawTextBytes": 1158400979,
+    "storedBytes": 905265637,
+    "seedSeconds": 228.69,
+    "meanRawTextBytesPerPage": 2107
+  },
+  "startup": {
+    "coldNoIndexMs": 3526.77,
+    "indexStateAtStart": "missing",
+    "warmWithIndexMs": 59548.25,
+    "firstSearchAfterStartMs": 148.88
+  },
+  "indexRebuild": {
+    "ms": 346866.52,
+    "seconds": 346.87,
+    "docsIndexed": 500000,
+    "docsPerSecond": 1441,
+    "indexBytes": 3746680832,
+    "indexOverRawText": 3.23
+  },
+  "search": {
+    "queries": 2700,
+    "coldFirstFiveMs": [
+      45.76,
+      28.78,
+      20.58,
+      19.05,
+      18.98
+    ],
+    "overall": {
+      "n": 2700,
+      "p50": 22.8,
+      "p95": 98.44,
+      "p99": 194.84,
+      "max": 1941.22
+    },
+    "overallEngineReportedLocalMs": {
+      "n": 2700,
+      "p50": 18.15,
+      "p95": 93.79,
+      "p99": 189.82,
+      "max": 1933.23
+    },
+    "byType": {
+      "common single term": {
+        "n": 300,
+        "p50": 13.91,
+        "p95": 20.53,
+        "p99": 134.44,
+        "max": 304.11,
+        "zeroResult": 0,
+        "meanTotalHits": 2000
+      },
+      "mid-frequency single term": {
+        "n": 300,
+        "p50": 16.34,
+        "p95": 22.69,
+        "p99": 26.33,
+        "max": 28.17,
+        "zeroResult": 0,
+        "meanTotalHits": 1603
+      },
+      "unique token (one hit)": {
+        "n": 300,
+        "p50": 29.86,
+        "p95": 31.75,
+        "p99": 32.47,
+        "max": 32.9,
+        "zeroResult": 0,
+        "meanTotalHits": 1
+      },
+      "multi-term (2 to 3 words)": {
+        "n": 300,
+        "p50": 17.31,
+        "p95": 21.41,
+        "p99": 28.14,
+        "max": 32.16,
+        "zeroResult": 0,
+        "meanTotalHits": 539
+      },
+      "phrase (3 words)": {
+        "n": 300,
+        "p50": 24.04,
+        "p95": 154.78,
+        "p99": 350.35,
+        "max": 1941.22,
+        "zeroResult": 0,
+        "meanTotalHits": 506
+      },
+      "term with domain filter": {
+        "n": 300,
+        "p50": 54.83,
+        "p95": 97.14,
+        "p99": 127.3,
+        "max": 145.67,
+        "zeroResult": 0,
+        "meanTotalHits": 37
+      },
+      "term with source filter": {
+        "n": 300,
+        "p50": 68.68,
+        "p95": 185.71,
+        "p99": 219.34,
+        "max": 284.27,
+        "zeroResult": 0,
+        "meanTotalHits": 240
+      },
+      "typo (adjacent letters swapped)": {
+        "n": 300,
+        "p50": 24.01,
+        "p95": 30.7,
+        "p99": 34.02,
+        "max": 103.33,
+        "zeroResult": 30,
+        "meanTotalHits": 1426
+      },
+      "exact page title": {
+        "n": 300,
+        "p50": 21.23,
+        "p95": 60.13,
+        "p99": 316.46,
+        "max": 703.61,
+        "zeroResult": 0,
+        "meanTotalHits": 786
+      }
+    },
+    "repeatedQueriesCached": {
+      "n": 900,
+      "p50": 23.76,
+      "p95": 108.47,
+      "p99": 205.84,
+      "max": 1963.07
+    },
+    "withFacets": {
+      "n": 540,
+      "p50": 28.91,
+      "p95": 101.61,
+      "p99": 190.83,
+      "max": 257.45
+    },
+    "suggestions3LetterPrefix": {
+      "n": 300,
+      "p50": 0.28,
+      "p95": 1.25,
+      "p99": 1.7,
+      "max": 2.09
+    }
+  },
+  "libraryListing": {
+    "newest first, offset 0": {
+      "n": 20,
+      "p50": 2974.56,
+      "p95": 3529.37,
+      "p99": 3529.37,
+      "max": 3529.37,
+      "total": 500000
+    },
+    "newest first, offset 1,000": {
+      "n": 20,
+      "p50": 188.99,
+      "p95": 1712.81,
+      "p99": 1712.81,
+      "max": 1712.81,
+      "total": 500000
+    },
+    "newest first, offset 100,000": {
+      "n": 10,
+      "p50": 283.14,
+      "p95": 291.13,
+      "p99": 291.13,
+      "max": 291.13,
+      "total": 500000
+    },
+    "newest first, offset at 90% of the library": {
+      "n": 10,
+      "p50": 387.29,
+      "p95": 468.68,
+      "p99": 468.68,
+      "max": 468.68,
+      "total": 500000
+    },
+    "sorted by title, offset 0": {
+      "n": 5,
+      "p50": 212.94,
+      "p95": 219,
+      "p99": 219,
+      "max": 219,
+      "total": 500000
+    },
+    "sorted by site, offset 0": {
+      "n": 5,
+      "p50": 136.03,
+      "p95": 177.25,
+      "p99": 177.25,
+      "max": 177.25,
+      "total": 500000
+    },
+    "sorted by size, offset 0": {
+      "n": 5,
+      "p50": 252.54,
+      "p95": 260.93,
+      "p99": 260.93,
+      "max": 260.93,
+      "total": 500000
+    },
+    "one source, offset 0": {
+      "n": 10,
+      "p50": 385.34,
+      "p95": 1210.44,
+      "p99": 1210.44,
+      "max": 1210.44,
+      "total": 1838
+    },
+    "one domain, offset 0": {
+      "n": 10,
+      "p50": 1.59,
+      "p95": 2.31,
+      "p99": 2.31,
+      "max": 2.31,
+      "total": 293
+    },
+    "priority P1 only": {
+      "n": 10,
+      "p50": 108.42,
+      "p95": 142.99,
+      "p99": 142.99,
+      "max": 142.99,
+      "total": 29426
+    },
+    "title or address contains a word": {
+      "n": 3,
+      "p50": 323.93,
+      "p95": 370.67,
+      "p99": 370.67,
+      "max": 370.67,
+      "total": 0
+    },
+    "walking the first 100 pages of 50": {
+      "n": 100,
+      "p50": 191.75,
+      "p95": 905.58,
+      "p99": 1588.86,
+      "max": 1588.86
+    }
+  },
+  "storage": {
+    "pressure plan (free 2% of stored bytes for an incoming P1)": {
+      "runsMs": [
+        8182.12,
+        9180.06,
+        8744.95
+      ],
+      "itemsPlanned": 16074,
+      "steps": 1,
+      "bytesNeeded": 17627770
+    },
+    "tidy-up (prune) plan": {
+      "ms": 8244.47,
+      "itemsPlanned": 38838,
+      "unreferencedBlobs": 0
+    },
+    "plan as the API returns it": {
+      "ms": 8835.19,
+      "itemsTotal": 16074,
+      "itemsListed": 200
+    },
+    "usage by priority": {
+      "ms": 6857.27
+    },
+    "backup of main.db (VACUUM INTO, checksummed)": {
+      "ms": 18242.97,
+      "files": [
+        {
+          "name": "main.db",
+          "bytes": 1124798464
+        }
+      ]
+    },
+    "collect unreferenced files": {
+      "ms": 0.17,
+      "removed": 0
+    }
+  },
+  "verify": {
+    "perCheck": {
+      "I-1": {
+        "ms": 34575.72,
+        "findings": 0,
+        "checked": {
+          "blobs": 630765
+        }
+      },
+      "I-2": {
+        "ms": 8045.01,
+        "findings": 0,
+        "checked": {
+          "files": 630765
+        }
+      },
+      "I-3": {
+        "ms": 776.45,
+        "findings": 0,
+        "checked": {
+          "blobCounts": 630765
+        }
+      },
+      "I-4": {
+        "ms": 2551.7,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-5": {
+        "ms": 0.6,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-6": {
+        "ms": 273.33,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-7": {
+        "ms": 0.3,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-8": {
+        "ms": 0.21,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-9": {
+        "ms": 2.83,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-10": {
+        "ms": 609.42,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-12": {
+        "ms": 4189.65,
+        "findings": 0,
+        "checked": {
+          "quickCheck": 1
+        }
+      },
+      "I-13": {
+        "ms": 0.55,
+        "findings": 0,
+        "checked": {}
+      },
+      "REF": {
+        "ms": 169.41,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-11": {
+        "ms": 586.8,
+        "findings": 0,
+        "checked": {
+          "scrubbed": 2000
+        }
+      }
+    },
+    "i11SampleBlobs": 2000,
+    "i11MsPerBlob": 0.29,
+    "allChecksDefaultMs": 45154.31,
+    "allChecksDefaultFindings": [],
+    "quickVerifyI1Ms": 34575.72
+  },
+  "evictionExecution": {
+    "planned": 2915,
+    "evictedVersions": 2915,
+    "ms": 4489.13,
+    "versionsPerSecond": 649.35,
+    "indexCatchUpMs": 18674.45
+  },
+  "shutdown": {
+    "ms": 41.09
+  },
+  "productionBundle": {
+    "timeToHealthyMs": 43648.21,
+    "idleRssMiBTenSecondsAfterHealthy": 293,
+    "note": "node apps/server/dist/index.js, search index present, no jobs, API and archive listeners bound, no browser connected."
+  },
+  "sizes": {
+    "mainDbBytes": 1244344320,
+    "mainDbWalBytes": 0,
+    "indexDbBytes": 3763609600,
+    "blobsLogicalStoredBytes": 881388524,
+    "blobsDiskKiB": 2589384,
+    "blobFiles": 630765,
+    "mainDbBytesPerPage": 2489,
+    "indexBytesPerPage": 7527
+  },
+  "memory": {
+    "empty server, just started (MiB, separate process)": 585,
+    "after start, no index (MiB)": 486,
+    "after index rebuild (MiB)": 601,
+    "after search queries (MiB)": 711,
+    "after library listing (MiB)": 453,
+    "after storage planning (MiB)": 2694,
+    "after verify (MiB)": 2758,
+    "after eviction sample (MiB)": 2770,
+    "after warm start (MiB)": 2779,
+    "peak RSS sampled every 100 ms (MiB)": 2847,
+    "peak RSS from the OS (MiB)": 2606,
+    "note": "One process holds the server, the index and search worker threads, and the benchmark itself."
+  },
+  "totalWallSeconds": 1193.96
+}

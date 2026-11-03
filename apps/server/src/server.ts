@@ -64,6 +64,7 @@ import { DiscoveryService } from "./discovery/service.js";
 import { WikipediaClient, WikipediaRoutedFetcher, WikipediaService, WikipediaZim } from "./wikipedia/index.js";
 
 export { buildApp } from "./app.js";
+export { VERSION } from "./version.js";
 export * from "./archive/index.js";
 export { ServerState, type Services } from "./context.js";
 export * from "./services/blobs.js";

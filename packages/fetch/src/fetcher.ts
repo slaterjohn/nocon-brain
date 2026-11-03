@@ -107,7 +107,7 @@ export interface Fetcher {
 
 export function buildUserAgent(o: { version?: string; repo?: string; contact?: string } = {}): string {
   const repo = o.repo ?? "https://github.com/slaterjohn/nocon-brain";
-  return `NoConBrain/${o.version ?? "0.1.0"} (+${repo}${o.contact ? `; ${o.contact}` : ""})`;
+  return `NoConBrain/${o.version ?? "dev"} (+${repo}${o.contact ? `; ${o.contact}` : ""})`;
 }
 
 export function parseRetryAfter(value: string | undefined, now = Date.now()): number | undefined {

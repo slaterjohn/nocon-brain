@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/
 import { Field, FormError } from "@/components/common/form";
 import { ThemeToggle } from "@/components/layout/theme";
 import { Wordmark } from "@/components/layout/app-shell";
+import { SourceNotice } from "@/components/layout/source-notice";
 
 export default function LoginPage() {
   const [username, setUsername] = React.useState("");
@@ -96,6 +97,7 @@ export default function LoginPage() {
           </CardContent>
         </Card>
       </main>
+      <SourceNotice className="mt-8 border-t-0" />
     </div>
   );
 }

@@ -1,0 +1,165 @@
+# DRAFT release workflow for NoConBrain. It is not active: it lives in docs/release/, not .github/workflows/.
+# To use it, the Human reviews it, copies it to .github/workflows/release.yml and commits it. Nothing here has been run.
+#
+# What it does when a tag such as v1.0.0 or v1.0.0-rc.1 is pushed:
+#   1. checks that the tag matches the version in package.json, and runs typecheck, unit tests and the licence audit;
+#   2. builds the server, web and renderer images for linux/amd64 and linux/arm64 and pushes them to GHCR with provenance and an SBOM;
+#   3. attests the images (GitHub build provenance), so `gh attestation verify` works on them;
+#   4. writes the software bill of materials for the source tree and creates a DRAFT GitHub release with the changelog entry.
+#      The release stays a draft: the Human reads it and presses publish.
+#
+# It never runs on a branch or a pull request. Image names:
+#   ghcr.io/<owner>/nocon-brain/server, .../web, .../renderer   (compose.yml: NCB_REGISTRY=ghcr.io/<owner>/ NCB_VERSION=<version>)
+# Tags: the exact version always; `latest` and the major.minor tag only for a release that is not a pre-release.
+#
+# Before the first run, check in the repository settings: Actions may write packages; the packages are made public after the first push
+# (GHCR makes a new package private by default).
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify the tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - id: v
+        name: The tag must equal the version in package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then echo "Tag $tag does not match package.json $pkg"; exit 1; fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+          case "$tag" in *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;; *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;; esac
+      - name: The changelog has an entry for this version
+        run: grep -q "^## \[${{ steps.v.outputs.version }}\]" CHANGELOG.md
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: node scripts/licence-audit.mjs
+      - run: pnpm traceability --check
+
+  images:
+    name: image ${{ matrix.image }}
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write       # for the build provenance attestation
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [server, web, renderer]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lower-case image name
+        id: name
+        run: echo "ref=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/nocon-brain/${{ matrix.image }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.name.outputs.ref }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ needs.verify.outputs.prerelease == 'false' }}
+            type=raw,value=latest,enable=${{ needs.verify.outputs.prerelease == 'false' }}
+          labels: |
+            org.opencontainers.image.licenses=AGPL-3.0-only
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/${{ matrix.image }}/Dockerfile
+          target: ${{ matrix.image == 'server' && 'runtime' || '' }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ steps.name.outputs.ref }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  smoke:
+    name: pull and start the published images
+    needs: [verify, images]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose up --wait with the published images
+        env:
+          NCB_PROXY_SECRET: ci-smoke-only-not-a-secret-value
+          NCB_REGISTRY: ghcr.io/${{ github.repository_owner }}/
+          NCB_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          export NCB_REGISTRY="${NCB_REGISTRY,,}"
+          docker compose pull server web
+          docker compose up -d --wait --no-build server web
+          curl -fsS http://localhost:3000/healthz
+          docker compose logs --no-color server | tail -20
+          docker compose down -v
+
+  release:
+    name: draft the GitHub release
+    needs: [verify, images, smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Software bill of materials (what ships)
+        run: pnpm sbom --prod
+      - name: Release notes from the changelog
+        run: |
+          awk -v v="${{ needs.verify.outputs.version }}" '$0 ~ "^## \\["v"\\]" {on=1; next} on && /^## \[/ {exit} on' CHANGELOG.md > notes.md
+          test -s notes.md
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flag=""
+          if [ "${{ needs.verify.outputs.prerelease }}" = "true" ]; then flag="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" --draft $flag --title "NoConBrain ${{ needs.verify.outputs.version }}" --notes-file notes.md sbom/nocon-brain.cdx.json

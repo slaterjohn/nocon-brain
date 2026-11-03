@@ -23,6 +23,29 @@ jobs:
       - run: docker compose --profile renderer build
         env:
           NCB_PROXY_SECRET: ci-build-only
+      # Acceptance 1: the default stack starts healthy on this architecture and the web port answers.
+      # HB-02: on Linux, `web` and `server` sit on `frontend` with IP masquerading off, so neither may reach the internet.
+      - name: Compose up, health and egress check (HB-02)
+        env:
+          NCB_PROXY_SECRET: ci-compose-only-${{ github.run_id }}
+        run: |
+          docker compose up -d --wait --wait-timeout 300
+          curl -fsS -o /dev/null -w "web %{http_code}\n" http://127.0.0.1:3000/ || { docker compose logs --tail 80; exit 1; }
+          rc=0
+          for svc in web server; do
+            if docker compose exec -T "$svc" node -e "fetch('https://example.com',{signal:AbortSignal.timeout(6000)}).then(()=>process.exit(1),()=>process.exit(0))"; then
+              echo "PASS  $svc cannot reach https://example.com"
+            else
+              echo "FAIL  $svc REACHED https://example.com"; rc=1
+            fi
+          done
+          docker compose down -v
+          exit $rc
+      # H-06 / HB-21: the whole stack on internal networks only, egress proof and tests/offline/check.mjs from inside.
+      - name: Offline stack test
+        env:
+          NCB_SKIP_BUILD: "1"
+        run: scripts/offline-test.sh
 
   test:
     name: test (${{ matrix.os }})

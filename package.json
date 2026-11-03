@@ -1,7 +1,7 @@
 {
   "name": "nocon-brain",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0-rc.1",
   "description": "Self-hosted, offline-first web archive and search",
   "license": "AGPL-3.0-only",
   "repository": {
@@ -23,6 +23,7 @@
     "test:integration": "vitest run --project integration",
     "licence-audit": "node scripts/licence-audit.mjs",
     "bench:queue": "tsx scripts/bench-queue.ts",
+    "bench:scale": "tsx scripts/bench-scale.ts",
     "db:generate": "pnpm --filter @ncb/db generate",
     "test:e2e": "playwright test",
     "test:e2e:firefox": "E2E_BROWSERS=firefox playwright test",
@@ -32,7 +33,10 @@
     "test:discovery": "vitest run --project discovery",
     "test:reliability": "vitest run --project reliability",
     "test:security": "vitest run --project security",
-    "sbom": "node scripts/sbom.mjs"
+    "sbom": "node scripts/sbom.mjs",
+    "version:set": "node scripts/set-version.mjs",
+    "docs:check": "node scripts/docs-check.mjs",
+    "traceability": "node scripts/traceability.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",

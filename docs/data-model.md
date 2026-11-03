@@ -229,7 +229,7 @@ Indexes: `(host)`, `(registrable_domain)`, `(availability)`, `(last_captured_at)
 
 Indexes: `(page_id, version_no DESC)`, `(status)`, `(content_hash)`, `(source_id)`, `(fetched_at)`.
 
-**`version_content`**: `version_id` PK FK `page_versions` ON DELETE CASCADE, `text_blob_id`, `reader_blob_id`, `outline_blob_id` (all FK `blobs`, nullable), `keywords_json`. These blobs count as references on the blob (included in `refcount`). Plain text is what rebuilds the index.
+**`version_content`**: `version_id` PK FK `page_versions` ON DELETE CASCADE, `text_blob_id`, `reader_blob_id`, `outline_blob_id` (all FK `blobs`, nullable), `keywords_json`. These blobs count as references on the blob (included in `refcount`). Each of the four blob columns has an index (migration 0016), because every reference count and every "is this file unused?" question looks a blob up by them. Plain text is what rebuilds the index.
 
 **`page_attributions`**: `version_id` PK FK CASCADE, `license_name`, `license_url`, `source_url`, `revision_id`, `history_url`, `credit_text`. Required for Wikipedia (CC BY-SA 4.0) and any package with licence metadata.
 

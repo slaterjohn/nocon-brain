@@ -1,0 +1,465 @@
+{
+  "when": "2026-11-03T13:47:23.304Z",
+  "environment": {
+    "cpu": "Apple M4 Pro x12",
+    "ramGiB": 24,
+    "os": "Darwin 25.0.0 arm64",
+    "node": "v24.22.2",
+    "scratchFilesystem": "/var/folders/0k/r8305dhd3974xqbdpdkv2lw00000gn/T/ncb-scale-JtRbHv"
+  },
+  "parameters": {
+    "pages": 20000,
+    "seed": 20261103,
+    "execSample": 2000,
+    "searchUnderLoad": true
+  },
+  "sqliteVersion": "3.53.4",
+  "library": {
+    "pages": 20000,
+    "versions": 22013,
+    "hosts": 80,
+    "sources": 13,
+    "textBlobs": 22013,
+    "sharedAssets": 240,
+    "uniqueAssets": 2951,
+    "assetRefs": 68990,
+    "rawTextBytes": 46160451,
+    "storedBytes": 35974674,
+    "seedSeconds": 8.39,
+    "meanRawTextBytesPerPage": 2097
+  },
+  "startup": {
+    "coldNoIndexMs": 842.91,
+    "indexStateAtStart": "missing",
+    "warmWithIndexMs": 1687.46,
+    "firstSearchAfterStartMs": 26.56
+  },
+  "indexRebuild": {
+    "ms": 9308.68,
+    "seconds": 9.31,
+    "docsIndexed": 20000,
+    "docsPerSecond": 2149,
+    "indexBytes": 157523968,
+    "indexOverRawText": 3.41
+  },
+  "search": {
+    "queries": 2700,
+    "coldFirstFiveMs": [
+      21.03,
+      12.84,
+      11.44,
+      11.32,
+      12.29
+    ],
+    "overall": {
+      "n": 2700,
+      "p50": 2.05,
+      "p95": 11.38,
+      "p99": 13.9,
+      "max": 31.8
+    },
+    "overallEngineReportedLocalMs": {
+      "n": 2700,
+      "p50": 1.61,
+      "p95": 10.73,
+      "p99": 13.34,
+      "max": 31.12
+    },
+    "byType": {
+      "common single term": {
+        "n": 300,
+        "p50": 10.65,
+        "p95": 12.36,
+        "p99": 15.6,
+        "max": 18.76,
+        "zeroResult": 0,
+        "meanTotalHits": 1807
+      },
+      "mid-frequency single term": {
+        "n": 300,
+        "p50": 2.23,
+        "p95": 6.99,
+        "p99": 9.73,
+        "max": 15.23,
+        "zeroResult": 0,
+        "meanTotalHits": 114
+      },
+      "unique token (one hit)": {
+        "n": 300,
+        "p50": 1.6,
+        "p95": 1.76,
+        "p99": 1.87,
+        "max": 1.89,
+        "zeroResult": 0,
+        "meanTotalHits": 1
+      },
+      "multi-term (2 to 3 words)": {
+        "n": 300,
+        "p50": 1.61,
+        "p95": 2.06,
+        "p99": 3.52,
+        "max": 10.72,
+        "zeroResult": 0,
+        "meanTotalHits": 36
+      },
+      "phrase (3 words)": {
+        "n": 300,
+        "p50": 1.74,
+        "p95": 5.22,
+        "p99": 26.34,
+        "max": 27.45,
+        "zeroResult": 0,
+        "meanTotalHits": 36
+      },
+      "term with domain filter": {
+        "n": 300,
+        "p50": 2.16,
+        "p95": 3.56,
+        "p99": 8.08,
+        "max": 9.78,
+        "zeroResult": 0,
+        "meanTotalHits": 36
+      },
+      "term with source filter": {
+        "n": 300,
+        "p50": 5.24,
+        "p95": 12.34,
+        "p99": 13.39,
+        "max": 14.74,
+        "zeroResult": 0,
+        "meanTotalHits": 222
+      },
+      "typo (adjacent letters swapped)": {
+        "n": 300,
+        "p50": 5.4,
+        "p95": 10.67,
+        "p99": 14.91,
+        "max": 15.42,
+        "zeroResult": 28,
+        "meanTotalHits": 120
+      },
+      "exact page title": {
+        "n": 300,
+        "p50": 2.04,
+        "p95": 13.5,
+        "p99": 26.66,
+        "max": 31.8,
+        "zeroResult": 0,
+        "meanTotalHits": 244
+      }
+    },
+    "repeatedQueriesCached": {
+      "n": 900,
+      "p50": 2.04,
+      "p95": 11.32,
+      "p99": 13.36,
+      "max": 27.4
+    },
+    "withFacets": {
+      "n": 540,
+      "p50": 2.93,
+      "p95": 14.6,
+      "p99": 15.97,
+      "max": 31.08
+    },
+    "suggestions3LetterPrefix": {
+      "n": 300,
+      "p50": 0.09,
+      "p95": 0.34,
+      "p99": 0.39,
+      "max": 0.72
+    }
+  },
+  "searchDuringRebuild": {
+    "rebuildMs": 9372,
+    "duringRebuild": {
+      "n": 84,
+      "p50": 11.71,
+      "p95": 12.92,
+      "p99": 17.48,
+      "max": 17.48
+    },
+    "idleCommonSingleTerm": {
+      "n": 300,
+      "p50": 10.65,
+      "p95": 12.36,
+      "p99": 15.6,
+      "max": 18.76,
+      "zeroResult": 0,
+      "meanTotalHits": 1807
+    },
+    "idleMultiTerm": {
+      "n": 300,
+      "p50": 1.61,
+      "p95": 2.06,
+      "p99": 3.52,
+      "max": 10.72,
+      "zeroResult": 0,
+      "meanTotalHits": 36
+    }
+  },
+  "libraryListing": {
+    "newest first, offset 0": {
+      "n": 20,
+      "p50": 4.25,
+      "p95": 7.95,
+      "p99": 7.95,
+      "max": 7.95,
+      "total": 20000
+    },
+    "newest first, offset 1,000": {
+      "n": 20,
+      "p50": 5.46,
+      "p95": 6.85,
+      "p99": 6.85,
+      "max": 6.85,
+      "total": 20000
+    },
+    "newest first, offset 100,000": {
+      "n": 10,
+      "p50": 9.27,
+      "p95": 9.81,
+      "p99": 9.81,
+      "max": 9.81,
+      "total": 20000
+    },
+    "newest first, offset at 90% of the library": {
+      "n": 10,
+      "p50": 10.62,
+      "p95": 11.24,
+      "p99": 11.24,
+      "max": 11.24,
+      "total": 20000
+    },
+    "sorted by title, offset 0": {
+      "n": 5,
+      "p50": 5.53,
+      "p95": 6.86,
+      "p99": 6.86,
+      "max": 6.86,
+      "total": 20000
+    },
+    "sorted by site, offset 0": {
+      "n": 5,
+      "p50": 3.45,
+      "p95": 3.82,
+      "p99": 3.82,
+      "max": 3.82,
+      "total": 20000
+    },
+    "sorted by size, offset 0": {
+      "n": 5,
+      "p50": 6.11,
+      "p95": 7.06,
+      "p99": 7.06,
+      "max": 7.06,
+      "total": 20000
+    },
+    "one source, offset 0": {
+      "n": 10,
+      "p50": 7.78,
+      "p95": 8.84,
+      "p99": 8.84,
+      "max": 8.84,
+      "total": 1990
+    },
+    "one domain, offset 0": {
+      "n": 10,
+      "p50": 0.65,
+      "p95": 0.93,
+      "p99": 0.93,
+      "max": 0.93,
+      "total": 218
+    },
+    "priority P1 only": {
+      "n": 10,
+      "p50": 2.26,
+      "p95": 2.81,
+      "p99": 2.81,
+      "max": 2.81,
+      "total": 2646
+    },
+    "title or address contains a word": {
+      "n": 3,
+      "p50": 10.85,
+      "p95": 11.13,
+      "p99": 11.13,
+      "max": 11.13,
+      "total": 0
+    },
+    "walking the first 100 pages of 50": {
+      "n": 100,
+      "p50": 6.02,
+      "p95": 7.57,
+      "p99": 8,
+      "max": 8
+    }
+  },
+  "storage": {
+    "pressure plan (free 2% of stored bytes for an incoming P1)": {
+      "runsMs": [
+        229.77,
+        212.74,
+        214.48
+      ],
+      "itemsPlanned": 657,
+      "steps": 1,
+      "bytesNeeded": 700389
+    },
+    "tidy-up (prune) plan": {
+      "ms": 206.67,
+      "itemsPlanned": 1223,
+      "unreferencedBlobs": 0
+    },
+    "plan as the API returns it": {
+      "ms": 216.95,
+      "itemsTotal": 657,
+      "itemsListed": 200
+    },
+    "usage by priority": {
+      "ms": 170.3
+    },
+    "backup of main.db (VACUUM INTO, checksummed)": {
+      "ms": 360.44,
+      "files": [
+        {
+          "name": "main.db",
+          "bytes": 44007424
+        }
+      ]
+    },
+    "collect unreferenced files": {
+      "ms": 0.07,
+      "removed": 0
+    }
+  },
+  "verify": {
+    "perCheck": {
+      "I-1": {
+        "ms": 247.58,
+        "findings": 0,
+        "checked": {
+          "blobs": 25204
+        }
+      },
+      "I-2": {
+        "ms": 1840.19,
+        "findings": 0,
+        "checked": {
+          "files": 25204
+        }
+      },
+      "I-3": {
+        "ms": 21.09,
+        "findings": 0,
+        "checked": {
+          "blobCounts": 25204
+        }
+      },
+      "I-4": {
+        "ms": 31.81,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-5": {
+        "ms": 0.32,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-6": {
+        "ms": 6.57,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-7": {
+        "ms": 5.57,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-8": {
+        "ms": 0.18,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-9": {
+        "ms": 0.21,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-10": {
+        "ms": 26.99,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-12": {
+        "ms": 140.29,
+        "findings": 0,
+        "checked": {
+          "quickCheck": 1
+        }
+      },
+      "I-13": {
+        "ms": 0.25,
+        "findings": 0,
+        "checked": {}
+      },
+      "REF": {
+        "ms": 4.51,
+        "findings": 0,
+        "checked": {}
+      },
+      "I-11": {
+        "ms": 409.31,
+        "findings": 0,
+        "checked": {
+          "scrubbed": 2000
+        }
+      }
+    },
+    "i11SampleBlobs": 2000,
+    "i11MsPerBlob": 0.2,
+    "allChecksDefaultMs": 1614.56,
+    "allChecksDefaultFindings": [],
+    "quickVerifyI1Ms": 247.58
+  },
+  "evictionExecution": {
+    "planned": 2460,
+    "evictedVersions": 2460,
+    "ms": 5103.19,
+    "versionsPerSecond": 482.05,
+    "indexCatchUpMs": 4173.82
+  },
+  "shutdown": {
+    "ms": 32.9
+  },
+  "productionBundle": {
+    "timeToHealthyMs": 1463.62,
+    "idleRssMiBTenSecondsAfterHealthy": 315,
+    "note": "node apps/server/dist/index.js, search index present, no jobs, API and archive listeners bound, no browser connected."
+  },
+  "sizes": {
+    "mainDbBytes": 49209344,
+    "mainDbWalBytes": 0,
+    "indexDbBytes": 159457280,
+    "blobsLogicalStoredBytes": 35019461,
+    "blobsDiskKiB": 93200,
+    "blobFiles": 25204,
+    "mainDbBytesPerPage": 2460,
+    "indexBytesPerPage": 7973
+  },
+  "memory": {
+    "empty server, just started (MiB, separate process)": 590,
+    "after start, no index (MiB)": 609,
+    "after index rebuild (MiB)": 773,
+    "after search queries (MiB)": 902,
+    "after library listing (MiB)": 749,
+    "after storage planning (MiB)": 821,
+    "after verify (MiB)": 847,
+    "after eviction sample (MiB)": 854,
+    "after warm start (MiB)": 828,
+    "peak RSS sampled every 100 ms (MiB)": 951,
+    "peak RSS from the OS (MiB)": 1093,
+    "note": "One process holds the server, the index and search worker threads, and the benchmark itself."
+  },
+  "totalWallSeconds": 94.37
+}

@@ -2,7 +2,7 @@
 
 NoConBrain is a self-hosted, offline-first knowledge archiver, crawler and search engine. It is part of the NoCon family, alongside NoConMedia. It archives web pages and sites to your own storage, lets you browse and search them with no internet connection, and can blend in results from online search providers when a connection is available.
 
-**Status: planning.** There is no application code yet. The planning documents are in [docs/](docs/README.md): architecture, technology decisions, data model, API, implementation plan and risk register. The research behind them is in [docs/research/](docs/research/).
+**Status: release candidate 1.0.0-rc.1.** The application is built and tested. It has not been run on a Raspberry Pi, and a few checks need a person or a Linux host; [docs/acceptance.md](docs/acceptance.md) lists what is met and what is not. The documentation starts at [docs/README.md](docs/README.md), and the research behind the design is in [docs/research/](docs/research/).
 
 Target platforms are Docker Compose on Raspberry Pi 4/5 (ARM64) and AMD64 servers.
 
@@ -20,7 +20,7 @@ docker compose up -d --wait
 
 Open <http://localhost:3000> and follow the setup steps. The first start builds the images, which takes a few minutes on a Pi.
 
-If you use another host name or port, set `NCB_APP_URL` in `.env` to the address you type in the browser. Archived pages are served from port 3002, so keep that port reachable too. To keep archived content on a separate drive, set `NCB_VOLUME_PATH` (see `.env.example`). Optional self-hosted search: `docker compose --profile searxng up -d --wait`. Deployment details are in [docs/deployment.md](docs/deployment.md).
+If you use another host name or port, set `NCB_APP_URL` in `.env` to the address you type in the browser. Archived pages are served from port 3002, so keep that port reachable too. To keep archived content on a separate drive, set `NCB_VOLUME_PATH` (see `.env.example`). Optional self-hosted search: `docker compose --profile searxng up -d --wait`. Step-by-step instructions, including a Raspberry Pi and HTTPS behind a reverse proxy, are in [docs/guides/install.md](docs/guides/install.md); upgrading is in [docs/guides/upgrade.md](docs/guides/upgrade.md) and fixes for common problems in [docs/guides/troubleshooting.md](docs/guides/troubleshooting.md). Deployment details are in [docs/deployment.md](docs/deployment.md).
 
 ## Development
 
@@ -34,6 +34,9 @@ pnpm test:integration     # real SQLite, worker threads
 pnpm test:reliability     # kill/restart, power loss, shutdown
 pnpm test:security        # authorisation matrix, SSRF fuzzing, XSS corpus, isolation
 pnpm test:e2e             # Playwright on Chromium; :firefox and :webkit run the cross-browser subset
+pnpm docs:check           # settings, routes and links in the docs match the code
+pnpm traceability         # every requirement ID has code and tests
+pnpm bench:scale          # synthetic large library; --pages 500000 for the full run
 pnpm sbom                 # CycloneDX software bill of materials (git-ignored output)
 node scripts/licence-audit.mjs
 ```

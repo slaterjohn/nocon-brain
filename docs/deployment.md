@@ -30,7 +30,7 @@ Differences from the sketch in architecture.md:
 
 - `server` is not on `frontend`. A container with one internal and one masquerading network can pick the wrong default route, so the archive port is published through `egress` instead. `frontend` carries only `web`.
 - The host port and the container port are the same number, so any URL the server builds from its archive port is correct.
-- Publishing the API for debugging needs a compose override (`ports: ["127.0.0.1:3001:3001"]`). There is no `NCB_API_BIND` setting. Requests from the host then reach the container from the Docker gateway, not from loopback, so send the `x-nocon-proxy-secret` header or set `NCB_API_PROXY_ONLY=false`.
+- Publishing the API for debugging needs a compose override (`ports: ["127.0.0.1:3001:3001"]`). The API port has no setting to publish it. Requests from the host then reach the container from the Docker gateway, not from loopback, so send the `x-nocon-proxy-secret` header or set `NCB_API_PROXY_ONLY=false`.
 
 `frontend` has IP masquerade off, which on a Linux host stops `web` reaching the internet. Docker Desktop on macOS does not honour that: `web` could still fetch `https://example.com` there. Treat it as defence in depth, not as the offline guarantee. The offline test removes the problem by making every network internal.
 

@@ -7,9 +7,17 @@ import type { CheckReport, FromIndexWorker, IndexWorkerData } from "./protocol.j
 
 /** Wraps a read-only better-sqlite3 connection as the loader's `SyncDb`. */
 export function syncDb(db: Database.Database): SyncDb {
+  // Statements are prepared once per connection. Preparing one per call left millions of native statements waiting for the garbage
+  // collector during a rebuild, which held about 40 KB of memory per page (7.5 GB at 172,000 pages in the scale test, HB-25).
+  const cache = new Map<string, Database.Statement>();
+  const stmt = (sql: string): Database.Statement => {
+    let s = cache.get(sql);
+    if (!s) cache.set(sql, (s = db.prepare(sql)));
+    return s;
+  };
   return {
-    get: <T>(sql: string, params: unknown[] = []) => db.prepare(sql).get(...params) as T | undefined,
-    all: <T>(sql: string, params: unknown[] = []) => db.prepare(sql).all(...params) as T[],
+    get: <T>(sql: string, params: unknown[] = []) => stmt(sql).get(...params) as T | undefined,
+    all: <T>(sql: string, params: unknown[] = []) => stmt(sql).all(...params) as T[],
   };
 }
 
