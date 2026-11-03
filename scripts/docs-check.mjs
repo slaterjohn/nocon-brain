@@ -73,7 +73,10 @@ for (const f of mdFiles) {
   for (const m of text.matchAll(/\]\((?!https?:|mailto:|#)([^)\s]+)\)/g)) {
     const target = m[1].split("#")[0];
     if (!target) continue;
-    if (!fs.existsSync(path.resolve(root, path.dirname(f), target))) bad(`${f} links to ${m[1]}, which does not exist`);
+    const abs = path.resolve(root, path.dirname(f), target);
+    // A link outside the repo can resolve on a developer's machine (a sibling checkout) but is broken on GitHub and in CI.
+    if (path.relative(root, abs).startsWith("..")) bad(`${f} links to ${m[1]}, which is outside the repository (use a full URL)`);
+    else if (!fs.existsSync(abs)) bad(`${f} links to ${m[1]}, which does not exist`);
   }
 }
 

@@ -24,7 +24,8 @@ jobs:
         env:
           NCB_PROXY_SECRET: ci-build-only
       # Acceptance 1: the default stack starts healthy on this architecture and the web port answers.
-      # HB-02: on Linux, `web` and `server` sit on `frontend` with IP masquerading off, so neither may reach the internet.
+      # HB-02: on Linux, `web` sits on `frontend` (IP masquerading off) and `backend` (internal), so it must not reach the internet.
+      # `server` is deliberately on `egress` (it fetches pages), so it is not checked here; compose.offline.yml removes that in the next step.
       - name: Compose up, health and egress check (HB-02)
         env:
           NCB_PROXY_SECRET: ci-compose-only-${{ github.run_id }}
@@ -32,7 +33,7 @@ jobs:
           docker compose up -d --wait --wait-timeout 300
           curl -fsS -o /dev/null -w "web %{http_code}\n" http://127.0.0.1:3000/ || { docker compose logs --tail 80; exit 1; }
           rc=0
-          for svc in web server; do
+          for svc in web; do
             if docker compose exec -T "$svc" node -e "fetch('https://example.com',{signal:AbortSignal.timeout(6000)}).then(()=>process.exit(1),()=>process.exit(0))"; then
               echo "PASS  $svc cannot reach https://example.com"
             else

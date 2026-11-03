@@ -54,7 +54,7 @@ Licence: AGPL-3.0, public repository `slaterjohn/nocon-brain`. Why AGPL is compa
 
 | Container | Required | Role | Notes |
 |---|---|---|---|
-| `web` | yes | Next.js 16 standalone. Browser chrome, Library, Downloads, Search, Storage and settings. Proxies `/api/*` to `server`. | No access to data volumes. Stamps the peer IP and proxy secret as in NoConMedia ([security.md](../../NoConMedia/docs/security.md)). |
+| `web` | yes | Next.js 16 standalone. Browser chrome, Library, Downloads, Search, Storage and settings. Proxies `/api/*` to `server`. | No access to data volumes. Stamps the peer IP and proxy secret as in NoConMedia ([security.md](https://github.com/slaterjohn/nocon-media/blob/main/docs/security.md)). |
 | `server` | yes | One Node 24 process: Fastify API, archive listener on its own port, job runner, `worker_threads`. Sole writer of both SQLite files. | `node:24-trixie-slim`, Debian/glibc (libzim does not load on musl: [research/zim-wikipedia.md](research/zim-wikipedia.md) section 1). |
 | `renderer` | no (`--profile renderer`) | Playwright `chromium_headless_shell`, one page at a time, hard memory limit. | Internal network only. All its traffic goes through the server's guarded proxy ([section 7](#7-optional-containers)). |
 | `searxng` | no (`--profile searxng`) | Self-hosted metasearch for the SearXNG provider adapter. | Official multi-arch image, JSON format enabled via mounted `settings.yml`. |
@@ -312,7 +312,7 @@ Default is a prominent "Open original" link (`target=_blank rel="noopener norefe
 
 ### Authentication and API hygiene
 
-Copied from NoConMedia ([security.md](../../NoConMedia/docs/security.md)) unless stated:
+Copied from NoConMedia ([security.md](https://github.com/slaterjohn/nocon-media/blob/main/docs/security.md)) unless stated:
 
 - Admin setup (only while no admin exists), `scrypt` (N=2^15, r=8, p=1) with `timingSafeEqual`, minimum length 10, at most 2 concurrent hashes.
 - Sessions: 32 random bytes, SHA-256 stored, cookie `ncb_session` (`HttpOnly`, `SameSite=Lax`, `Secure` when `NCB_COOKIE_SECURE=true`), 30-day sliding expiry with 90-day absolute cap, revocable.
