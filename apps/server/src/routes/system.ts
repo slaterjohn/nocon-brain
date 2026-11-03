@@ -206,17 +206,22 @@ export function systemRoutes(app: FastifyInstance, state: ServerState, o: { sseH
     state.svc.storage.maintenance.get(req.params.id),
   );
 
-  /** `VACUUM INTO` a backup of `main.db` under the data directory. */
-  r.post("/api/system/maintenance/backup", { config: { auth: "session" } }, async (req) => {
+  /**
+   * `VACUUM INTO` backup of the databases into `backups/backup-<stamp>/` in the data volume, with a manifest of checksums (H-02).
+   * `{ includeIndex?, includeSecretKey? }` (both default false). Returns `{ file, sizeBytes, dir, files, notes }`; `file` is the path of `main.db` inside `backups/`.
+   */
+  r.post("/api/system/maintenance/backup", { config: { auth: "session" }, schema: { body: z.object({ includeIndex: z.boolean().optional(), includeSecretKey: z.boolean().optional() }).optional() } }, async (req) => {
     const svc = state.svc;
     const user = admin(req);
-    const dir = path.join(svc.config.NCB_DATA_DIR, "backups");
-    fs.mkdirSync(dir, { recursive: true });
-    const stamp = new Date(svc.clock.now()).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
-    const dest = path.join(dir, `main-${stamp}.db`);
-    svc.db.backupTo(dest);
-    svc.activity.write({ level: "info", area: "storage", message: "Database backup written", details: { file: path.basename(dest) }, userId: user.userId });
-    return { file: path.basename(dest), sizeBytes: fs.statSync(dest).size };
+    const res = svc.storage.runBackup({ includeIndex: req.body?.includeIndex, includeSecretKey: req.body?.includeSecretKey, trigger: "manual", userId: user.userId });
+    const main = res.manifest.files.find((f) => f.name === "main.db")!;
+    return { file: `${res.dir}/main.db`, sizeBytes: main.bytes, dir: res.dir, files: res.manifest.files.map((f) => ({ name: f.name, sizeBytes: f.bytes, sha256: f.sha256 })), notes: res.manifest.notes, pruned: res.pruned };
+  });
+
+  /** Finished backups, newest first. */
+  r.get("/api/system/maintenance/backups", { config: { auth: "session" } }, async (req) => {
+    admin(req);
+    return { items: state.svc.storage.backups.list().map((b) => ({ dir: b.dir, createdAt: b.manifest.createdAt, appVersion: b.manifest.appVersion, schema: b.manifest.schema, counts: b.manifest.counts, files: b.manifest.files.map((f) => ({ name: f.name, sizeBytes: f.bytes })) })) };
   });
 
   r.get("/api/system/logs", { config: { auth: "session" }, schema: { querystring: logsQuery } }, async (req) => {

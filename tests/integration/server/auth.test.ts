@@ -197,7 +197,7 @@ describe("F-06 client IP and trusted-LAN mode", () => {
     // Restart over the same data dir in trusted-LAN mode (it refuses to start without an admin).
     return startServer({
       dataDir: first.dataDir, rootsDir: first.rootsDir,
-      env: { NCB_AUTH_MODE: "trusted-lan", NCB_TRUSTED_LAN_CIDRS: "192.168.1.0/24", ...extra },
+      env: { NCB_AUTH_MODE: "trusted-lan", NCB_TRUSTED_LAN_CIDRS: "192.168.1.0/24", NCB_API_PROXY_ONLY: "false", ...extra }, // these tests call the API as a LAN client would if it were reachable (HB-01 has its own tests)
     });
   }
 
@@ -247,7 +247,7 @@ describe("F-06 client IP and trusted-LAN mode", () => {
   });
 
   it("is off by default and refuses unsafe configurations", async () => {
-    const t = await startServer();
+    const t = await startServer({ env: { NCB_API_PROXY_ONLY: "false" } });
     await setupAdmin(t);
     expect((await call(t, { url: "/api/settings", remoteAddress: "192.168.1.20" })).statusCode).toBe(401);
 

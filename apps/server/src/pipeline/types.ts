@@ -31,6 +31,8 @@ export interface PipelineFetchOptions {
   maxBytes?: number;
   accept?: readonly string[];
   signal?: AbortSignal;
+  /** Which class of request this is, for the per-host politeness gate (HB-05). Default `page`. */
+  pace?: "robots" | "page" | "asset" | "none";
 }
 
 export interface PipelineFetcher {

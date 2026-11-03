@@ -1,4 +1,7 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
+
+// Kill-and-restart tests that belong to the reliability suite (H-01). They live next to the code they exercise but run only in that project.
+const RELIABILITY_ELSEWHERE = ["tests/integration/pipeline/crash.test.ts", "tests/integration/crawl/kill.test.ts"];
 
 export default defineConfig({
   test: {
@@ -14,6 +17,7 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["tests/integration/**/*.test.ts", "tests/provider-conformance/**/*.test.ts"],
+          exclude: [...configDefaults.exclude, ...RELIABILITY_ELSEWHERE],
           environment: "node",
           testTimeout: 180_000,
           hookTimeout: 120_000,
@@ -40,6 +44,20 @@ export default defineConfig({
           include: ["tests/discovery/**/*.test.ts"],
           environment: "node",
           testTimeout: 180_000,
+          hookTimeout: 120_000,
+          fileParallelism: false,
+        },
+      },
+      {
+        // The named reliability suite (task H-01): kill and restart at every pipeline stage and during a crawl, an eviction run, an index rebuild,
+        // a ZIM copy and a backup; interrupted downloads; temp-file cleanup; atomic finalisation; graceful shutdown under load; power-loss
+        // simulation (SIGKILL with WAL, then integrity_check and the app's own verify). Includes the older kill tests listed in RELIABILITY_ELSEWHERE
+        // and the interrupted-eviction test (which also stays in storage-safety).
+        test: {
+          name: "reliability",
+          include: ["tests/reliability/**/*.test.ts", ...RELIABILITY_ELSEWHERE, "tests/storage-safety/interrupted-eviction.test.ts"],
+          environment: "node",
+          testTimeout: 240_000,
           hookTimeout: 120_000,
           fileParallelism: false,
         },

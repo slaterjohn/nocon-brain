@@ -26,7 +26,7 @@ const cssTreeJson = {
 // One bundle for the server process (dist/index.js) and one for worker threads (dist/worker.js).
 // better-sqlite3 and @openzim/libzim are native, so they stay external and are direct dependencies of this package.
 export default defineConfig({
-  entry: { index: "src/index.ts", worker: "src/worker.ts", "index-worker": "src/search/index-worker.ts", "search-worker": "src/search/search-worker.ts", "zim-worker": "src/zim/zim-worker.ts" },
+  entry: { index: "src/index.ts", cli: "src/cli.ts", worker: "src/worker.ts", "index-worker": "src/search/index-worker.ts", "search-worker": "src/search/search-worker.ts", "zim-worker": "src/zim/zim-worker.ts" },
   format: ["esm"],
   target: "node24",
   platform: "node",

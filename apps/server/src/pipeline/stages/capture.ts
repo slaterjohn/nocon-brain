@@ -119,6 +119,9 @@ export const assets: StageFn = async (ctx) => {
     }
   };
 
+  // A single page saved by hand is not paced; background captures are (HB-05).
+  const byHand = !!db.get("SELECT 1 AS x FROM page_versions v JOIN download_jobs d ON d.id = v.download_job_id WHERE v.id = ? AND d.kind = 'capture' AND d.requested_by = 'user'", [v.id]);
+
   const processOne = async (p: Pending) => {
     if (ctx.signal?.aborted) return;
     const known = done.get(p.url);
@@ -143,7 +146,7 @@ export const assets: StageFn = async (ctx) => {
     attempted++;
     if (p.role === "image") images++;
     try {
-      const res = await fetcher.fetch(p.url, { maxBytes: Math.min(caps.maxAssetBytes, caps.maxTotalAssetBytes - totalBytes), accept: ["*/*"], signal: ctx.signal });
+      const res = await fetcher.fetch(p.url, { maxBytes: Math.min(caps.maxAssetBytes, caps.maxTotalAssetBytes - totalBytes), accept: ["*/*"], signal: ctx.signal, pace: byHand ? "none" : "asset" });
       if (res.status < 200 || res.status > 299) {
         stats.failed++;
         done.set(p.url, recordAsset(ctx, { url: p.url, urlKey: key, role: p.role, viaAssetId: p.viaAssetId, status: "error", httpStatus: res.status, errorCode: `http_${res.status}`, errorMessage: `The server answered ${res.status}.` }, p.url));

@@ -9,6 +9,21 @@ permissions:
   contents: read
 
 jobs:
+  # Builds every image (server, web, renderer) so a broken Dockerfile fails CI. Nothing is pushed.
+  images:
+    name: images (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@v4
+      # A throwaway value satisfies compose's required-variable check; build never uses it.
+      - run: docker compose --profile renderer build
+        env:
+          NCB_PROXY_SECRET: ci-build-only
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -48,6 +63,9 @@ jobs:
       # Phase 7 (D-08): limits, offline behaviour, privacy (no search text stored when disabled), provenance, scoring, kill switch, property tests. Blocking on both architectures.
       - name: Discovery suite
         run: pnpm test:discovery
+      # Phase 9 (H-01): SIGKILL at each stage, power loss under WAL, graceful shutdown, failure messages, backup and restore. Blocking on both architectures.
+      - name: Reliability suite
+        run: pnpm test:reliability
       # The browser suite is timing-sensitive on shared runners (a different test flakes each run), so it runs on x64 only,
       # retries twice, and is advisory (continue-on-error) until the flaky specs are stabilised.
       - name: Browser end-to-end tests (advisory)

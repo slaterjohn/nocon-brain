@@ -26,7 +26,8 @@
     "db:generate": "pnpm --filter @ncb/db generate",
     "test:e2e": "playwright test",
     "test:storage-safety": "vitest run --project storage-safety",
-    "test:discovery": "vitest run --project discovery"
+    "test:discovery": "vitest run --project discovery",
+    "test:reliability": "vitest run --project reliability"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",

@@ -15,6 +15,9 @@ export function syncDb(db: Database.Database): SyncDb {
 
 const SHADOW = "index.rebuild.db";
 
+/** The bucket the `idxo_pages_inlinks` trigger uses (migration 0010). */
+const inlinkBucket = (n: number): number => (n < 16 ? n : 16 + Math.floor(n / 16));
+
 /**
  * The logic of the `index` worker (S-01, S-02, S-10): the one writer of `index.db`. It reads `main.db` through a read-only
  * connection and never writes to it; the main thread prunes the outbox from the `applied` events.
@@ -256,7 +259,9 @@ export class IndexCore {
       diff("versionId", d.versionId, s.versionId);
       diff("title", d.title.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " "), s.title);
       diff("url", d.url, s.url);
-      diff("inlinks", d.inlinks, s.inlinks);
+      // The outbox trigger only fires when the in-link count moves between coarse buckets (exact below 16, then steps of 16;
+      // migration 0010), so the index may legitimately hold a count a few links behind. Compare buckets, not exact counts.
+      diff("inlinks", inlinkBucket(d.inlinks), inlinkBucket(s.inlinks));
       diff("priority", d.priority, s.priority);
       diff("availability", d.availability, s.availability);
       diff("sources", [...new Set(d.sourceIds)].sort(), s.sourceIds);

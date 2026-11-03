@@ -24,13 +24,14 @@ If you use another host name or port, set `NCB_APP_URL` in `.env` to the address
 
 ## Development
 
-Requires Node 24 or later (`.nvmrc`) and pnpm 10 (`corepack enable`). `better-sqlite3` ships prebuilt binaries per Node ABI; on an older Node it can crash on load, so run `pnpm install` (or `pnpm rebuild better-sqlite3`) under Node 24.
+Requires Node 24 or later (`.nvmrc`) and pnpm 10 (`corepack enable`). `better-sqlite3` ships prebuilt binaries per Node ABI, so run `pnpm install` under Node 24. A compiler is needed only for `@openzim/libzim` (knowledge packages). See [docs/guides/development.md](docs/guides/development.md). Backups: [docs/guides/backup-restore.md](docs/guides/backup-restore.md).
 
 ```
 pnpm install
 pnpm typecheck
 pnpm test                 # unit
 pnpm test:integration     # real SQLite, worker threads
+pnpm test:reliability     # kill/restart, power loss, shutdown
 node scripts/licence-audit.mjs
 ```
 

@@ -51,3 +51,26 @@ export function privateCidrMatcher(cidrs: string[]): (ip: string) => boolean {
     return list.check(addr, fam === 4 ? "ipv4" : "ipv6");
   };
 }
+
+export interface LocalInterfaces {
+  [name: string]: { address: string; family: string | number; internal: boolean }[] | undefined;
+}
+
+/**
+ * Turns a listen setting into an address. A plain address is returned as it is. A CIDR (`172.31.250.0/24`) becomes this machine's own address
+ * inside that range, so a listener can be bound to one Docker network only (HB-07). Throws `CidrError` when no local address is in the range:
+ * the caller must not fall back to all interfaces.
+ */
+export function resolveBindHost(setting: string, interfaces: LocalInterfaces): string {
+  if (!setting.includes("/")) return setting;
+  const c = parseCidr(setting);
+  const list = new BlockList();
+  list.addSubnet(c.net, c.prefix, c.family);
+  for (const addrs of Object.values(interfaces)) {
+    for (const a of addrs ?? []) {
+      const fam = String(a.family).toLowerCase().replace("ipv", "") === "4" ? "ipv4" : "ipv6";
+      if (fam === c.family && list.check(a.address, fam)) return a.address;
+    }
+  }
+  throw new CidrError(`This container has no address in ${setting}, so the renderer proxy cannot be bound to that network.`);
+}

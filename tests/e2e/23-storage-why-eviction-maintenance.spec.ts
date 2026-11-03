@@ -180,7 +180,7 @@ test("maintenance: a verify is a dry run by default, repair asks first and quara
 
     // Backup.
     await page.getByTestId("backup-run").click();
-    await expect(page.getByTestId("backup-result")).toContainText(/Written: main-.*\.db/);
+    await expect(page.getByTestId("backup-result")).toContainText(/Written: (main-.*\.db|backup-.*\/main\.db)/);
   } finally {
     fs.rmSync(stray, { force: true });
   }

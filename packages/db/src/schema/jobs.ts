@@ -166,3 +166,18 @@ export const idempotencyKeys = sqliteTable(
   },
   (t) => [index("idempotency_keys_created_idx").on(t.createdAt)],
 );
+
+/** Daily counters kept when finished `jobs` rows are pruned (migration 0015, task H-02). */
+export const jobRollups = sqliteTable(
+  "job_rollups",
+  {
+    day: text("day").notNull(),
+    queue: text("queue").notNull(),
+    type: text("type").notNull(),
+    state: text("state").notNull(),
+    jobs: integer("jobs").notNull().default(0),
+    attempts: integer("attempts").notNull().default(0),
+    runtimeMs: integer("runtime_ms").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.day, t.queue, t.type, t.state] })],
+);

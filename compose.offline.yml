@@ -18,6 +18,7 @@ services:
       WEB_URL: http://web:${NCB_WEB_PORT:-3000}
       ARCHIVE_URL: http://server:${NCB_ARCHIVE_PORT:-3002}
       STORAGE_PATH: /volumes/default
+      NCB_PROXY_SECRET: ${NCB_PROXY_SECRET:?Set NCB_PROXY_SECRET}
       OFFLINE_ADMIN_PASSWORD: ${OFFLINE_ADMIN_PASSWORD:-offline-test-password-1}
     volumes:
       - ./tests/offline:/tests:ro

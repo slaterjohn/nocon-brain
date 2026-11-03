@@ -1,7 +1,14 @@
 packages:
   - "apps/*"
   - "packages/*"
+# Build scripts that may run during `pnpm install`.
+#  * better-sqlite3 is deliberately NOT here (HB-03). Its package ships prebuilt binaries for macOS, Linux (glibc and musl) and Windows and loads
+#    them at run time, but it also has a binding.gyp, so pnpm would otherwise run `node-gyp rebuild` and demand a C++ compiler. Skipping the
+#    script is the supported way to use the prebuilt binary; it is listed in ignoredBuiltDependencies so pnpm does not warn about it.
+#  * @openzim/libzim (Phase 8) has no prebuilt Node binary: its install script downloads libzim and compiles the wrapper, so a compiler,
+#    python3 and make are needed locally for the knowledge-package features. See docs/guides/development.md.
 onlyBuiltDependencies:
-  - better-sqlite3
   - esbuild
   - "@openzim/libzim"
+ignoredBuiltDependencies:
+  - better-sqlite3

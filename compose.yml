@@ -44,6 +44,12 @@ services:
       NCB_RENDERER_URL: ${NCB_RENDERER_URL:-}
       NCB_RENDERER_SECRET: ${NCB_RENDERER_SECRET:-${NCB_PROXY_SECRET:?Set NCB_PROXY_SECRET in .env (openssl rand -hex 32)}}
       NCB_RENDER_PROXY_PORT: ${NCB_RENDER_PROXY_PORT:-3128}
+      # The forward proxy listens on this container's address inside the `render` network only (a CIDR means "my address in that range"),
+      # so `web` and `searxng` cannot reach it. Keep it equal to the `render` subnet below.
+      NCB_RENDER_PROXY_HOST: ${NCB_RENDER_SUBNET:-172.31.250.0/24}
+      # The API answers only requests that carry the proxy secret (from `web`) or come from inside the container (the health check),
+      # so containers on `egress`, such as SearXNG, cannot use it.
+      NCB_API_PROXY_ONLY: "true"
     ports:
       # The browser loads archived frames from this port directly, so it is published. The API (3001) is not:
       # the web container proxies it over the internal `backend` network.
@@ -169,6 +175,11 @@ networks:
   # server <-> renderer, and nothing else. Internal: no route to the internet or the LAN. `server` joins it to run the forward proxy.
   render:
     internal: true
+    # A fixed subnet so `server` can bind the forward proxy to its address in this network (NCB_RENDER_PROXY_HOST). Change both
+    # together (NCB_RENDER_SUBNET in .env) if it clashes with a network you already use.
+    ipam:
+      config:
+        - subnet: ${NCB_RENDER_SUBNET:-172.31.250.0/24}
 
 volumes:
   ncb-data:

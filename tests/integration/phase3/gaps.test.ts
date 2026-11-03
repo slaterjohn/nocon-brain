@@ -151,7 +151,7 @@ describe("items 2, 3, 4, 8: page list filters, detail references, page types", (
     const first = await startServer();
     const cookie = await setupAdmin(first);
     await first.server.close();
-    const t = await startServer({ dataDir: first.dataDir, rootsDir: first.rootsDir, env: { NCB_AUTH_MODE: "trusted-lan", NCB_TRUSTED_LAN_CIDRS: "192.168.1.0/24" } });
+    const t = await startServer({ dataDir: first.dataDir, rootsDir: first.rootsDir, env: { NCB_AUTH_MODE: "trusted-lan", NCB_TRUSTED_LAN_CIDRS: "192.168.1.0/24", NCB_API_PROXY_ONLY: "false" } });
     const guest = { remoteAddress: "192.168.1.20" };
     // No pages yet: a 404 still proves the route is open to the guest (a closed route would answer 401).
     expect((await call(t, { url: "/api/archive/pages/pg_00000000000000000000000000", ...guest })).statusCode).toBe(404);

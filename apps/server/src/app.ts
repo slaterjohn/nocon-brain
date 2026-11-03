@@ -38,6 +38,13 @@ export interface BuildOptions {
 const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
 const HEALTH = "/api/system/health";
 
+/** True for 127.0.0.0/8, ::1 and their IPv4-mapped forms. A missing address (a request injected in a test) counts as local. */
+export function isLoopback(addr: string | undefined): boolean {
+  if (!addr) return true;
+  const a = addr.startsWith("::ffff:") ? addr.slice(7) : addr;
+  return a === "::1" || /^127\./.test(a);
+}
+
 function header(req: FastifyRequest, name: string): string | undefined {
   const v = req.headers[name];
   return Array.isArray(v) ? v[0] : v;
@@ -134,6 +141,12 @@ export async function buildApp(state: ServerState, config: ResolvedConfig, opts:
     reply.header("x-request-id", req.id);
     if (!req.url.startsWith("/api")) return;
     const path = req.url.split("?")[0]!;
+
+    // 0. Only the web container (which holds the proxy secret) or the container itself (loopback: the health check, local tools) may call the API.
+    //    Without this, any container on a shared network, such as SearXNG on `egress`, could reach it directly (HB-01).
+    if (config.NCB_API_PROXY_ONLY && config.NCB_PROXY_SECRET && path !== HEALTH && !proxyVerified(req) && !isLoopback(req.socket?.remoteAddress)) {
+      throw new AppError("forbidden", "This address only accepts requests from the NoConBrain web app.");
+    }
 
     // 1. Not ready: only the health endpoint answers while migrations run or the server stops.
     if (path !== HEALTH && !state.ready) {

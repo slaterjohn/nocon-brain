@@ -735,3 +735,7 @@ Checked by the maintenance `verify` run (dry-run by default), repaired by `repai
 - `index.db` is never migrated: a `schema_version` mismatch triggers a rebuild.
 - The pipeline, extractor and rewriter versions are separate integers in `app_meta`; versions captured with older extractors are re-processed by an optional background job (`re-extract`), which is possible because original bytes are kept.
 - Tests: migration-from-empty, migration N-1 to N with realistic data, and a restore-then-migrate test (tasks F-03, H-10).
+
+### Phase 9 additions (migration `0015_maintenance`, task H-02)
+
+`job_rollups (day, queue, type, state, jobs, attempts, runtime_ms)`, primary key `(day, queue, type, state)`: the daily counters left when finished `jobs` rows are pruned. The storage pass rolls up `done` and `cancelled` rows older than `NCB_JOB_RETENTION_DAYS` (default 7) and `dead` rows older than four times that, in one transaction with the delete. Rows that belong to a download that has not ended, or a crawl that has not finished, are never pruned. The in-link check (I-10) compares the coarse bucket the outbox trigger uses, not the exact count.

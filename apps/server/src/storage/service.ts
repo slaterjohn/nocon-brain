@@ -8,6 +8,7 @@ import type { ActivityLog } from "../services/activity.js";
 import type { BlobStore } from "../services/blobs.js";
 import type { SettingsService } from "../services/settings.js";
 import type { VolumeRow, VolumeService } from "../services/volumes.js";
+import { BackupService, type BackupOptions, type BackupResult } from "./backup.js";
 import { AdmissionService } from "./admission.js";
 import { EvictionExecutor, type ExecuteResult, type FaultHook } from "./executor.js";
 import { StorageInventory } from "./inventory.js";
@@ -32,6 +33,23 @@ export interface StorageServiceOptions {
   /** A download started or stopped waiting because of the P4 throttle. */
   onThrottleChange?: (downloadJobId: number) => void;
   log?: { warn(o: unknown, m?: string): void };
+  /** Scheduled maintenance and backups (H-02). Without it `runBackup` still works but nothing is scheduled. */
+  maintenance?: {
+    dataDir: string;
+    appVersion: string;
+    /** A backup is made when the last one is older than this. 0 turns scheduled backups off. */
+    backupEveryMs: number;
+    /** Backups kept. */
+    keep: number;
+    includeIndex: boolean;
+    /** A full dry-run verify when the last one is older than this. 0 turns it off. */
+    verifyEveryMs: number;
+    /** Finished jobs older than this are rolled up and deleted. 0 turns it off. */
+    jobRetentionMs: number;
+    /** Rolls finished jobs up into counters; returns how many rows went. */
+    rollupJobs?: (olderThanMs: number) => number;
+    backupFault?: (step: "after-main" | "before-rename") => void;
+  };
 }
 
 /** The `EvictionPlan` object of the API (docs/api.md, "Storage (Phase 6, as built)"). */
@@ -94,6 +112,7 @@ export class StorageService {
   readonly executor: EvictionExecutor;
   readonly admission: AdmissionService;
   readonly maintenance: MaintenanceService;
+  readonly backups: BackupService;
   private readonly plans = new Map<string, StoredPlan>();
   private timer?: NodeJS.Timeout;
   private ticking = false;
@@ -119,10 +138,43 @@ export class StorageService {
       db: o.db, clock: steadyClock(o.clock), volumes: o.volumes, usage: this.usage, settings: o.settings, activity: o.activity, executor: this.executor, onThrottleChange: o.onThrottleChange,
       plan: (a) => this.buildPlan({ bytesNeeded: a.bytesNeeded, incomingPriority: a.incomingPriority as Priority, volumeId: a.volumeId }).plan,
     });
+    this.backups = new BackupService({
+      db: o.db, clock: o.clock, dataDir: o.maintenance?.dataDir ?? "", appVersion: o.maintenance?.appVersion ?? "", keep: o.maintenance?.keep, fault: o.maintenance?.backupFault,
+    });
     this.maintenance = new MaintenanceService({
       db: o.db, clock: o.clock, volumes: o.volumes, blobs: o.blobs, activity: o.activity, indexCheck: o.indexCheck,
       onPageChanged: (id) => this.priority.recomputePage(id), onUsageChanged: () => this.usage.invalidate(),
     });
+  }
+
+  /** Writes a backup (H-02), records it as a maintenance run and in the activity log. Throws if the copy cannot be made or fails its integrity check. */
+  runBackup(opts: BackupOptions & { trigger?: "manual" | "schedule"; userId?: number } = {}): BackupResult {
+    const { db, clock, activity } = this.o;
+    const publicId = newId("mnt");
+    const startedAt = clock.now();
+    db.run("INSERT INTO maintenance_runs (public_id, kind, dry_run, state, started_at) VALUES (?, 'backup', 0, 'running', ?)", [publicId, startedAt]);
+    const fail = (e: unknown): never => {
+      const msg = e instanceof Error ? e.message : String(e);
+      const report = { id: publicId, kind: "backup", dryRun: false, state: "failed", startedAt: new Date(startedAt).toISOString(), findings: [{ invariant: "I-12", title: "The backup failed", count: 1, examples: [msg] }], checked: {}, skipped: [] };
+      db.run("UPDATE maintenance_runs SET state = 'failed', finished_at = ?, report_json = ? WHERE public_id = ?", [clock.now(), JSON.stringify(report), publicId]);
+      activity.write({ level: "error", area: "storage", message: `The backup failed: ${msg}`, details: { runId: publicId }, userId: opts.userId });
+      throw e;
+    };
+    try {
+      const r = this.backups.run(opts);
+      const report = {
+        id: publicId, kind: "backup", dryRun: false, state: "done", startedAt: new Date(startedAt).toISOString(), finishedAt: new Date(clock.now()).toISOString(),
+        findings: [], checked: { files: r.manifest.files.length, pages: r.manifest.counts.pages }, skipped: [], backup: { dir: r.dir, files: r.manifest.files, pruned: r.pruned },
+      };
+      db.run("UPDATE maintenance_runs SET state = 'done', finished_at = ?, report_json = ? WHERE public_id = ?", [clock.now(), JSON.stringify(report), publicId]);
+      activity.write({
+        level: "info", area: "storage", message: `Backup written (${r.dir}, ${r.manifest.counts.pages} pages)`,
+        details: { runId: publicId, trigger: opts.trigger ?? "manual", files: r.manifest.files.map((f) => ({ name: f.name, bytes: f.bytes })), pruned: r.pruned }, userId: opts.userId,
+      });
+      return r;
+    } catch (e) {
+      return fail(e);
+    }
   }
 
   // ---- planning ------------------------------------------------------------------------------
@@ -438,6 +490,7 @@ export class StorageService {
         const last = first ? this.o.db.get<{ started_at: number }>("SELECT started_at FROM maintenance_runs WHERE kind = 'integrity_check' ORDER BY id DESC LIMIT 1") : undefined;
         if (!last || clock.now() - last.started_at >= day) await this.maintenance.verify({ checks: ["I-12"], kind: "integrity_check" });
       }
+      await this.scheduledMaintenance(notes);
       if (st.scrubMegabytesPerRun > 0) {
         const r = await this.maintenance.scrubSome(volumes.list(), { maxBlobs: 200, maxBytes: st.scrubMegabytesPerRun * 1_048_576, repair: false });
         if (r.bad.length > 0) {
@@ -452,6 +505,34 @@ export class StorageService {
       this.ticking = false;
     }
     return { notes };
+  }
+
+  /** Scheduled work (H-02): a backup, a dry-run verify and the jobs rollup, each when its last run (kept in `maintenance_runs`) is old enough. */
+  private async scheduledMaintenance(notes: string[]): Promise<void> {
+    const m = this.o.maintenance;
+    if (!m) return;
+    const { db, clock, activity } = this.o;
+    const lastOf = (kind: string): number | undefined => db.get<{ t: number }>("SELECT started_at AS t FROM maintenance_runs WHERE kind = ? AND state = 'done' ORDER BY id DESC LIMIT 1", [kind])?.t;
+    const due = (kind: string, everyMs: number): boolean => everyMs > 0 && (() => { const t = lastOf(kind); return t === undefined || clock.now() - t >= everyMs; })();
+    if (due("backup", m.backupEveryMs)) {
+      try {
+        this.runBackup({ trigger: "schedule", includeIndex: m.includeIndex });
+      } catch (e) {
+        notes.push(`The scheduled backup failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    if (due("verify", m.verifyEveryMs)) {
+      const r = await this.maintenance.verify({ kind: "verify" });
+      if (r.state !== "done") notes.push("The scheduled verify could not finish.");
+    }
+    if (m.jobRetentionMs > 0 && m.rollupJobs) {
+      try {
+        const n = m.rollupJobs(m.jobRetentionMs);
+        if (n > 0) activity.write({ level: "info", area: "storage", message: `Rolled up ${n} finished job${n === 1 ? "" : "s"} into daily counters` });
+      } catch (e) {
+        notes.push(`The jobs rollup failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   }
 
   start(intervalMs: number): void {

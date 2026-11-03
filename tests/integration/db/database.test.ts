@@ -13,7 +13,7 @@ describe("migrations from empty", () => {
     const dir = tempDir();
     const m = openMainDatabase({ dataDir: dir });
     try {
-      expect(m.migration.applied).toEqual(["0001_foundation", "0002_job_queue", "0003_pages_versions", "0004_bookmarks_history", "0005_crawl", "0006_sources_collections", "0007_downloads_refresh", "0008_imports", "0009_library_filters", "0010_search", "0011_online_search", "0012_intelligent_storage", "0013_discovery", "0014_zim"]);
+      expect(m.migration.applied).toEqual(["0001_foundation", "0002_job_queue", "0003_pages_versions", "0004_bookmarks_history", "0005_crawl", "0006_sources_collections", "0007_downloads_refresh", "0008_imports", "0009_library_filters", "0010_search", "0011_online_search", "0012_intelligent_storage", "0013_discovery", "0014_zim", "0015_maintenance"]);
       const tables = m.db.all<{ name: string; strict: number }>(`PRAGMA table_list`).filter((t) => !t.name.startsWith("sqlite_"));
       const names = tables.map((t) => t.name);
       for (const t of ["users", "sessions", "settings", "user_settings", "app_meta", "activity_log", "volumes", "storage_policies",

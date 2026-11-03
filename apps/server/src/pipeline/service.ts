@@ -419,6 +419,8 @@ export class PipelineService {
       maxBytes: { ...DEFAULT_CAPS, ...opts.caps }.maxDocumentBytes,
       accept: ["text/html", "application/xhtml+xml", "text/*", "application/*"],
       signal,
+      // A page the person saved by hand is one explicit request and is not held back by a delay a crawl left on the host.
+      pace: (opts.userInitiated ?? (opts.requestedBy ?? "user") === "user") ? "none" : "page",
       ...({ hooks: { beforeHop: (info: { url: string }) => beforeHop(info.url) } } as object),
     });
 

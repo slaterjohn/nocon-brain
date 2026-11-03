@@ -1113,7 +1113,7 @@ Before a download writes anything it reserves room (task T-07). Reservations are
 
 ### 10.8 Maintenance: verify and repair
 
-`POST /api/system/maintenance/verify` (also `POST /api/storage/maintenance/verify`), body `{ repair?: boolean (default false), checks?: string[] }`. **The default is a dry run: it reports and changes nothing in the archive.** With `repair: true` each finding is fixed. `checks` limits the run to some of `I-1` to `I-13` and `REF`. `GET /api/system/maintenance/runs` lists runs (`?limit=`) and `GET /api/system/maintenance/runs/{id}` returns one report. `POST /api/system/maintenance/backup` writes a `VACUUM INTO` copy of `main.db` to the data volume (`{ file, sizeBytes }`).
+`POST /api/system/maintenance/verify` (also `POST /api/storage/maintenance/verify`), body `{ repair?: boolean (default false), checks?: string[] }`. **The default is a dry run: it reports and changes nothing in the archive.** With `repair: true` each finding is fixed. `checks` limits the run to some of `I-1` to `I-13` and `REF`. `GET /api/system/maintenance/runs` lists runs (`?limit=`) and `GET /api/system/maintenance/runs/{id}` returns one report. `POST /api/system/maintenance/backup` (body `{ includeIndex?, includeSecretKey? }`, both default false) writes a folder `backups/backup-<stamp>/` of `VACUUM INTO` copies and a `manifest.json` of checksums, and answers `{ file, sizeBytes, dir, files[], notes[], pruned[] }` (`file` is `main.db` inside the folder). `GET /api/system/maintenance/backups` lists finished backups. See [guides/backup-restore.md](guides/backup-restore.md).
 
 ```ts
 interface MaintenanceRun {
@@ -1206,7 +1206,7 @@ Groups: `general` (app name, locale `en-GB`), `resources` (profile and limits), 
 | POST | `/api/system/connectivity` | `{ forceOffline: boolean }` ("work offline") | S+C |
 | POST | `/api/system/maintenance/verify` | Verify-and-repair, dry run by default. `{ repair?: false, checks?: string[] }` returns a `MaintenanceRun` (section 10.8) | S+C |
 | GET | `/api/system/maintenance/runs`, `/api/system/maintenance/runs/{id}` | History and reports | S |
-| POST | `/api/system/maintenance/backup` | `VACUUM INTO` backup of `main.db` into `backups/` in the data volume; `{ file, sizeBytes }` | S+C |
+| POST | `/api/system/maintenance/backup` | `VACUUM INTO` backup of the databases into `backups/backup-<stamp>/`; `{ file, sizeBytes, dir, files, notes, pruned }` | S+C |
 | GET | `/api/system/metrics` | In-process counters for benchmarking | S |
 
 ```ts

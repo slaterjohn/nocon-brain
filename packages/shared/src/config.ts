@@ -37,6 +37,8 @@ export const envSchema = z.object({
   NCB_ARCHIVE_HOST: z.string().min(1).default("0.0.0.0"),
   NCB_AUTH_MODE: z.enum(["password", "trusted-lan"]).default("password"),
   NCB_TRUSTED_LAN_CIDRS: list([]),
+  /** With a proxy secret set, API requests that neither carry it nor come from loopback are refused (HB-01). Set false only for a trusted network. */
+  NCB_API_PROXY_ONLY: bool(true),
   NCB_PROXY_SECRET: z.string().min(16, "must be at least 16 characters (openssl rand -hex 32)").optional(),
   NCB_SECRET_KEY: z.string().min(16, "must be at least 16 characters").optional(),
   NCB_COOKIE_SECURE: bool(false),
@@ -64,6 +66,16 @@ export const envSchema = z.object({
   NCB_LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   NCB_LOG_FORMAT: z.enum(["json", "pretty"]).default("json"),
   NCB_ACTIVITY_LOG_RETENTION_DAYS: int(30, 1),
+  /** Scheduled backups of the databases into `<data>/backups/` (H-02). 0 turns them off. */
+  NCB_BACKUP_INTERVAL_HOURS: int(24, 0, 24 * 365),
+  /** Finished backups kept; older ones are deleted after a new one succeeds. */
+  NCB_BACKUP_KEEP: int(7, 1, 365),
+  /** Put the search index in scheduled backups too. Off: it is rebuilt after a restore. */
+  NCB_BACKUP_INCLUDE_INDEX: bool(false),
+  /** A full dry-run verify when the last one is older than this many hours. 0 turns it off. */
+  NCB_VERIFY_INTERVAL_HOURS: int(168, 0, 24 * 365),
+  /** Finished jobs older than this many days are rolled up into daily counters and deleted. 0 keeps them. */
+  NCB_JOB_RETENTION_DAYS: int(7, 0, 3650),
   NCB_SHUTDOWN_GRACE_SECONDS: int(25, 1, 600),
   NCB_TZ: z.string().default("UTC"),
   NCB_SCHEDULER_ENABLED: bool(true),
@@ -77,6 +89,11 @@ export const envSchema = z.object({
   NCB_RENDERER_SECRET: z.string().min(16, "must be at least 16 characters").optional(),
   /** The guarded forward proxy for the renderer. It starts only when NCB_RENDERER_URL is set. 0 picks a free port (tests). */
   NCB_RENDER_PROXY_PORT: int(3128, 0, 65535),
+  /**
+   * Where the forward proxy listens: an address, or a CIDR such as 172.31.250.0/24 (Compose sets the `render` network's subnet). A CIDR means
+   * "the address this container has inside that network", so `web` and `searxng` on other networks cannot reach the proxy (HB-07). If the
+   * container has no address in the CIDR the proxy does not start (it never falls back to all interfaces).
+   */
   NCB_RENDER_PROXY_HOST: z.string().min(1).default("0.0.0.0"),
   /** Pages rendered at once. Only the default of the `resources.renderConcurrency` setting, which the renderer reads live. */
   NCB_RENDER_CONCURRENCY: int(1, 1, 4),

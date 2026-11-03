@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
@@ -9,7 +10,7 @@ import { JobQueue, openMainDatabase, type MainDatabase } from "@ncb/db";
 import { buildApp, type BuildOptions } from "./app.js";
 import { ArchiveTokenService, createArchiveListener, type ArchiveListener, type CaptureStore } from "./archive/index.js";
 import { ServerState, type Services } from "./context.js";
-import { CidrError, privateCidrMatcher } from "./lib/cidr.js";
+import { CidrError, privateCidrMatcher, resolveBindHost } from "./lib/cidr.js";
 import { loadSecretKey } from "./lib/secrets.js";
 import { LoginThrottle } from "./lib/throttle.js";
 import { WorkerPool, type PoolOptions } from "./runtime/pool.js";
@@ -34,6 +35,7 @@ import { CrawlService } from "./crawl/service.js";
 import { crawlConfigForDownload, DownloadService } from "./downloads/index.js";
 import { RefreshService } from "./refresh/index.js";
 import { ResourceGovernor } from "./limits/governor.js";
+import { HostPacer, pacedFetcher, type HostPacerOptions } from "./limits/pacer.js";
 import { SearchService, type SearchServiceOptions } from "./search/service.js";
 import { ProviderHttp } from "./online/http.js";
 import { ProviderRunner } from "./online/runner.js";
@@ -85,6 +87,7 @@ export { ScheduleService } from "./schedule/service.js";
 export { Scheduler } from "./schedule/scheduler.js";
 export * from "./sources/crawl-port.js";
 export { StorageService } from "./storage/service.js";
+export * from "./storage/backup.js";
 export * from "./zim/index.js";
 export * from "./wikipedia/index.js";
 export { DiscoveryService } from "./discovery/service.js";
@@ -118,6 +121,8 @@ export interface ServerOptions extends BuildOptions {
   blobFault?: BlobStoreOptions["faultBeforeRename"];
   /** Fault injection for the eviction executor (tests): called at every step; throw, or kill the process, to simulate a crash. */
   storageFault?: import("./storage/executor.js").FaultHook;
+  /** Fault injection for backups (tests). */
+  backupFault?: (step: "after-main" | "before-rename") => void;
   /** How often the storage pass runs (evict above the threshold, prune, collect garbage, scrub). Default 5 minutes; 0 turns the timer off (tests call `svc.storage.tick()`). */
   storageTickMs?: number;
   runnerPollMs?: number;
@@ -137,12 +142,14 @@ export interface ServerOptions extends BuildOptions {
   renderProxyGuard?: SsrfGuard;
   /** Resource limit sampling. Tests pass synthetic sources and short intervals. */
   limits?: { lagSource?: () => number; loadSource?: () => number; cpuTickMs?: number; diskTickMs?: number };
+  /** Per-host politeness gate for robots.txt, pages and files (HB-05). Tests pass a fake clock and sleep. */
+  pacer?: Partial<HostPacerOptions>;
   /** Start the archive listener on `listen()`. Default true. */
   archive?: boolean;
   /** Where the archive listener reads captures from. Defaults to an empty in-memory store until the pipeline supplies one. */
   archiveStore?: CaptureStore;
   /** Knowledge-package (ZIM) readers (Phase 8). Tests shorten the hang watchdog and enable the crash and hang hooks. */
-  zim?: { workerFile?: string | URL; workerExecArgv?: string[]; hangGraceMs?: number; callTimeoutMs?: number; testHooks?: boolean };
+  zim?: { fault?: (step: "copy-chunk" | "after-rename") => void | Promise<void>; workerFile?: string | URL; workerExecArgv?: string[]; hangGraceMs?: number; callTimeoutMs?: number; testHooks?: boolean };
   /**
    * Wikipedia (tasks Z-07, Z-08). `origin` replaces `https://<lang>.wikipedia.org` (the end-to-end suite points it at a local fake); the other fields
    * shorten the waits the client keeps to, so a test does not need to sit through them. The one-request-at-a-time rule is never relaxed.
@@ -274,6 +281,12 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       let storageRef: StorageService | undefined;
       const storage = new StorageService({
         db, clock, volumes, blobs, settings, activity, fault: opts.storageFault, log: app.log,
+        maintenance: {
+          dataDir: config.NCB_DATA_DIR, appVersion: VERSION, keep: config.NCB_BACKUP_KEEP, includeIndex: config.NCB_BACKUP_INCLUDE_INDEX,
+          backupEveryMs: config.NCB_BACKUP_INTERVAL_HOURS * 3_600_000, verifyEveryMs: config.NCB_VERIFY_INTERVAL_HOURS * 3_600_000,
+          jobRetentionMs: config.NCB_JOB_RETENTION_DAYS * 86_400_000, rollupJobs: (ms) => svc?.queue.rollupFinished(ms).rolledUp ?? 0,
+          backupFault: opts.backupFault,
+        },
         indexCheck: async (repair) => {
           if (!searchRefForStorage) throw new Error("The search index is not running.");
           return searchRefForStorage.check(repair);
@@ -365,9 +378,12 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
           } catch { /* counting never stops a request */ }
         },
       });
-      const captureFetcher: PipelineFetcher = new WikipediaRoutedFetcher(guardedCapture, wikiClient, () => wikiOrigin);
+      // HB-05: robots.txt, pages and files fetched inside one job are spaced per host by the host's politeness delay.
+      const pacer = new HostPacer({ delayOf: (host) => db.get<{ d: number }>("SELECT crawl_delay_ms AS d FROM host_state WHERE host = ?", [host])?.d ?? 0, ...opts.pacer });
+      const captureFetcher: PipelineFetcher = pacedFetcher<import("./pipeline/types.js").PipelineFetchOptions, PipelineFetcher>(
+        new WikipediaRoutedFetcher(guardedCapture, wikiClient, () => wikiOrigin), pacer, (o) => o?.pace ?? "page") as PipelineFetcher;
       let wikipediaRef: WikipediaService | undefined;
-      const robots = new RobotsService({ fetcher: realFetcher, userAgentToken: "NoConBrain", now: () => Date.now() });
+      const robots = new RobotsService({ fetcher: pacedFetcher(realFetcher, pacer, () => "robots") as unknown as typeof realFetcher, userAgentToken: "NoConBrain", now: () => Date.now() });
       const extractClient = new ExtractClient(pool);
       const collections = new CollectionService({ db, clock, activity });
       let searchRef: SearchService | undefined;
@@ -395,7 +411,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       if (config.NCB_RENDERER_URL) {
         renderProxy = new GuardedProxy({
           guard: opts.renderProxyGuard ?? opts.captureFetcherOptions?.ssrf ?? createSsrfGuard({ allow: allowlistFromEnv() }),
-          token: rendererSecret, host: config.NCB_RENDER_PROXY_HOST, port: config.NCB_RENDER_PROXY_PORT,
+          token: rendererSecret, host: resolveBindHost(config.NCB_RENDER_PROXY_HOST, os.networkInterfaces()), port: config.NCB_RENDER_PROXY_PORT,
           isOffline: () => connectivity.forced,
           onEvent: (e) => { if (e.type === "blocked") app.log.warn({ target: e.target, reason: e.reason, method: e.method }, "renderer proxy blocked a request"); },
         });
@@ -421,6 +437,7 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
         db, clock, source: zimSource, volumes, activity, allowedRoots: config.NCB_VOLUMES_ALLOWED_ROOTS, log: app.log,
         createSource: (z) => sourcesRef?.createKnowledgePackageSource(z) ?? null,
         onChanged: () => storage.usage.invalidate(),
+        fault: opts.zim?.fault,
       });
       zimRef = zim;
       zimServiceRef = zim;
@@ -602,6 +619,9 @@ export async function createServer(opts: ServerOptions): Promise<NcbServer> {
       await volumes.refreshAll();
       await zim.recover(); // finishes a removal or import a crash interrupted, marks packages whose file has gone
       const cleaned = await blobs.cleanTmpAll(0);
+      // The data directory's own scratch folder holds nothing that must survive a restart.
+      for (const n of fs.readdirSync(path.join(config.NCB_DATA_DIR, "tmp"))) fs.rmSync(path.join(config.NCB_DATA_DIR, "tmp", n), { recursive: true, force: true });
+      storage.backups.cleanUnfinished(); // a backup a crash cut short is a hidden temporary folder; it is removed, never listed
       // Finish any eviction a crash interrupted before anything can write: versions left `evicting`, files marked for deletion.
       await storage.executor.recover();
       storage.admission.releaseAll();

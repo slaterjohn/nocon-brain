@@ -144,6 +144,8 @@ export interface ZimServiceOptions {
   createSource?: (zim: { rowId: number; publicId: string; title: string; priority: PriorityNumber; description: string | null }) => string | null;
   /** Called after a package is added, changed or removed (usage figures are stale). */
   onChanged?: () => void;
+  /** Fault injection for the copy of a package (tests): called after each chunk is written and after the final rename; throw or kill the process to simulate a crash. */
+  fault?: (step: "copy-chunk" | "after-rename") => void | Promise<void>;
   log?: { warn(o: unknown, m?: string): void; info(o: unknown, m?: string): void };
 }
 
@@ -328,6 +330,8 @@ export class ZimService {
     let target = path.join(dir, `${base}.zim`);
     for (let n = 2; fs.existsSync(target); n++) target = path.join(dir, `${base}-${n}.zim`);
     const partial = `${target}.partial`;
+    // Record where the copy will land before writing it, so recovery after a crash knows which file belongs to this unfinished import.
+    this.db.run("UPDATE zim_packages SET relative_path = ? WHERE id = ?", [path.relative(volume.rootPath, target), rowId]);
     const hash = createHash("sha256");
     const out = await fsp.open(partial, "wx", 0o644);
     try {
@@ -335,12 +339,14 @@ export class ZimService {
       for await (const chunk of input) {
         hash.update(chunk as Buffer);
         await out.write(chunk as Buffer);
+        await this.o.fault?.("copy-chunk");
       }
       await out.sync();
     } finally {
       await out.close();
     }
     await fsp.rename(partial, target);
+    await this.o.fault?.("after-rename");
     // Reopen from the copy so the registry never points at the original again.
     await this.o.source.close(publicId);
     const again = await this.o.source.open(publicId, target);
@@ -358,7 +364,10 @@ export class ZimService {
     this.opened.delete(publicId);
     if (r?.storage_mode === "copied") {
       const dir = r.volume_id ? this.o.volumes.byId(r.volume_id)?.rootPath : undefined;
-      if (dir) for (const f of await fsp.readdir(path.join(dir, "zim")).catch(() => [] as string[])) if (f.endsWith(".partial")) await fsp.rm(path.join(dir, "zim", f), { force: true });
+      if (dir) {
+        for (const f of await fsp.readdir(path.join(dir, "zim")).catch(() => [] as string[])) if (f.endsWith(".partial")) await fsp.rm(path.join(dir, "zim", f), { force: true });
+        if (r.relative_path && r.state === "importing" && !path.isAbsolute(r.relative_path) && !r.relative_path.split(path.sep).includes("..")) await fsp.rm(path.join(dir, r.relative_path), { force: true });
+      }
     }
     this.db.run("DELETE FROM zim_packages WHERE id = ? AND state = 'importing'", [rowId]);
     this.o.activity.write({ level: "error", area: "zim", message: "A package could not be added", details: { reason: e instanceof Error ? e.message : String(e) } });
@@ -522,8 +531,13 @@ export class ZimService {
         // An import that never finished: a half-copied file is useless.
         if (r.storage_mode === "copied") {
           const dir = r.volume_id ? this.o.volumes.byId(r.volume_id)?.rootPath : undefined;
-          if (dir) for (const f of await fsp.readdir(path.join(dir, "zim")).catch(() => [] as string[])) if (f.endsWith(".partial")) await fsp.rm(path.join(dir, "zim", f), { force: true });
+          if (dir) {
+            for (const f of await fsp.readdir(path.join(dir, "zim")).catch(() => [] as string[])) if (f.endsWith(".partial")) await fsp.rm(path.join(dir, "zim", f), { force: true });
+            // A crash between the final rename and the row update leaves a whole copy that no package owns. Only the file this import chose is removed.
+            if (r.relative_path && !path.isAbsolute(r.relative_path) && !r.relative_path.split(path.sep).includes("..")) await fsp.rm(path.join(dir, r.relative_path), { force: true });
+          }
         }
+        this.o.activity.write({ level: "warn", area: "zim", message: `A package copy was interrupted and has been discarded: ${r.title}. Add it again to retry.` });
         this.db.run("DELETE FROM zim_packages WHERE id = ?", [r.id]);
       }
       removed++;

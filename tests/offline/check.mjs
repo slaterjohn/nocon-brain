@@ -23,6 +23,8 @@ function assert(cond, msg) {
 }
 async function req(path, { method = "GET", body, headers = {}, base = API } = {}) {
   const h = { ...headers };
+  // The API answers only the web app's proxy secret from other containers (HB-01); this check plays the web app's part when it calls the API.
+  if (base === API && process.env.NCB_PROXY_SECRET) h["x-nocon-proxy-secret"] = process.env.NCB_PROXY_SECRET;
   if (cookie) h.cookie = cookie;
   if (method !== "GET" && method !== "HEAD") h["x-nocon-csrf"] = "1";
   if (body !== undefined) h["content-type"] = "application/json";

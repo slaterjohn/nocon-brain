@@ -431,6 +431,30 @@ export class JobQueue {
     return this.db.run(`DELETE FROM jobs WHERE state IN ('done','cancelled') AND finished_at < ?`, [this.clock.now() - olderThanMs]).changes;
   }
 
+  /**
+   * Rolls finished rows up into `job_rollups` (one counter row per day, queue, type and state) and deletes them, in one transaction (H-02).
+   * `done` and `cancelled` rows older than `olderThanMs` go; `dead` rows (the ones worth reading) wait `deadOlderThanMs`. A row that belongs to a
+   * download or crawl that has not ended stays, so a running download's counts and a crawl's visited set are never touched.
+   */
+  rollupFinished(olderThanMs: number, deadOlderThanMs = olderThanMs * 4): { rolledUp: number } {
+    const now = this.clock.now();
+    const sel = `FROM jobs j WHERE (
+        (j.state IN ('done','cancelled') AND j.finished_at < @cutDone) OR (j.state = 'dead' AND j.finished_at < @cutDead))
+      AND (j.download_job_id IS NULL OR j.download_job_id IN (SELECT id FROM download_jobs WHERE state IN ('completed','failed','cancelled')))
+      AND (j.crawl_job_id IS NULL OR j.crawl_job_id IN (SELECT id FROM crawl_jobs WHERE finished_at IS NOT NULL))`;
+    const args = { cutDone: now - olderThanMs, cutDead: now - deadOlderThanMs };
+    return this.db.transaction(() => {
+      this.db.run(
+        `INSERT INTO job_rollups (day, queue, type, state, jobs, attempts, runtime_ms)
+         SELECT strftime('%Y-%m-%d', j.finished_at / 1000, 'unixepoch'), j.queue, j.type, j.state, COUNT(*), SUM(j.attempts),
+                COALESCE(SUM(CASE WHEN j.started_at IS NOT NULL AND j.finished_at >= j.started_at THEN j.finished_at - j.started_at ELSE 0 END), 0)
+         ${sel} GROUP BY 1, 2, 3, 4
+         ON CONFLICT (day, queue, type, state) DO UPDATE SET jobs = jobs + excluded.jobs, attempts = attempts + excluded.attempts, runtime_ms = runtime_ms + excluded.runtime_ms`, args);
+      const n = this.db.run(`DELETE FROM jobs WHERE id IN (SELECT j.id ${sel})`, args).changes;
+      return { rolledUp: n };
+    });
+  }
+
   // ---- internals -----------------------------------------------------------------------------
 
   private releaseHost(host: string | null, now: number, o: { success: boolean; hostBackoffMs?: number; count?: number }): void {

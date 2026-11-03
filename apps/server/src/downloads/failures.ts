@@ -75,7 +75,9 @@ export function failureFor(code: string | null | undefined, rawMessage?: string 
   const info = FAILURE_INFO[c];
   // The stored message is the specific reason (for example "The server answered 503."); the fixed text follows it.
   const detail = rawMessage && rawMessage.trim() ? rawMessage.trim() : undefined;
-  return { code: c, message: detail && detail !== info.message ? `${info.message} ${detail}` : info.message, retryable: info.retryable, hint: info.hint };
+  // The detail is often a raw reason ("other side closed", "timed out waiting for response headers"): present it as a sentence.
+  const sentence = detail ? `${detail[0]!.toUpperCase()}${detail.slice(1)}${/[.!?]$/.test(detail) ? "" : "."}` : undefined;
+  return { code: c, message: sentence && detail !== info.message ? `${info.message} ${sentence}` : info.message, retryable: info.retryable, hint: info.hint };
 }
 
 /** Why a crawl ended, in words. */
