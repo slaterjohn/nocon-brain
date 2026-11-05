@@ -14,7 +14,7 @@ How evidence is found: a test file counts for a task when it names the task ID (
 | Deferred (Post-v1) | 4 |
 | Without evidence | 0 |
 | Performance targets | 22 |
-| Acceptance criteria | 24 (21 met, 2 partly met, 1 not met) |
+| Acceptance criteria | 24 (21 met, 3 partly met, 0 not met) |
 | Hardening backlog items | 29 |
 
 ## Tasks
@@ -155,7 +155,7 @@ How evidence is found: a test file counts for a task when it names the task ID (
 | PT-03 | Local search latency p95 | measured |
 | PT-04 | Typo-tolerant query p95 and autocomplete p95 | measured |
 | PT-05 | `server` idle RSS (index open, no jobs) | not measured |
-| PT-06 | `web` idle RSS | not measured |
+| PT-06 | `web` idle RSS | measured |
 | PT-07 | `server` peak RSS during a crawl with one extract worker | not measured |
 | PT-08 | Crawl throughput (pages/s, including pipeline) on one host with the default 1.5 s delay | not measured |
 | PT-09 | Aggregate crawl throughput across many hosts | not measured |

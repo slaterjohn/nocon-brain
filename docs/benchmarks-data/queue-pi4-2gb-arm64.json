@@ -1,0 +1,170 @@
+{
+  "benchmark": "queue",
+  "image": "nocon-brain/server:bench-arm64",
+  "platform": "linux/arm64",
+  "host": {
+    "date": "2026-11-05T16:45:40.749Z",
+    "cpu": "Cortex-A72",
+    "cores": 4,
+    "arch": "arm64",
+    "os": "Linux 6.18.50+rpt-rpi-v8",
+    "memoryGiB": 1.8,
+    "node": "v20.19.2",
+    "deviceModel": "Raspberry Pi 4 Model B Rev 1.5",
+    "pi": "Raspberry Pi 4 Model B Rev 1.5",
+    "docker": {
+      "serverVersion": "29.9.3",
+      "operatingSystem": "Debian GNU/Linux 13 (trixie)",
+      "architecture": "aarch64",
+      "cpus": 4,
+      "memoryGiB": 1.8,
+      "storageDriver": "overlayfs"
+    }
+  },
+  "runs": [
+    {
+      "memoryLimit": "512m",
+      "run": 1,
+      "exitCode": 0,
+      "oom": false,
+      "wallSeconds": 97,
+      "peakMemoryMiB": 0,
+      "result": {
+        "hardware": "Cortex-A72 x4, 2 GiB RAM",
+        "os": "Linux 6.18.50+rpt-rpi-v8 arm64",
+        "node": "v24.22.2",
+        "sqlite": "3.53.4",
+        "note": "not a Pi",
+        "total": 50000,
+        "hosts": 500,
+        "cyclesRun": 50000,
+        "insertMs": 5173,
+        "insertPerJobUs": 103,
+        "claimCompleteMs": 90089,
+        "msPerCycle": 1.802,
+        "cyclesPerSecond": 555,
+        "walMb": 11.5
+      }
+    },
+    {
+      "memoryLimit": "512m",
+      "run": 2,
+      "exitCode": 0,
+      "oom": false,
+      "wallSeconds": 96,
+      "peakMemoryMiB": 0,
+      "result": {
+        "hardware": "Cortex-A72 x4, 2 GiB RAM",
+        "os": "Linux 6.18.50+rpt-rpi-v8 arm64",
+        "node": "v24.22.2",
+        "sqlite": "3.53.4",
+        "note": "not a Pi",
+        "total": 50000,
+        "hosts": 500,
+        "cyclesRun": 50000,
+        "insertMs": 4940,
+        "insertPerJobUs": 99,
+        "claimCompleteMs": 89483,
+        "msPerCycle": 1.79,
+        "cyclesPerSecond": 559,
+        "walMb": 11.5
+      }
+    },
+    {
+      "memoryLimit": "512m",
+      "run": 3,
+      "exitCode": 0,
+      "oom": false,
+      "wallSeconds": 97,
+      "peakMemoryMiB": 0,
+      "result": {
+        "hardware": "Cortex-A72 x4, 2 GiB RAM",
+        "os": "Linux 6.18.50+rpt-rpi-v8 arm64",
+        "node": "v24.22.2",
+        "sqlite": "3.53.4",
+        "note": "not a Pi",
+        "total": 50000,
+        "hosts": 500,
+        "cyclesRun": 50000,
+        "insertMs": 5077,
+        "insertPerJobUs": 102,
+        "claimCompleteMs": 90719,
+        "msPerCycle": 1.814,
+        "cyclesPerSecond": 551,
+        "walMb": 11.5
+      }
+    },
+    {
+      "memoryLimit": "1g",
+      "run": 1,
+      "exitCode": 0,
+      "oom": false,
+      "wallSeconds": 97,
+      "peakMemoryMiB": 0,
+      "result": {
+        "hardware": "Cortex-A72 x4, 2 GiB RAM",
+        "os": "Linux 6.18.50+rpt-rpi-v8 arm64",
+        "node": "v24.22.2",
+        "sqlite": "3.53.4",
+        "note": "not a Pi",
+        "total": 50000,
+        "hosts": 500,
+        "cyclesRun": 50000,
+        "insertMs": 4987,
+        "insertPerJobUs": 100,
+        "claimCompleteMs": 89635,
+        "msPerCycle": 1.793,
+        "cyclesPerSecond": 558,
+        "walMb": 11.5
+      }
+    },
+    {
+      "memoryLimit": "1g",
+      "run": 2,
+      "exitCode": 0,
+      "oom": false,
+      "wallSeconds": 98,
+      "peakMemoryMiB": 0,
+      "result": {
+        "hardware": "Cortex-A72 x4, 2 GiB RAM",
+        "os": "Linux 6.18.50+rpt-rpi-v8 arm64",
+        "node": "v24.22.2",
+        "sqlite": "3.53.4",
+        "note": "not a Pi",
+        "total": 50000,
+        "hosts": 500,
+        "cyclesRun": 50000,
+        "insertMs": 5052,
+        "insertPerJobUs": 101,
+        "claimCompleteMs": 92106,
+        "msPerCycle": 1.842,
+        "cyclesPerSecond": 543,
+        "walMb": 11.5
+      }
+    },
+    {
+      "memoryLimit": "1g",
+      "run": 3,
+      "exitCode": 0,
+      "oom": false,
+      "wallSeconds": 96,
+      "peakMemoryMiB": 0,
+      "result": {
+        "hardware": "Cortex-A72 x4, 2 GiB RAM",
+        "os": "Linux 6.18.50+rpt-rpi-v8 arm64",
+        "node": "v24.22.2",
+        "sqlite": "3.53.4",
+        "note": "not a Pi",
+        "total": 50000,
+        "hosts": 500,
+        "cyclesRun": 50000,
+        "insertMs": 4952,
+        "insertPerJobUs": 99,
+        "claimCompleteMs": 89540,
+        "msPerCycle": 1.791,
+        "cyclesPerSecond": 558,
+        "walMb": 11.5
+      }
+    }
+  ]
+}

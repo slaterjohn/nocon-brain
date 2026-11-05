@@ -1,0 +1,192 @@
+{
+  "benchmark": "search",
+  "image": "nocon-brain/server:bench-arm64",
+  "platform": "linux/arm64",
+  "host": {
+    "date": "2026-11-05T16:57:37.819Z",
+    "cpu": "Cortex-A72",
+    "cores": 4,
+    "arch": "arm64",
+    "os": "Linux 6.18.50+rpt-rpi-v8",
+    "memoryGiB": 1.8,
+    "node": "v20.19.2",
+    "deviceModel": "Raspberry Pi 4 Model B Rev 1.5",
+    "pi": "Raspberry Pi 4 Model B Rev 1.5",
+    "docker": {
+      "serverVersion": "29.9.3",
+      "operatingSystem": "Debian GNU/Linux 13 (trixie)",
+      "architecture": "aarch64",
+      "cpus": 4,
+      "memoryGiB": 1.8,
+      "storageDriver": "overlayfs"
+    }
+  },
+  "runs": [
+    {
+      "docs": 50000,
+      "memoryLimit": "1g",
+      "run": 1,
+      "exitCode": 0,
+      "oom": false,
+      "wallSeconds": 365,
+      "peakMemoryMiB": 0,
+      "result": {
+        "docs": 50000,
+        "rawTextMiB": 99,
+        "indexMiB": 370,
+        "indexOverRaw": 3.73,
+        "buildMs": {
+          "insertMs": 250277,
+          "finishMs": 54601,
+          "vocabMs": 9244,
+          "optimizeMs": 45347
+        },
+        "buildSeconds": 304.9,
+        "buildNodePeakRssMiB": 0,
+        "nodePeakRssMiB": 319,
+        "cgroup": {
+          "peakMiB": null
+        },
+        "coldFirstFiveMs": [
+          240.1,
+          24.3,
+          21.5,
+          21.5,
+          56.4
+        ],
+        "overall": {
+          "n": 690,
+          "p50": 31.15,
+          "p95": 103.03,
+          "p99": 129.98,
+          "max": 141.84
+        },
+        "byType": {
+          "single": {
+            "n": 120,
+            "p50": 57.05,
+            "p95": 73.29,
+            "p99": 77.65,
+            "max": 79.77
+          },
+          "multi": {
+            "n": 180,
+            "p50": 15.95,
+            "p95": 71.68,
+            "p99": 80.57,
+            "max": 81.3
+          },
+          "typo": {
+            "n": 120,
+            "p50": 72.82,
+            "p95": 131.42,
+            "p99": 140.34,
+            "max": 141.84
+          },
+          "phrase": {
+            "n": 90,
+            "p50": 3.45,
+            "p95": 22.76,
+            "p99": 32.01,
+            "max": 32.01
+          },
+          "prefix": {
+            "n": 90,
+            "p50": 83.66,
+            "p95": 117.89,
+            "p99": 129.98,
+            "max": 129.98
+          },
+          "filtered": {
+            "n": 90,
+            "p50": 10.3,
+            "p95": 63.05,
+            "p99": 87.18,
+            "max": 87.18
+          }
+        },
+        "zeroResultQueries": {
+          "phrase": 1
+        },
+        "commonTerms": {
+          "n": 120,
+          "p50": 62.01,
+          "p95": 99.78,
+          "p99": 112.08,
+          "max": 114.26
+        },
+        "commonPairs": {
+          "n": 60,
+          "p50": 81.91,
+          "p95": 104.64,
+          "p99": 107.7,
+          "max": 107.7
+        },
+        "stopWordOnly": {
+          "n": 45,
+          "p50": 64.02,
+          "p95": 129.3,
+          "p99": 131.57,
+          "max": 131.57
+        },
+        "suggestionsPrefix3": {
+          "n": 120,
+          "p50": 1.77,
+          "p95": 3.68,
+          "p99": 4.89,
+          "max": 6.09
+        },
+        "suggestionsTitle": {
+          "n": 40,
+          "p50": 0.91,
+          "p95": 7.59,
+          "p99": 9.25,
+          "max": 9.25
+        },
+        "typoQueries": {
+          "n": 120,
+          "p50": 72.82,
+          "p95": 131.42,
+          "p99": 140.34,
+          "max": 141.84
+        },
+        "incrementalUpsertMs": {
+          "n": 200,
+          "p50": 2.22,
+          "p95": 5.96,
+          "p99": 218.82,
+          "max": 234.62
+        },
+        "hotCachedRepeat": {
+          "n": 120,
+          "p50": 0.06,
+          "p95": 0.08,
+          "p99": 0.11,
+          "max": 0.31
+        },
+        "commonSample": [
+          {
+            "term": "first",
+            "df": 24069
+          },
+          {
+            "term": "other",
+            "df": 20992
+          },
+          {
+            "term": "many",
+            "df": 17812
+          },
+          {
+            "term": "people",
+            "df": 17117
+          },
+          {
+            "term": "called",
+            "df": 16915
+          }
+        ]
+      }
+    }
+  ]
+}

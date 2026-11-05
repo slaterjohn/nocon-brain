@@ -2,7 +2,7 @@
 
 NoConBrain is a self-hosted, offline-first knowledge archiver, crawler and search engine. It is part of the NoCon family, alongside NoConMedia. It archives web pages and sites to your own storage, lets you browse and search them with no internet connection, and can blend in results from online search providers when a connection is available.
 
-**Status: release candidate 1.0.0-rc.1.** The application is built and tested. It has not been run on a Raspberry Pi, and a few checks need a person or a Linux host; [docs/acceptance.md](docs/acceptance.md) lists what is met and what is not. The documentation starts at [docs/README.md](docs/README.md), and the research behind the design is in [docs/research/](docs/research/).
+**Status: release candidate 1.0.0-rc.1.** The application is built and tested. It has been run on one Raspberry Pi 4 (2 GB, SD card) but not on a Pi 5, and a few checks need a person or a Linux host; [docs/acceptance.md](docs/acceptance.md) lists what is met and what is not. The documentation starts at [docs/README.md](docs/README.md), and the research behind the design is in [docs/research/](docs/research/).
 
 Target platforms are Docker Compose on Raspberry Pi 4/5 (ARM64) and AMD64 servers.
 

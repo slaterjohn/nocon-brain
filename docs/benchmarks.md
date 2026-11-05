@@ -92,7 +92,7 @@ Network isolation, same run: the renderer container cannot open a TCP connection
 
 ## Local search: 50,000 and 500,000 pages in the arm64 image under memory limits (S-13)
 
-**Not a Pi.** These numbers come from a Mac running Docker Desktop (a Linux VM) and say nothing about a Raspberry Pi. **Outstanding: Pi 4 (PT-03), Pi 5 (PT-01, PT-02, PT-04, PT-12, PT-13) and amd64.** Run `scripts/bench/search.sh` on each (it works the same on a Pi) and add an entry; the Pi 4 and Pi 5 should be run on SSD and, if supported, on an SD card, with `--limits "1g 2g"` or the profile's real limit.
+**Not a Pi.** These numbers come from a Mac running Docker Desktop (a Linux VM) and say nothing about a Raspberry Pi. **Outstanding: Pi 5 (PT-01, PT-02, PT-04, PT-12, PT-13), the Pi 4 at 500,000 pages and on an SSD, and amd64.** A Pi 4 (2 GB, SD card) was run at 50,000 pages on 5 November 2026; see [the Pi 4 section](#raspberry-pi-4-model-b-2-gb-5-november-2026). Run `scripts/bench/search.sh` on each (it works the same on a Pi) and add an entry; the Pi 4 and Pi 5 should be run on SSD and, if supported, on an SD card, with `--limits "1g 2g"` or the profile's real limit.
 
 | Field | Value |
 |---|---|
@@ -310,17 +310,17 @@ Every target in [implementation-plan.md](implementation-plan.md#11-performance-t
 |---|---|---|
 | PT-01 | Pi 5: not measured, no Pi available. Mac, 50,000 pages: p95 13 ms (S-13 above); 500,000 pages: p50 23 ms, p95 98 ms | Pi not measured |
 | PT-02 | Pi 5: not measured, no Pi. Mac, 500,000 pages: overall p95 98 ms (target 150), common single term p95 21 ms (target 300). Phrase p95 155 ms and source filter p95 186 ms are over 150 | Pi not measured; Mac within target |
-| PT-03 | Pi 4: not measured, no Pi | Not measured |
-| PT-04 | Pi 5: not measured, no Pi. Mac, 500,000 pages: typo p95 31 ms, suggestions p95 1.25 ms | Pi not measured |
-| PT-05 | Server idle 293 MiB on an arm64 Mac in the `pi-lite` profile; target 200 MB. Not measured on a Pi | Mac: miss |
-| PT-06 | `web` idle memory: not measured. Nothing in the scale test starts it | Not measured |
+| PT-03 | Pi 4 (2 GB, **SD card, not the SSD the target names**), 50,000 pages: overall p95 103 ms against the 120 ms target; p50 31 ms ([Pi 4 section](#raspberry-pi-4-model-b-2-gb-5-november-2026)) | Within target on an SD card; SSD not run |
+| PT-04 | Pi 5: not measured. Pi 4 (2 GB, SD), 50,000 pages, for information only because the target is for a Pi 5: typo p95 131 ms (above 100), suggestions p95 3.7 ms. Mac, 500,000 pages: typo p95 31 ms, suggestions p95 1.25 ms | Pi not measured |
+| PT-05 | Server idle 293 MiB on an arm64 Mac in the `pi-lite` profile; target 200 MB. Pi 4 (2 GB), `pi-lite`, empty library after three captures: 298 to 304 MiB resident (sum of process RSS in the container, one extract worker included); the target names a Pi 5 | Mac: miss; Pi 4: miss |
+| PT-06 | `web` idle memory: Pi 4 (2 GB): 89 to 109 MiB resident. Nothing in the scale test starts it | Pi 4 measured (no Pi 5 target figure checked) |
 | PT-07 | Peak memory of `server` during a crawl: not measured (no Pi; the scale test does not crawl) | Not measured |
 | PT-08 | Crawl pages a second on one host: not measured, no Pi. The politeness delay caps it near 0.67 | Not measured |
 | PT-09 | Aggregate crawl throughput across 20 hosts: not measured, no Pi | Not measured |
 | PT-10 | Pipeline time for a typical article: not measured, no Pi. Research figure for extraction on a Mac in [crawling-rendering.md](research/crawling-rendering.md) | Not measured |
 | PT-11 | Extraction of a 1 MB page: not measured on a Pi. Mac: 177 to 294 ms (research) | Not measured |
-| PT-12 | Pi: not measured. Mac: 500,000 pages rebuilt in 347 s (5.8 min); 20,000 in 9.3 s; incremental upsert 0.2 ms (S-13) | Pi not measured |
-| PT-13 | Index size 3.23 times the extracted text at 500,000 pages (target 3.5) | Met |
+| PT-12 | Pi 4 (2 GB, SD), 50,000 pages: build 305 s (insert 250 s, finish 55 s), incremental upsert p50 2.2 ms, p95 6.0 ms; 500,000 not run. Mac: 500,000 pages rebuilt in 347 s (5.8 min); 20,000 in 9.3 s; incremental upsert 0.2 ms (S-13) | Pi not measured |
+| PT-13 | Pi 4, 50,000 pages: 370 MiB, 3.73 times the 99 MiB of text. Mac: index size 3.23 times the extracted text at 500,000 pages (target 3.5) | Met |
 | PT-14 | Serve time of an archived page: not measured, no Pi | Not measured |
 | PT-15 | Time to healthy at 500,000 pages: 43.6 s with the index (target 30 s), 3.5 s without it; 1.5 s at 20,000. With a migration: not measured at scale. Pi: not measured | Mac: miss (HB-27) |
 | PT-16 | ZIM open, read and search on a 13 GB package: not measured, no 13 GB package or Pi. Research figures on a 132 MB package are above | Not measured |
@@ -335,9 +335,74 @@ Every target in [implementation-plan.md](implementation-plan.md#11-performance-t
 
 **Not measured.** No x86-64 machine was available, and a container emulating x86-64 on this Mac measures the emulator. [release/bench.yml.draft](release/bench.yml.draft) is a workflow that runs `pnpm bench:scale` and the queue benchmark on a GitHub-hosted x86-64 runner and an arm64 runner and uploads the JSON. It was written, not run, and it is not in `.github/` (the Human adds it). GitHub runners are shared and small, so use `--pages 50000` there and take the median of three runs.
 
-## Raspberry Pi 4 and Pi 5
+## Raspberry Pi 4 Model B (2 GB), 5 November 2026
 
-**Not measured.** No Raspberry Pi was available to this project. Every figure above is from a Mac. The Pi differs in ways that matter for these numbers: a slower CPU (several times slower for indexing), less memory (the server container is limited to 768 MB), and storage that may be an SD card or a USB SSD with a very different random-read rate. Do not read the Mac figures as Pi figures. To fill the Pi rows: follow [guides/install.md](guides/install.md#raspberry-pi), put the data on an SSD, and run `pnpm bench:scale --pages 50000` (then 500,000 if the disk has 15 GB free), plus `scripts/bench/search.sh`, and add an entry here with the JSON.
+Run by hand on a freshly flashed Raspberry Pi following [guides/install.md](guides/install.md#raspberry-pi). **A Pi 4 with 2 GB and an SD card, not a Pi 5, not an SSD.** The raw JSON is in [benchmarks-data/queue-pi4-2gb-arm64.json](benchmarks-data/queue-pi4-2gb-arm64.json) and [benchmarks-data/search-50k-pi4-2gb-arm64.json](benchmarks-data/search-50k-pi4-2gb-arm64.json).
+
+| Field | Value |
+|---|---|
+| Date | 5 November 2026 |
+| Hardware | Raspberry Pi 4 Model B Rev 1.5 (Cortex-A72, 4 cores), 1.8 GiB usable RAM, 1.8 GiB swap, 58 GB SD card, Wi-Fi |
+| Software | Raspberry Pi OS Lite 64-bit (Debian 13 Trixie), kernel 6.18.50, Docker 29.9.3, Compose v5.7.0; the images use Node 24.22.2. The host scripts ran under Node 20.19.2 from apt, because `scripts/bench/run.sh` needs a Node on the host |
+| Memory limits | **Not enforced.** The kernel's memory cgroup controller was off, so Docker printed "Your kernel does not support memory limit capabilities" and discarded every memory limit, including `--memory 512m` and `--memory 1g` in the benchmark runs. The queue benchmark's "peak memory" is therefore 0 and its 512 MB and 1 GB rows differ only by noise. `docker stats` shows 0B for memory |
+| Runs | 3 per limit for the queue benchmark; 1 for the search benchmark; the single-run numbers carry no variance |
+
+Install and start:
+
+| Measure | Value |
+|---|---|
+| `docker compose up -d --wait`, cold build of `server` and `web` on the Pi | 448 s (7 min 28 s) including the start. No out-of-memory kill |
+| Optional renderer: build and start (`COMPOSE_PROFILES=renderer`) | 243 s |
+| Image sizes | server 437 MB, web 418 MB, renderer 1.26 GB |
+| Disk used on the SD card after all images, the bench images and the corpus | 14 GB of 58 GB |
+
+Idle memory, about 20 s after the stack settled, as the sum of resident set sizes of each container's processes (`docker top`), because `docker stats` gave nothing:
+
+| Stack | server | web | renderer | `free -m` used / available |
+|---|---|---|---|---|
+| `server` + `web` | 298 to 304 MiB | 89 to 107 MiB | none | 610 MiB / 1,234 MiB |
+| with the renderer container | 298 MiB | 89 MiB | 109 to 130 MiB | 714 MiB / 1,130 MiB |
+
+Idle CPU: server 1.2%, web 0%. With the renderer running, the lowest `MemAvailable` sampled every 5 s over the start and a small capture was 1,055 MiB. **The renderer started and idled within 2 GB, but no page was rendered by a browser:** the capture of a script-built page was saved as plain HTML (the source's render mode was still "never"; the request to change it did not take effect and the cause was not looked into), so memory per rendered page on a Pi is **not measured**, and the 2 GB question for a heavy page stays open. `NCB_RENDERER_MEMORY=700m` was set but not enforced.
+
+Job queue, `scripts/bench/run.sh --limits "512m 1g" --runs 3` (50,000 jobs, 500 hosts, SD card):
+
+| Limit (not enforced) | Claim + complete, ms per cycle (3 runs) | Cycles per second | Bulk insert, 50,000 rows |
+|---|---|---|---|
+| 512 MB | 1.802, 1.790, 1.814 | 555 / 559 / 551 | 5,173 / 4,940 / 5,077 ms |
+| 1 GB | 1.793, 1.842, 1.791 | 558 / 543 / 558 | 4,987 / 5,052 / 4,952 ms |
+
+That is about 42 times the Mac's 0.043 ms per cycle, and the bulk insert is about 13 times slower, which matches the warning above about an SD card. 1.8 ms per cycle is close to the research figure of 1.5 ms for autocommit statements.
+
+Search, `scripts/bench/search.sh --sizes "50000" --limits "1g" --runs 1 --no-build` (the corpus was copied from the Mac to the Pi over the LAN; 500,000 pages was not run because the 3.5 GB index would fill much of the SD card and take hours):
+
+| Measure | Value |
+|---|---|
+| Build, 50,000 pages | 304.9 s (insert 250 s, finish 55 s, of which optimise 45 s); Mac: 21 s |
+| `index.db` | 370 MiB, 3.73 times the 99 MiB of text |
+| Node peak RSS | 319 MiB (the Mac: 245 MiB at 1 GB) |
+| First five queries after open | 240, 24, 22, 22, 56 ms |
+| All 690 queries p50 / p95 | 31 / 103 ms (Mac: 3.6 / 13.0) |
+| Single word | 57 / 73 ms |
+| Two words | 16 / 72 ms |
+| Phrase | 3.5 / 23 ms |
+| Domain-filtered | 10 / 63 ms |
+| Typo (with correction) | 73 / 131 ms |
+| Prefix | 84 / 118 ms |
+| Common word | 62 / 100 ms |
+| Two common words | 82 / 105 ms |
+| Bare stop word | 64 / 129 ms |
+| Autocomplete, 3-letter prefix | 1.8 / 3.7 ms |
+| Same query again (hot cache) | 0.06 / 0.08 ms |
+| Incremental upsert of one page | 2.2 / 6.0 ms (one outlier of 235 ms) |
+
+Other checks on the same Pi: `scripts/offline-test.sh` passed 20 of 20 (27 s with cached images). Pages captured through the API from the public internet (`example.com`, a GNU Project page and a small JavaScript demo page) were saved and a local search found them. A capture of Wikipedia failed, as designed, with a message to set `NCB_CONTACT`.
+
+Not run: `pnpm bench:scale` (needs Node 24 and pnpm on the Pi, and the 20,000 to 500,000 page library would fill the SD card), the 500,000-page search benchmark, anything on a Pi 5 or an SSD, crawl throughput, extraction time per page, a long soak, and memory limits actually in force. **The 500,000-page figures remain Mac-only.** The Pi 4 numbers are for 50,000 pages.
+
+## Raspberry Pi 5
+
+**Not measured.** No Pi 5 was available. The Pi 5 targets (PT-01, PT-02, PT-04, PT-05) need their own runs. Do not read the Mac or Pi 4 figures as Pi 5 figures. To fill the rows: follow [guides/install.md](guides/install.md#raspberry-pi), put the data on an SSD, and run `scripts/bench/search.sh --sizes "50000"` (then 500000 if the disk has 15 GB free), `scripts/bench/run.sh` and `pnpm bench:scale --pages 50000`, and add an entry here with the JSON.
 
 ## Reproduce
 

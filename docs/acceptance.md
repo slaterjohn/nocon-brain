@@ -4,22 +4,22 @@ Where each of the 24 acceptance criteria stands, what shows it, and what is stil
 
 The specification summary says 28 criteria but lists 24. These are the 24 listed ([implementation-plan.md](implementation-plan.md#13-acceptance-criteria-traceability) section 13). If four more exist they still need to be supplied.
 
-Status as of 3 November 2026, version 1.0.0-rc.1. Test counts for this state are in [the last section](#test-counts-for-this-state).
+Status as of 3 November 2026, version 1.0.0-rc.1 (the Raspberry Pi 4 rows were updated on 5 November 2026). Test counts for this state are in [the last section](#test-counts-for-this-state).
 
 ## Summary
 
 | Status | Count | Criteria |
 |---|---|---|
 | Met | 21 | 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23 |
-| Partly met | 2 | 1, 24 |
-| Not met | 1 | 2 |
+| Partly met | 3 | 1, 2, 24 |
+| Not met | 0 | none |
 
 ## Criteria
 
 | # | Criterion | Status | Evidence | Outstanding |
 |---|---|---|---|---|
 | 1 | Docker Compose deployment on AMD64 and ARM64 | Partly met | CI job `images` (`.github/workflows/ci.yml`) builds the server, web and renderer images on `ubuntu-latest` (amd64) and `ubuntu-24.04-arm` (arm64), then runs `docker compose up -d --wait`, checks the web port answers 200, and runs the offline stack test. All of it passed natively on both architectures in CI run 41670564509. `tests/integration/server/hardening.test.ts` and `tests/integration/server/platform.test.ts` cover the server's behaviour. | The stack has only run from images built in CI. A tagged, published image pulled from a registry has not been run, because publishing needs the Human's approval ([release checklist](release/checklist.md)). |
-| 2 | Runs on a supported Raspberry Pi | Not met | The arm64 images build and the test suites pass on an arm64 CI runner and an Apple Silicon Mac. [guides/install.md](guides/install.md) covers the Pi. | No Raspberry Pi 4 or 5 has been available, so nothing has been run, timed or left running on one. Every Pi figure in [benchmarks.md](benchmarks.md) is "not measured". |
+| 2 | Runs on a supported Raspberry Pi | Partly met | Followed on a **Raspberry Pi 4 Model B (2 GB RAM, SD card, Raspberry Pi OS Lite 64-bit Trixie)** on 5 November 2026: `docker compose up -d --wait` built both images on the Pi in 448 s and the stack became healthy; the setup wizard was completed through the API with the `pi-lite` profile; three pages were captured (one failed, as designed, because Wikipedia needs `NCB_CONTACT`) and a search found a captured page; `scripts/offline-test.sh` passed 20 of 20; the optional renderer container started and idled at about 110 to 130 MiB. Idle memory and the queue and search benchmarks are in [benchmarks.md](benchmarks.md#raspberry-pi-4-model-b-2-gb-5-november-2026). | **Not run on a Pi 5.** Not run on a Pi with 4 GB or more, on an SSD, or over Ethernet. The Pi was not left running for days, a crawl of many pages was not run, and a render of a real script-built page was not shown. Docker's memory limits were not enforced (the memory cgroup controller was off, see [guides/install.md](guides/install.md#raspberry-pi)). `server` idled at about 300 MiB against the 200 MB target (PT-05). The 500,000-page scale test was not run on the Pi. |
 | 3 | Archive a single page | Met | `tests/e2e/09-capture.spec.ts`, `tests/integration/pipeline/capture.test.ts`, `tests/integration/pipeline/stages.test.ts` | None. |
 | 4 | Crawl with configurable limits | Met | `tests/integration/crawl/engine.test.ts`, `tests/integration/crawl/traps.test.ts`, `tests/integration/storage/crawl-limits.test.ts`, `packages/crawl/test/scope.test.ts`, `tests/integration/downloads/limits.test.ts` | Crawl throughput on a Pi (PT-08, PT-09) is not measured. |
 | 5 | Archived pages are browsable offline | Met | `tests/e2e/37-offline-end-to-end.spec.ts` saves a page and a package, turns Work offline on, refuses every browser request that is not to the app, and asserts that the fixture site saw no request from the server. `tests/e2e/15-offline-links.spec.ts`. On Linux, CI shows that `web` cannot reach the internet in the default stack (HB-02). `scripts/offline-test.sh` puts every container on internal networks, proves `server` and `web` have no route out, and passes `tests/offline/check.mjs` on amd64 and arm64 (CI run 41670564509). | None for the criterion. The Pi itself is criterion 2. |
@@ -41,7 +41,7 @@ Status as of 3 November 2026, version 1.0.0-rc.1. Test counts for this state are
 | 21 | Usable offline | Met | `tests/e2e/37-offline-end-to-end.spec.ts` (twenty areas, each saying Offline with nothing loading), `tests/e2e/18-search-ui-stubbed.spec.ts`. The Docker no-egress run (`scripts/offline-test.sh`, `tests/offline/check.mjs`) runs in CI on amd64 and arm64: setup, login, dashboard, settings, connectivity and the app shell (no remote scripts, styles, images or frames) all pass with no internet (CI run 41670564509). | None. |
 | 22 | Clear errors and recovery | Met | `apps/web/test/errors.test.ts` (the error catalogue), `tests/e2e/38-error-ux.spec.ts`, `tests/reliability/failures-and-cleanup.test.ts`, `tests/reliability/kill-restart.test.ts`, `tests/reliability/power-loss.test.ts`, `tests/integration/storage/backup-restore.test.ts` | The e2e suite covers the fifteen most likely failures. It does not prove that every failure path in the code reaches the screen in plain words. |
 | 23 | Tests for critical paths | Met | The named suites in `.github/workflows/ci.yml`: unit, integration, storage safety, discovery, reliability, security, and the browser tests on Chromium and Firefox; both architectures for everything except the browser tests | WebKit runs in CI as advisory (it could not be run on the development Mac). The browser tests run on amd64 only (HB-09). |
-| 24 | Documentation | Partly met | [README.md](../README.md), [guides/install.md](guides/install.md), [guides/upgrade.md](guides/upgrade.md), [guides/troubleshooting.md](guides/troubleshooting.md), [guides/backup-restore.md](guides/backup-restore.md), [guides/privacy-and-providers.md](guides/privacy-and-providers.md), [guides/knowledge-packages.md](guides/knowledge-packages.md), [configuration.md](configuration.md), [api.md](api.md); `pnpm docs:check` (settings, routes and links agree with the code) runs in the unit suite | The install steps were followed on a Mac with Docker, not on a Pi. The commands in the guides are not run by a script in CI; only the settings, routes and links are checked. The manual screen reader pass in [accessibility.md](accessibility.md) is not done. |
+| 24 | Documentation | Partly met | [README.md](../README.md), [guides/install.md](guides/install.md), [guides/upgrade.md](guides/upgrade.md), [guides/troubleshooting.md](guides/troubleshooting.md), [guides/backup-restore.md](guides/backup-restore.md), [guides/privacy-and-providers.md](guides/privacy-and-providers.md), [guides/knowledge-packages.md](guides/knowledge-packages.md), [configuration.md](configuration.md), [api.md](api.md); `pnpm docs:check` (settings, routes and links agree with the code) runs in the unit suite | The install steps were followed on a Mac with Docker, and the Raspberry Pi path on a Pi 4 (2 GB) on 5 November 2026 (not a Pi 5; the Pi guide changed as a result). The commands in the guides are not run by a script in CI; only the settings, routes and links are checked. The manual screen reader pass in [accessibility.md](accessibility.md) is not done. |
 
 ## What needs a person or hardware
 
@@ -49,7 +49,7 @@ These are not Met and cannot be, from this machine:
 
 | Item | Why it is open | Who or what closes it |
 |---|---|---|
-| Raspberry Pi 4 and 5 runs and benchmarks (criterion 2, PT-01 to PT-22 on a Pi) | No Pi hardware was available | A person with a Pi follows [guides/install.md](guides/install.md), then runs `pnpm bench:scale` and the other benchmarks in [benchmarks.md](benchmarks.md#reproduce) |
+| Raspberry Pi 5, a 4 GB or larger Pi 4, SSD storage, and the Pi figures for PT-01 to PT-22 that were not measured on the 2 GB Pi 4 (criterion 2) | A Pi 4 (2 GB, SD card) was run on 5 November 2026; no other Pi was available | A person with a Pi follows [guides/install.md](guides/install.md), then runs `pnpm bench:scale` and the other benchmarks in [benchmarks.md](benchmarks.md#reproduce) |
 | Screen reader pass with VoiceOver, NVDA or Orca (H-05) | Needs a person | The checklist in [accessibility.md](accessibility.md) |
 | Real Safari (H-11, HB-16) | Playwright's WebKit crashes at launch on macOS 26.0.1, and it is not Safari anyway | A person on a Mac with Safari, or the advisory CI WebKit step plus a manual pass |
 | 400% zoom with real browser zoom (H-05) | The suite checks reflow at 320 CSS pixels, which is the same layout width, but not the browser's own zoom | A person |
